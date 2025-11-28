@@ -1,0 +1,4 @@
+INSTANCE_ID=i-mmm-platform
+PUBLIC_IP=108.130.239.238
+AWS_REGION=us-east-1
+KEY_NAME=mmm-platform-key
