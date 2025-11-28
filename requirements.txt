@@ -1,24 +1,12 @@
 # Core dependencies
-numpy>=1.26.0
-pandas>=2.0.0
-scipy>=1.10.0
+numpy
+pandas
+scipy
 
-# PyMC ecosystem - versions must be compatible
-# Using pinned versions that work together
-pymc==5.19.1
-pymc-marketing==0.15.1
-arviz>=0.17.0
-pytensor==2.26.4
-
-# For Prior class - must match pymc version
-pymc-extras==0.3.1
-
-# Faster sampling
-nutpie>=0.13.0
-
-# GPU support (install on EC2 with CUDA)
-# jax[cuda12]  # Uncomment on GPU instance
-numpyro>=0.15.0
+# PyMC ecosystem - let pip resolve compatible versions
+pymc-marketing
+arviz
+nutpie
 
 # Database
 sqlalchemy>=2.0.0
@@ -38,7 +26,3 @@ cloudpickle>=3.0.0
 # Utilities
 python-dotenv>=1.0.0
 tqdm>=4.66.0
-
-# Optional: GPU support (uncomment for CUDA)
-# numpyro>=0.13.0
-# jax[cuda12]>=0.4.20
