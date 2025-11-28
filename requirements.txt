@@ -4,13 +4,14 @@ pandas>=2.0.0
 scipy>=1.10.0
 
 # PyMC ecosystem - versions must be compatible
-pymc>=5.26.0
-pymc-marketing>=0.16.0
+# Using pinned versions that work together
+pymc==5.19.1
+pymc-marketing==0.15.1
 arviz>=0.17.0
-pytensor>=2.35.0
+pytensor==2.26.4
 
-# For Prior class
-pymc-extras>=0.5.0
+# For Prior class - must match pymc version
+pymc-extras==0.3.1
 
 # Faster sampling
 nutpie>=0.13.0
