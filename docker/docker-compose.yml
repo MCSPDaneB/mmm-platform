@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  mmm-app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: mmm-platform
+    ports:
+      - "8501:8501"
+    environment:
+      - DATABASE_URL=postgresql://mmm_user:mmm_password@postgres:5432/mmm_db
+      - PYTHONPATH=/app
+    volumes:
+      - ../data:/app/data
+      - ../saved_models:/app/saved_models
+      - ../configs:/app/configs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: mmm-postgres
+    environment:
+      - POSTGRES_USER=mmm_user
+      - POSTGRES_PASSWORD=mmm_password
+      - POSTGRES_DB=mmm_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mmm_user -d mmm_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  default:
+    name: mmm-network

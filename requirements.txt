@@ -1,0 +1,43 @@
+# Core dependencies
+numpy>=1.26.0
+pandas>=2.0.0
+scipy>=1.10.0
+
+# PyMC ecosystem - versions must be compatible
+pymc>=5.26.0
+pymc-marketing>=0.16.0
+arviz>=0.17.0
+pytensor>=2.35.0
+
+# For Prior class
+pymc-extras>=0.5.0
+
+# Faster sampling
+nutpie>=0.13.0
+
+# GPU support (install on EC2 with CUDA)
+# jax[cuda12]  # Uncomment on GPU instance
+numpyro>=0.15.0
+
+# Database
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+
+# Web UI
+streamlit>=1.29.0
+plotly>=5.18.0
+
+# Configuration
+pydantic>=2.5.0
+pyyaml>=6.0
+
+# Model persistence
+cloudpickle>=3.0.0
+
+# Utilities
+python-dotenv>=1.0.0
+tqdm>=4.66.0
+
+# Optional: GPU support (uncomment for CUDA)
+# numpyro>=0.13.0
+# jax[cuda12]>=0.4.20

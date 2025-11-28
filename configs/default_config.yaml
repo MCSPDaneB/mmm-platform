@@ -1,0 +1,82 @@
+# MMM Platform - Default Configuration Template
+# Copy and modify this file for your specific use case
+
+name: "my_mmm_model"
+description: "Marketing Mix Model configuration template"
+
+# Data settings
+data:
+  date_column: "time"
+  target_column: "revenue"
+  dayfirst: true
+  revenue_scale: 1000.0
+  spend_scale: 1000.0
+
+# Media channels
+# Add your channel columns here with ROI priors
+channels:
+  - name: "channel_1_spend"
+    display_name: "Channel 1"
+    adstock_type: "medium"  # short, medium, or long
+    roi_prior_low: 0.5
+    roi_prior_mid: 2.0
+    roi_prior_high: 5.0
+
+  - name: "channel_2_spend"
+    display_name: "Channel 2"
+    adstock_type: "short"
+    roi_prior_low: 0.3
+    roi_prior_mid: 1.5
+    roi_prior_high: 4.0
+
+# Control variables
+controls:
+  - name: "promo_event"
+    display_name: "Promotion Event"
+    sign_constraint: "positive"  # positive, negative, or unconstrained
+    is_dummy: true
+    scale: false
+
+# Auto-generated dummy variables (optional)
+dummy_variables:
+  - name: "holiday_period"
+    start_date: "2024-12-20"
+    end_date: "2024-12-31"
+    sign_constraint: "positive"
+
+# Month dummy variables (optional)
+month_dummies:
+  months: [1, 2]  # January and February
+  sign_constraints:
+    1: "negative"  # January typically negative
+    2: "negative"
+
+# Adstock transform settings
+adstock:
+  l_max: 8  # Maximum lag in weeks
+  short_decay: 0.15
+  medium_decay: 0.40
+  long_decay: 0.70
+  prior_concentration: 20.0
+
+# Saturation transform settings
+saturation:
+  saturation_percentile: 50
+  lam_sigma: 0.3
+
+# Seasonality settings
+seasonality:
+  yearly_seasonality: 2  # Number of Fourier terms
+
+# MCMC sampling settings
+sampling:
+  draws: 1500
+  tune: 1500
+  chains: 4
+  target_accept: 0.9
+  random_seed: 42
+
+# Control variable prior
+control_prior:
+  distribution: "HalfNormal"
+  sigma: 1.0

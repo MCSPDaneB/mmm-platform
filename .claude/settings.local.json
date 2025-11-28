@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(pip show:*)",
+      "Bash(python:*)",
+      "Bash(venvScriptspython.exe -c \"import pymc; print(''pymc:'', pymc.__version__); import pymc_extras; print(''pymc_extras:'', pymc_extras.__version__)\")",
+      "Bash(.venvScriptspython.exe -c \"import pymc; print(''pymc:'', pymc.__version__); import pymc_extras; print(''pymc_extras:'', pymc_extras.__version__)\")",
+      "Bash(./venv/Scripts/python.exe:*)",
+      "Bash(./venv/Scripts/pip.exe:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

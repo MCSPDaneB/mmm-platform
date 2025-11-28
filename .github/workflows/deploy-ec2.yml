@@ -1,0 +1,41 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd ~/mmm_platform
+
+            # Pull latest code
+            git pull origin main || git pull origin master
+
+            # Activate virtual environment
+            source venv/bin/activate
+
+            # Install any new dependencies
+            pip install -r requirements.txt --quiet
+
+            # Install package in dev mode
+            pip install -e . --quiet
+
+            echo "Deployment complete!"
+
+      - name: Deployment Status
+        if: success()
+        run: echo "Successfully deployed to EC2!"
