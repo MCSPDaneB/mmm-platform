@@ -2,6 +2,7 @@
 Model running page for MMM Platform.
 """
 
+import os
 import streamlit as st
 import pandas as pd
 import time
@@ -10,6 +11,7 @@ from pathlib import Path
 
 from mmm_platform.model.mmm import MMMWrapper
 from mmm_platform.model.fitting import ModelFitter
+from mmm_platform.api.client import EC2ModelClient, JobStatus
 
 
 def show():
@@ -121,163 +123,220 @@ def show():
 
 
 def _ec2_available() -> bool:
-    """Check if EC2 config exists."""
-    return Path("deploy/instance_info.txt").exists()
+    """Check if EC2 API URL is configured."""
+    # Check env var or config file
+    ec2_url = os.getenv("EC2_API_URL")
+    if ec2_url:
+        return True
+    # Check config file
+    config_file = Path("deploy/ec2_api_url.txt")
+    return config_file.exists()
+
+
+def _get_ec2_url() -> str:
+    """Get EC2 API URL from env or config."""
+    ec2_url = os.getenv("EC2_API_URL")
+    if ec2_url:
+        return ec2_url
+    config_file = Path("deploy/ec2_api_url.txt")
+    if config_file.exists():
+        return config_file.read_text().strip()
+    return ""
 
 
 def _show_ec2_config() -> bool:
     """Show EC2 configuration UI. Returns True if ready to run."""
-    from mmm_platform.core.ec2_runner import EC2Config, EC2Runner, get_ec2_config_from_file
+    st.markdown("#### EC2 API Configuration")
 
-    st.markdown("#### EC2 Configuration")
+    # Try to get URL from env/file
+    ec2_url = _get_ec2_url()
 
-    # Try to load from file
-    ec2_config = get_ec2_config_from_file()
+    if not ec2_url:
+        st.warning("EC2 API URL not configured.")
 
-    if ec2_config is None:
-        st.warning("EC2 not configured. Please set up your EC2 instance first.")
-
-        with st.expander("How to set up EC2"):
+        with st.expander("How to set up EC2 API"):
             st.markdown("""
-            1. Go to [AWS EC2 Console](https://console.aws.amazon.com/ec2)
-            2. Launch a **g4dn.xlarge** instance with Deep Learning AMI
-            3. Download the key pair (.pem file)
-            4. Enter the details below
+            1. Start the EC2 instance with the MMM API running
+            2. Get the public IP address
+            3. Enter the API URL below (e.g., `http://1.2.3.4:8000`)
+
+            **Or** set the `EC2_API_URL` environment variable.
             """)
 
-        # Manual configuration
-        col1, col2 = st.columns(2)
-        with col1:
-            ec2_ip = st.text_input("EC2 Public IP", placeholder="1.2.3.4")
-        with col2:
-            key_file = st.text_input("Key file path", placeholder="C:/path/to/key.pem")
+        ec2_url = st.text_input(
+            "EC2 API URL",
+            placeholder="http://your-ec2-ip:8000",
+            help="The URL of the FastAPI server running on EC2"
+        )
 
-        if ec2_ip and key_file:
-            ec2_config = EC2Config(host=ec2_ip, key_file=key_file)
-            st.session_state.ec2_config = ec2_config
+        if ec2_url:
+            st.session_state.ec2_api_url = ec2_url
         else:
             return False
     else:
-        st.success(f"EC2 configured: `{ec2_config.host}`")
-        st.session_state.ec2_config = ec2_config
+        st.session_state.ec2_api_url = ec2_url
+        st.success(f"EC2 API: `{ec2_url}`")
 
-        # Test connection button
-        if st.button("Test Connection"):
-            with st.spinner("Testing connection..."):
-                runner = EC2Runner(ec2_config)
-                connected, msg = runner.test_connection()
-                if connected:
-                    st.success(f"Connected to EC2!")
-                    # Check GPU
-                    gpu_ok, gpu_msg = runner.check_gpu()
-                    if gpu_ok:
-                        st.success("GPU available!")
-                    else:
-                        st.warning(f"GPU check: {gpu_msg}")
+    # Test connection button
+    if st.button("Test EC2 Connection"):
+        with st.spinner("Testing connection..."):
+            try:
+                client = EC2ModelClient(st.session_state.ec2_api_url)
+                if client.health_check():
+                    st.success("Connected to EC2 API!")
                 else:
-                    st.error(f"Connection failed: {msg}")
+                    st.error("EC2 API health check failed")
                     return False
+            except Exception as e:
+                st.error(f"Connection failed: {e}")
+                return False
 
     return True
 
 
 def run_model_ec2(config, df, draws, tune, chains, save_model):
-    """Run model on EC2 GPU instance."""
-    from mmm_platform.core.ec2_runner import EC2Runner
-
-    ec2_config = st.session_state.get("ec2_config")
-    if ec2_config is None:
-        st.error("EC2 not configured!")
+    """Run model on EC2 via FastAPI."""
+    ec2_url = st.session_state.get("ec2_api_url")
+    if not ec2_url:
+        st.error("EC2 API URL not configured!")
         return
 
     progress_container = st.container()
 
     with progress_container:
-        st.subheader("Model Fitting Progress (EC2 GPU)")
+        st.subheader("Model Fitting Progress (EC2)")
 
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        def update_progress(pct, msg):
-            progress_bar.progress(pct / 100)
-            status_text.text(msg)
-
         try:
-            runner = EC2Runner(ec2_config)
+            client = EC2ModelClient(ec2_url)
 
-            # Convert config to dict for serialization
-            config_dict = config.model_dump()
+            # Build channel configs
+            channels = []
+            for ch in config.channels:
+                channels.append({
+                    "name": ch.name,
+                    "roi_prior_low": ch.roi_prior_low,
+                    "roi_prior_mid": ch.roi_prior_mid,
+                    "roi_prior_high": ch.roi_prior_high,
+                    "adstock_type": ch.adstock_type,
+                    "adstock_max_lag": ch.adstock_max_lag,
+                    "saturation_type": ch.saturation_type,
+                })
 
+            # Build control configs
+            controls = []
+            for ctrl in config.controls:
+                controls.append({
+                    "name": ctrl.name,
+                    "expected_sign": ctrl.expected_sign,
+                })
+
+            # Data config
+            data_config = {
+                "target_column": config.data.target_column,
+                "date_column": config.data.date_column,
+                "spend_scale": config.data.spend_scale,
+                "revenue_scale": config.data.revenue_scale,
+            }
+
+            # Sampling config
+            sampling_config = {
+                "draws": draws,
+                "tune": tune,
+                "chains": chains,
+                "target_accept": config.sampling.target_accept,
+                "sampler": getattr(config.sampling, 'sampler', 'nutpie'),
+            }
+
+            status_text.text("Submitting job to EC2...")
+            progress_bar.progress(5)
+
+            # Submit job
+            job_id = client.submit_model_run(
+                model_name=config.name,
+                data=df,
+                channels=channels,
+                controls=controls,
+                data_config=data_config,
+                sampling_config=sampling_config,
+            )
+
+            st.info(f"Job submitted: `{job_id}`")
+
+            # Poll for completion
             start_time = time.time()
 
-            # Run on EC2
-            results = runner.fit_model(
-                config_dict=config_dict,
-                data_df=df,
-                draws=draws,
-                tune=tune,
-                chains=chains,
-                progress_callback=update_progress
-            )
+            while True:
+                status = client.get_status(job_id)
+
+                # Update progress
+                progress_bar.progress(int(status.progress * 100))
+                status_text.text(f"{status.message} ({status.progress*100:.0f}%)")
+
+                if status.status == JobStatus.COMPLETED:
+                    break
+
+                if status.status == JobStatus.FAILED:
+                    st.error(f"Job failed: {status.error}")
+                    return
+
+                time.sleep(3)  # Poll every 3 seconds
 
             total_time = time.time() - start_time
 
-            # Load results
-            import arviz as az
+            # Get results
+            results = client.get_results(job_id)
 
-            idata_path = results.get("idata_path")
-            if idata_path and Path(idata_path).exists():
-                idata = az.from_netcdf(idata_path)
+            status_text.text("Loading results...")
+            progress_bar.progress(95)
 
-                # Create a wrapper to store results
-                wrapper = MMMWrapper(config)
-                wrapper.df_raw = df.copy()
-                wrapper.idata = idata
-                wrapper.fitted_at = datetime.now()
-                wrapper.fit_duration_seconds = results.get("fit_stats", {}).get(
-                    "fit_duration_seconds", total_time
-                )
+            # Store results in session state
+            st.session_state.ec2_results = {
+                "job_id": job_id,
+                "fit_statistics": results.fit_statistics,
+                "channel_roi": results.channel_roi,
+                "contributions": results.contributions,
+            }
 
-                # Store in session state
-                st.session_state.current_model = wrapper
-                st.session_state.model_fitted = True
-                st.session_state.ec2_results = results
+            # Create a lightweight wrapper for results display
+            # (Full wrapper would need idata which is on EC2)
+            st.session_state.model_fitted = True
+            st.session_state.ec2_job_id = job_id
 
-                # Show results
-                st.success(f"Model fitted on EC2 in {wrapper.fit_duration_seconds:.1f} seconds!")
+            progress_bar.progress(100)
+            status_text.text("Complete!")
 
-                fit_stats = results.get("fit_stats", {})
+            # Show results
+            st.success(f"Model fitted on EC2 in {total_time:.1f} seconds!")
 
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    r2 = fit_stats.get("r2", "N/A")
-                    st.metric("R2", f"{r2:.3f}" if isinstance(r2, float) else r2)
-                with col2:
-                    mape = fit_stats.get("mape", "N/A")
-                    st.metric("MAPE", f"{mape:.1f}%" if isinstance(mape, float) else mape)
-                with col3:
-                    rmse = fit_stats.get("rmse", "N/A")
-                    st.metric("RMSE", f"{rmse:.1f}" if isinstance(rmse, float) else rmse)
-                with col4:
-                    st.metric("Location", "EC2 GPU")
+            fit_stats = results.fit_statistics or {}
 
-                # Save if requested
-                if save_model:
-                    from mmm_platform.model.persistence import ModelPersistence
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                r2 = fit_stats.get("r2", "N/A")
+                st.metric("R²", f"{r2:.3f}" if isinstance(r2, (int, float)) else r2)
+            with col2:
+                mape = fit_stats.get("mape", "N/A")
+                st.metric("MAPE", f"{mape:.1f}%" if isinstance(mape, (int, float)) else mape)
+            with col3:
+                rmse = fit_stats.get("rmse", "N/A")
+                st.metric("RMSE", f"{rmse:.1f}" if isinstance(rmse, (int, float)) else rmse)
+            with col4:
+                st.metric("Location", "EC2")
 
-                    save_dir = Path("saved_models") / f"{config.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                    try:
-                        ModelPersistence.save(wrapper, save_dir)
-                        st.info(f"Model saved to: {save_dir}")
-                    except Exception as e:
-                        st.warning(f"Could not save model: {e}")
-
-                st.balloons()
+            # Show channel ROI preview
+            if results.channel_roi:
                 st.markdown("---")
-                st.success("Navigate to **Results** in the sidebar to explore the model output.")
+                st.subheader("Channel ROI Preview")
+                roi_df = pd.DataFrame(results.channel_roi)
+                st.dataframe(roi_df, use_container_width=True, hide_index=True)
 
-            else:
-                st.error("Results file not found. Check EC2 logs.")
+            st.balloons()
+            st.markdown("---")
+            st.success("Model complete! Results are stored on EC2.")
+            st.info(f"Job ID: `{job_id}` - Use this to retrieve full results if needed.")
 
         except Exception as e:
             progress_bar.progress(100)

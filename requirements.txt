@@ -16,6 +16,11 @@ psycopg2-binary>=2.9.0
 streamlit>=1.29.0
 plotly>=5.18.0
 
+# API server (EC2)
+fastapi>=0.104.0
+uvicorn>=0.24.0
+httpx>=0.25.0
+
 # Configuration
 pydantic>=2.5.0
 pyyaml>=6.0
