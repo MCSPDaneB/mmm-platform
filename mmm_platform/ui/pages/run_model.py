@@ -228,7 +228,7 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
             for ctrl in config.controls:
                 controls.append({
                     "name": ctrl.name,
-                    "expected_sign": ctrl.expected_sign,
+                    "expected_sign": ctrl.sign_constraint.value if hasattr(ctrl.sign_constraint, 'value') else str(ctrl.sign_constraint),
                 })
 
             # Data config
