@@ -329,6 +329,10 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
             try:
                 wrapper.prepare_data()
                 wrapper.build_model()
+                # Set the idata on the mmm object and mark as fitted
+                # This is required for PyMC-Marketing methods to work
+                wrapper.mmm.idata = idata
+                wrapper.mmm.is_fitted_ = True
             except Exception as prep_error:
                 st.warning(f"Could not fully prepare wrapper: {prep_error}")
 
