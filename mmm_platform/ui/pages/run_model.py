@@ -324,9 +324,11 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
             wrapper.fitted_at = datetime.now()
             wrapper.fit_duration_seconds = total_time
 
-            # Prepare data so wrapper is fully functional
+            # Prepare data and build model so wrapper is fully functional
+            # The mmm object is needed for computing contributions
             try:
                 wrapper.prepare_data()
+                wrapper.build_model()
             except Exception as prep_error:
                 st.warning(f"Could not fully prepare wrapper: {prep_error}")
 
