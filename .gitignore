@@ -48,6 +48,8 @@ env/
 saved_models/
 data/
 output/
+projects/
+*.mmm
 
 # Logs
 *.log

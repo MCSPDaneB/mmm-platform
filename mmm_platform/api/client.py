@@ -67,7 +67,7 @@ class EC2ModelClient:
         results = client.wait_for_completion(job_id)
     """
 
-    def __init__(self, base_url: Optional[str] = None, timeout: float = 30.0):
+    def __init__(self, base_url: Optional[str] = None, timeout: float = 120.0):
         """
         Initialize the EC2 client.
 
@@ -80,7 +80,7 @@ class EC2ModelClient:
         """
         self.base_url = base_url or os.getenv("EC2_API_URL", "http://localhost:8000")
         self.timeout = timeout
-        self._client = httpx.Client(base_url=self.base_url, timeout=timeout)
+        self._client = httpx.Client(base_url=self.base_url, timeout=httpx.Timeout(timeout))
 
     def __enter__(self):
         return self

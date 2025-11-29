@@ -265,22 +265,33 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
 
             # Poll for completion
             start_time = time.time()
+            max_wait = 3600  # 1 hour max
 
             while True:
-                status = client.get_status(job_id)
+                try:
+                    status = client.get_status(job_id)
 
-                # Update progress
-                progress_bar.progress(int(status.progress * 100))
-                status_text.text(f"{status.message} ({status.progress*100:.0f}%)")
+                    # Update progress
+                    progress_bar.progress(int(status.progress * 100))
+                    status_text.text(f"{status.message} ({status.progress*100:.0f}%)")
 
-                if status.status == JobStatus.COMPLETED:
-                    break
+                    if status.status == JobStatus.COMPLETED:
+                        break
 
-                if status.status == JobStatus.FAILED:
-                    st.error(f"Job failed: {status.error}")
+                    if status.status == JobStatus.FAILED:
+                        st.error(f"Job failed: {status.error}")
+                        return
+
+                except Exception as poll_error:
+                    # Log but continue polling - might be temporary network issue
+                    status_text.text(f"Connection issue, retrying... ({poll_error})")
+
+                elapsed = time.time() - start_time
+                if elapsed > max_wait:
+                    st.error(f"Timeout: Job did not complete within {max_wait/60:.0f} minutes")
                     return
 
-                time.sleep(3)  # Poll every 3 seconds
+                time.sleep(5)  # Poll every 5 seconds
 
             total_time = time.time() - start_time
 
