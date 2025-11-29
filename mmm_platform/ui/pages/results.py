@@ -46,13 +46,14 @@ def show():
     contributions = ContributionAnalyzer.from_mmm_wrapper(wrapper)
 
     # Tabs
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "Overview",
         "Channel ROI",
         "Bayesian Significance",
         "Diagnostics",
         "Time Series",
-        "Export"
+        "Export",
+        "Visualizations"
     ])
 
     # =========================================================================
@@ -650,6 +651,162 @@ def show():
             )
         except Exception as e:
             st.warning(f"Could not generate Bayesian significance report: {str(e)}")
+
+    # =========================================================================
+    # Tab 7: Visualizations
+    # =========================================================================
+    with tab7:
+        st.subheader("Executive Visualizations")
+
+        import matplotlib.pyplot as plt
+        from mmm_platform.analysis import (
+            create_baseline_channels_donut,
+            create_contribution_waterfall_chart,
+            create_stacked_contributions_area,
+            create_response_curves,
+            create_roi_effectiveness_bubble,
+        )
+
+        viz_option = st.selectbox(
+            "Select Visualization",
+            [
+                "Contribution Waterfall",
+                "Baseline vs Channels (Donut)",
+                "Stacked Contributions Over Time",
+                "ROI vs Spend (Bubble)",
+                "Response Curves",
+            ]
+        )
+
+        fig = None
+
+        try:
+            if viz_option == "Contribution Waterfall":
+                # Get contributions by component
+                contribs_df = wrapper.get_contributions()
+                channel_cols = config.get_channel_columns()
+
+                # Build contribution dict
+                contrib_dict = {}
+
+                # Add baseline/intercept
+                if 'intercept' in contribs_df.columns:
+                    contrib_dict['Baseline'] = float(contribs_df['intercept'].sum()) * config.data.revenue_scale
+
+                # Add channels
+                for ch in channel_cols:
+                    if ch in contribs_df.columns:
+                        contrib_dict[ch.replace('_spend', '')] = float(contribs_df[ch].sum()) * config.data.revenue_scale
+
+                # Add controls if present
+                if wrapper.control_cols:
+                    for ctrl in wrapper.control_cols:
+                        if ctrl in contribs_df.columns:
+                            contrib_dict[ctrl] = float(contribs_df[ctrl].sum()) * config.data.revenue_scale
+
+                # Add seasonality if present
+                seasonality_cols = [c for c in contribs_df.columns if 'fourier' in c.lower() or 'seasonal' in c.lower()]
+                if seasonality_cols:
+                    seasonality_total = sum(float(contribs_df[c].sum()) for c in seasonality_cols) * config.data.revenue_scale
+                    contrib_dict['Seasonality'] = seasonality_total
+
+                fig = create_contribution_waterfall_chart(contrib_dict)
+
+            elif viz_option == "Baseline vs Channels (Donut)":
+                breakdown = contributions.get_contribution_breakdown()
+                baseline = abs(breakdown["intercept"]["real_value"])
+                channels = abs(breakdown["channels"]["real_value"])
+                fig = create_baseline_channels_donut(baseline, channels)
+
+            elif viz_option == "Stacked Contributions Over Time":
+                contribs_df = wrapper.get_contributions()
+                channel_cols = config.get_channel_columns()
+                dates = contribs_df.index
+                channel_contribs = contribs_df[channel_cols] * config.data.revenue_scale
+                fig = create_stacked_contributions_area(dates, channel_contribs)
+
+            elif viz_option == "ROI vs Spend (Bubble)":
+                roi_df = contributions.get_channel_roi()
+                metrics = []
+                for _, row in roi_df.iterrows():
+                    metrics.append({
+                        'channel': row['channel'].replace('_spend', ''),
+                        'roi': row['roi'],
+                        'spend': row['spend_real'],
+                        'contribution': row['contribution_real'],
+                    })
+                fig = create_roi_effectiveness_bubble(metrics)
+
+            elif viz_option == "Response Curves":
+                # Get response curve data from the model
+                channel_cols = config.get_channel_columns()
+                curves = []
+
+                # Try to extract saturation parameters from the model
+                try:
+                    if hasattr(wrapper.mmm, 'saturation') and wrapper.idata is not None:
+                        posterior = wrapper.idata.posterior
+
+                        for i, ch in enumerate(channel_cols):
+                            # Get spend range
+                            spend_data = wrapper.df_scaled[ch].values
+                            spend_range = np.linspace(0, spend_data.max() * 1.5, 100)
+
+                            # Get mean saturation parameters
+                            if 'saturation_lam' in posterior:
+                                lam = float(posterior['saturation_lam'].mean(dim=['chain', 'draw']).values[i])
+                            else:
+                                lam = 1.0
+
+                            # Simple logistic saturation curve
+                            response = lam * (1 - np.exp(-spend_range / (lam * 0.5)))
+
+                            curves.append({
+                                'channel': ch.replace('_spend', ''),
+                                'spend': spend_range * config.data.spend_scale,
+                                'response': response * config.data.revenue_scale,
+                                'current_spend': float(spend_data.sum()) * config.data.spend_scale / len(spend_data),
+                            })
+
+                        fig = create_response_curves(curves)
+                    else:
+                        st.warning("Response curves require saturation parameters from the model.")
+                except Exception as curve_error:
+                    st.warning(f"Could not generate response curves: {curve_error}")
+
+            if fig is not None:
+                st.pyplot(fig)
+                plt.close(fig)
+
+                # Download button for the current visualization
+                import io
+                img_buffer = io.BytesIO()
+                fig_for_download = None
+
+                # Regenerate for download
+                if viz_option == "Contribution Waterfall":
+                    fig_for_download = create_contribution_waterfall_chart(contrib_dict)
+                elif viz_option == "Baseline vs Channels (Donut)":
+                    fig_for_download = create_baseline_channels_donut(baseline, channels)
+                elif viz_option == "Stacked Contributions Over Time":
+                    fig_for_download = create_stacked_contributions_area(dates, channel_contribs)
+                elif viz_option == "ROI vs Spend (Bubble)":
+                    fig_for_download = create_roi_effectiveness_bubble(metrics)
+
+                if fig_for_download is not None:
+                    fig_for_download.savefig(img_buffer, format='png', dpi=150, bbox_inches='tight')
+                    plt.close(fig_for_download)
+
+                    st.download_button(
+                        f"Download {viz_option} (PNG)",
+                        data=img_buffer.getvalue(),
+                        file_name=f"mmm_{viz_option.lower().replace(' ', '_')}.png",
+                        mime="image/png"
+                    )
+
+        except Exception as viz_error:
+            st.error(f"Error generating visualization: {viz_error}")
+            st.info("Some visualizations require specific model outputs. Try a different visualization.")
 
 
 def show_ec2_results():
