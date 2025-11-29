@@ -255,7 +255,7 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
         from mmm_platform.core.validation import DataValidator
         validator = DataValidator(config)
         validation_result = validator.validate_all(df)
-        if not validation_result.is_valid:
+        if not validation_result.valid:
             raise ValueError(f"Data validation failed: {validation_result.errors}")
 
         logger.info(f"Job {job_id}: Starting model fitting (this may take a while)...")
