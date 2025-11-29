@@ -299,11 +299,20 @@ class DataValidator:
         target_col = self.config.data.target_column
         channel_cols = [c for c in self.config.get_channel_columns() if c in df.columns]
 
+        # Handle date range - convert to datetime if needed
+        date_start = None
+        date_end = None
+        if date_col in df.columns:
+            dates = pd.to_datetime(df[date_col], errors='coerce')
+            if not dates.isna().all():
+                date_start = dates.min().isoformat()
+                date_end = dates.max().isoformat()
+
         summary = {
             "n_observations": len(df),
             "date_range": {
-                "start": df[date_col].min().isoformat() if date_col in df.columns else None,
-                "end": df[date_col].max().isoformat() if date_col in df.columns else None,
+                "start": date_start,
+                "end": date_end,
             },
             "target": {
                 "column": target_col,
