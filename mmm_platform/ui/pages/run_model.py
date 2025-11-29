@@ -376,7 +376,7 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
 
                 save_dir = Path("saved_models") / f"{config.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
                 try:
-                    ModelPersistence.save(wrapper, save_dir)
+                    ModelPersistence.save(wrapper, save_dir, include_data=True)
                     st.info(f"Model saved to: {save_dir}")
                 except Exception as e:
                     st.warning(f"Could not save model: {e}")
@@ -483,7 +483,7 @@ def run_model_local(config, df, draws, tune, chains, save_model):
                 from mmm_platform.model.persistence import ModelPersistence
 
                 save_dir = Path("saved_models") / f"{config.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                ModelPersistence.save(wrapper, save_dir)
+                ModelPersistence.save(wrapper, save_dir, include_data=True)
                 st.info(f"Model saved to: {save_dir}")
 
             st.balloons()
