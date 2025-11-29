@@ -258,11 +258,21 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
         if not validation_result.valid:
             raise ValueError(f"Data validation failed: {validation_result.errors}")
 
+        # Prepare data (scaling, transforms, etc.)
+        logger.info(f"Job {job_id}: Preparing data...")
+        job_store.update_job(job_id, message="Preparing data...", progress=0.3)
+        wrapper.prepare_data()
+
+        # Build the model
+        logger.info(f"Job {job_id}: Building model...")
+        job_store.update_job(job_id, message="Building model...", progress=0.35)
+        wrapper.build_model()
+
         logger.info(f"Job {job_id}: Starting model fitting (this may take a while)...")
         job_store.update_job(
             job_id,
             message="Fitting model (MCMC sampling)...",
-            progress=0.3
+            progress=0.4
         )
 
         # Fit the model
