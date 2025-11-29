@@ -269,28 +269,46 @@ class ContributionAnalyzer:
 
     def get_channel_marginal_roi(
         self,
-        incremental_pct: float = 0.10
+        idata: Optional[Any] = None,
     ) -> pd.DataFrame:
         """
-        Estimate marginal ROI for incremental spend.
+        Get marginal ROI for each channel using saturation curve derivatives.
 
-        Note: This is an approximation. For accurate marginal ROI,
-        use the model's optimization capabilities.
+        For accurate marginal ROI calculation, use the MarginalROIAnalyzer class
+        which requires the inference data (idata) from model fitting.
 
         Parameters
         ----------
-        incremental_pct : float
-            Percentage increase in spend to evaluate.
+        idata : InferenceData, optional
+            ArviZ inference data. If not provided, returns average ROI with a warning.
 
         Returns
         -------
         pd.DataFrame
-            Marginal ROI estimates.
+            Marginal ROI estimates with breakeven and headroom.
         """
-        # This would require re-computing contributions with adjusted spend
-        # For now, return average ROI as a proxy
-        logger.warning("Marginal ROI estimation not fully implemented - returning average ROI")
-        return self.get_channel_roi()
+        if idata is None:
+            logger.warning(
+                "Marginal ROI requires inference data. "
+                "Use MarginalROIAnalyzer for full marginal ROI analysis. "
+                "Returning average ROI as fallback."
+            )
+            return self.get_channel_roi()
+
+        # Use the MarginalROIAnalyzer for proper calculation
+        from .marginal_roi import MarginalROIAnalyzer
+
+        analyzer = MarginalROIAnalyzer(
+            idata=idata,
+            df_scaled=self.df_scaled,
+            contribs=self.contribs,
+            channel_cols=self.channel_cols,
+            target_col=self.target_col,
+            spend_scale=self.spend_scale,
+            revenue_scale=self.revenue_scale,
+        )
+
+        return analyzer.get_priority_table()
 
     @classmethod
     def from_mmm_wrapper(cls, mmm_wrapper: Any) -> "ContributionAnalyzer":

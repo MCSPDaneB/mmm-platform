@@ -14,6 +14,17 @@ def show():
     """Show the data upload page."""
     st.title("📁 Upload Data")
 
+    # Check for demo mode
+    if st.session_state.get("demo_mode", False):
+        st.info("**Demo Mode**: Using simulated data. Go to **Results** to explore!")
+
+        # Show demo data preview
+        demo = st.session_state.get("demo")
+        if demo is not None:
+            st.subheader("Demo Data Preview")
+            st.dataframe(demo.df_scaled.head(10), use_container_width=True)
+        st.stop()
+
     st.markdown("""
     Upload your marketing data in CSV format. The data should contain:
     - A date column (weekly or daily granularity)

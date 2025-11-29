@@ -16,6 +16,11 @@ def show():
     """Show the model running page."""
     st.title("Run Model")
 
+    # Check for demo mode
+    if st.session_state.get("demo_mode", False):
+        st.info("**Demo Mode**: The model is already fitted with simulated data. Go to **Results** to explore!")
+        st.stop()
+
     # Check prerequisites
     if st.session_state.get("current_data") is None:
         st.warning("Please upload data first!")

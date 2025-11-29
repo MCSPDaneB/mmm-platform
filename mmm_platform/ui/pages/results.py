@@ -21,9 +21,16 @@ def show():
     """Show the results page."""
     st.title("Results")
 
-    # Check if model is fitted
+    # Check for demo mode
+    is_demo = st.session_state.get("demo_mode", False)
+
+    if is_demo:
+        show_demo_results()
+        return
+
+    # Check if model is fitted (non-demo mode)
     if not st.session_state.get("model_fitted") or st.session_state.get("current_model") is None:
-        st.warning("Please run the model first!")
+        st.warning("Please run the model first, or load the demo from the Home page!")
         st.stop()
 
     wrapper = st.session_state.current_model
@@ -638,3 +645,435 @@ def show():
             )
         except Exception as e:
             st.warning(f"Could not generate Bayesian significance report: {str(e)}")
+
+
+def show_demo_results():
+    """Show results page for demo mode with all new features."""
+    import matplotlib.pyplot as plt
+    from mmm_platform.analysis import (
+        create_baseline_channels_donut,
+        create_contribution_rank_over_time,
+        create_roi_effectiveness_bubble,
+        create_response_curves,
+        create_current_vs_marginal_roi,
+        create_spend_vs_breakeven,
+        create_stacked_contributions_area,
+        create_contribution_waterfall_chart,
+    )
+
+    demo = st.session_state.demo
+
+    st.info("Running in **Demo Mode** with simulated data. All features are fully functional!")
+
+    # Tabs for demo features
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "Overview",
+        "Marginal ROI & Priority",
+        "Executive Summary",
+        "Combined Models",
+        "Visualizations"
+    ])
+
+    # =========================================================================
+    # Tab 1: Overview
+    # =========================================================================
+    with tab1:
+        st.subheader("Demo Data Overview")
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Channels", len(demo.channel_cols))
+        with col2:
+            st.metric("Weeks of Data", len(demo.df_scaled))
+        with col3:
+            total_spend = demo.df_scaled[demo.channel_cols].sum().sum() * demo.spend_scale
+            st.metric("Total Spend", f"${total_spend:,.0f}")
+        with col4:
+            total_revenue = demo.contribs[demo.target_col].sum() * demo.revenue_scale
+            st.metric("Total Revenue", f"${total_revenue:,.0f}")
+
+        st.markdown("---")
+
+        # Channel list
+        st.subheader("Channels in Demo")
+        channel_df = pd.DataFrame({
+            "Channel": [ch.replace("_", " ").title() for ch in demo.channel_cols],
+            "Total Spend": [f"${demo.df_scaled[ch].sum() * demo.spend_scale:,.0f}" for ch in demo.channel_cols],
+            "Total Contribution": [f"${demo.contribs[ch].sum() * demo.revenue_scale:,.0f}" for ch in demo.channel_cols],
+        })
+        st.dataframe(channel_df, use_container_width=True, hide_index=True)
+
+        # Contribution breakdown
+        st.markdown("---")
+        st.subheader("Contribution Breakdown")
+
+        breakdown = demo._get_contribution_breakdown()
+        fig = px.pie(
+            values=[breakdown['baseline'], breakdown['channels']],
+            names=['Baseline', 'All Channels'],
+            title="Baseline vs Channels"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # =========================================================================
+    # Tab 2: Marginal ROI & Investment Priority
+    # =========================================================================
+    with tab2:
+        st.subheader("Marginal ROI & Investment Priority")
+
+        st.markdown("""
+        This analysis uses **saturation curve derivatives** to calculate the true marginal ROI
+        (return on the *next* dollar spent), not just the average ROI.
+        """)
+
+        # Get priority table
+        priority_df = demo.marginal_analyzer.get_priority_table()
+
+        # Key metrics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            n_increase = len(priority_df[priority_df['action'] == 'INCREASE'])
+            st.metric("Channels to INCREASE", n_increase)
+        with col2:
+            n_hold = len(priority_df[priority_df['action'] == 'HOLD'])
+            st.metric("Channels to HOLD", n_hold)
+        with col3:
+            n_reduce = len(priority_df[priority_df['action'] == 'REDUCE'])
+            st.metric("Channels to REDUCE", n_reduce)
+
+        st.markdown("---")
+
+        # Priority table
+        st.subheader("Investment Priority Table")
+
+        display_df = priority_df.copy()
+        display_df['current_spend'] = display_df['current_spend'].apply(lambda x: f"${x:,.0f}")
+        display_df['current_roi'] = display_df['current_roi'].apply(lambda x: f"${x:.2f}")
+        display_df['marginal_roi'] = display_df['marginal_roi'].apply(lambda x: f"${x:.2f}")
+        display_df['breakeven_spend'] = display_df['breakeven_spend'].apply(
+            lambda x: f"${x:,.0f}" if x is not None else "N/A"
+        )
+        display_df['headroom_amount'] = display_df['headroom_amount'].apply(lambda x: f"${x:,.0f}")
+
+        # Color-code action column
+        def color_action(val):
+            if val == 'INCREASE':
+                return 'background-color: #90EE90'
+            elif val == 'REDUCE':
+                return 'background-color: #FFB6C1'
+            else:
+                return 'background-color: #FFFFE0'
+
+        styled_df = display_df[['channel', 'current_spend', 'current_roi', 'marginal_roi',
+                                 'priority_rank', 'breakeven_spend', 'headroom_amount', 'action', 'needs_test']]
+        styled_df.columns = ['Channel', 'Current Spend', 'Current ROI', 'Marginal ROI',
+                             'Priority', 'Breakeven Spend', 'Headroom', 'Action', 'Needs Test']
+
+        st.dataframe(styled_df, use_container_width=True, hide_index=True)
+
+        st.markdown("""
+        **Key Concepts:**
+        - **Marginal ROI**: Return on the *next* dollar spent (from saturation curve derivative)
+        - **Breakeven Spend**: Spend level where marginal ROI = $1.00
+        - **Headroom**: Additional spend available before hitting breakeven
+        - **Needs Test**: High uncertainty in ROI estimate - validate with incrementality test
+        """)
+
+        # Visualizations
+        st.markdown("---")
+        st.subheader("Current vs Marginal ROI")
+
+        result = demo.marginal_analyzer.run_full_analysis()
+        channels = [ch.channel for ch in result.channel_analysis]
+        current_rois = [ch.current_roi for ch in result.channel_analysis]
+        marginal_rois = [ch.marginal_roi for ch in result.channel_analysis]
+        channel_names = [ch.channel_name for ch in result.channel_analysis]
+
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            name='Current (Avg) ROI',
+            x=channel_names,
+            y=current_rois,
+            marker_color='steelblue'
+        ))
+        fig.add_trace(go.Bar(
+            name='Marginal ROI',
+            x=channel_names,
+            y=marginal_rois,
+            marker_color='orange'
+        ))
+        fig.add_hline(y=1, line_dash="dash", line_color="red", annotation_text="Breakeven")
+        fig.update_layout(
+            barmode='group',
+            title="Current ROI vs Marginal ROI by Channel",
+            xaxis_tickangle=-45
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # =========================================================================
+    # Tab 3: Executive Summary
+    # =========================================================================
+    with tab3:
+        st.subheader("Executive Summary")
+
+        summary = demo.exec_generator.get_summary_dict()
+
+        # Portfolio Overview
+        st.markdown("### Portfolio Overview")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Spend", f"${summary['portfolio']['total_spend']:,.0f}")
+        with col2:
+            st.metric("Total Contribution", f"${summary['portfolio']['total_contribution']:,.0f}")
+        with col3:
+            st.metric("Portfolio ROI", f"${summary['portfolio']['portfolio_roi']:.2f}")
+
+        st.markdown("---")
+
+        # Recommendations Summary
+        st.markdown("### Investment Recommendations")
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("INCREASE", summary['counts']['increase'], delta="High marginal ROI")
+        with col2:
+            st.metric("HOLD", summary['counts']['hold'], delta="Profitable")
+        with col3:
+            st.metric("REDUCE", summary['counts']['reduce'], delta="Below breakeven")
+        with col4:
+            st.metric("Need Validation", summary['counts']['needs_validation'], delta="Run tests")
+
+        st.markdown("---")
+
+        # INCREASE channels
+        st.markdown("### Channels to INCREASE")
+        st.markdown("*Marginal ROI > $1.50 with headroom to grow*")
+        if summary['recommendations']['increase']:
+            for ch in summary['recommendations']['increase']:
+                with st.expander(f"+ {ch['channel_name']}" + (" (Validate)" if ch['needs_test'] else "")):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"**Current Spend:** ${ch['current_spend']:,.0f}")
+                        st.write(f"**Marginal ROI:** ${ch['marginal_roi']:.2f}")
+                    with col2:
+                        st.write(f"**Headroom:** ${ch['headroom_amount']:,.0f}")
+                        if ch['breakeven_spend']:
+                            st.write(f"**Breakeven Spend:** ${ch['breakeven_spend']:,.0f}")
+        else:
+            st.info("No channels qualify for increase.")
+
+        # HOLD channels
+        st.markdown("### Channels to HOLD")
+        st.markdown("*Marginal ROI $1.00-$1.50 - profitable but limited upside*")
+        if summary['recommendations']['hold']:
+            for ch in summary['recommendations']['hold']:
+                st.write(f"= **{ch['channel_name']}** - Marginal ROI: ${ch['marginal_roi']:.2f}")
+        else:
+            st.info("No channels in hold range.")
+
+        # REDUCE channels
+        st.markdown("### Channels to REDUCE")
+        st.markdown("*Marginal ROI < $1.00 - next dollar loses money*")
+        if summary['recommendations']['reduce']:
+            for ch in summary['recommendations']['reduce']:
+                st.write(f"- **{ch['channel_name']}** - Marginal ROI: ${ch['marginal_roi']:.2f}")
+        else:
+            st.success("No channels below breakeven!")
+
+        # Reallocation Opportunity
+        st.markdown("---")
+        st.markdown("### Reallocation Opportunity")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Funds from REDUCE channels", f"${summary['portfolio']['reallocation_potential']:,.0f}")
+        with col2:
+            st.metric("Headroom in INCREASE channels", f"${summary['portfolio']['headroom_available']:,.0f}")
+
+        if summary['reallocation_moves']:
+            st.markdown("**Top Reallocation Moves:**")
+            for i, move in enumerate(summary['reallocation_moves'][:3]):
+                validate = " *(validate with test)*" if move['needs_validation'] else ""
+                st.write(f"{i+1}. Allocate **${move['amount']:,.0f}** to **{move['to_channel']}**{validate}")
+                st.write(f"   Expected return: ${move['expected_return']:,.0f}")
+
+    # =========================================================================
+    # Tab 4: Combined Model Analysis
+    # =========================================================================
+    with tab4:
+        st.subheader("Combined Model Analysis (Online + Offline)")
+
+        st.markdown("""
+        This analysis combines two models (e.g., Online Revenue + Offline Revenue) to provide
+        unified recommendations across multiple optimization views.
+        """)
+
+        combined_summary = demo.combined_analyzer.get_summary_dict(demo.combined_result)
+
+        # Margin settings
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Online Margin", f"{combined_summary['margins']['online']*100:.0f}%")
+        with col2:
+            st.metric("Offline Margin", f"{combined_summary['margins']['offline']*100:.0f}%")
+
+        st.markdown("---")
+
+        # Master table
+        st.subheader("Marginal ROI by View")
+
+        combined_df = demo.combined_analyzer.get_summary_table(demo.combined_result.combined_analysis)
+        display_cols = ['channel', 'current_spend', 'marginal_online', 'marginal_offline',
+                        'marginal_total', 'marginal_profit', 'action_online', 'action_offline',
+                        'action_total', 'action_profit']
+
+        display_df = combined_df[display_cols].copy()
+        display_df['current_spend'] = display_df['current_spend'].apply(lambda x: f"${x:,.0f}")
+        for col in ['marginal_online', 'marginal_offline', 'marginal_total', 'marginal_profit']:
+            display_df[col] = display_df[col].apply(lambda x: f"${x:.2f}")
+
+        display_df.columns = ['Channel', 'Spend', 'Online', 'Offline', 'Total', 'Profit',
+                              'Act:Online', 'Act:Offline', 'Act:Total', 'Act:Profit']
+
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+        # Conflicts
+        st.markdown("---")
+        st.subheader("Conflicting Recommendations")
+
+        if combined_summary['conflicts']:
+            st.warning("These channels have different recommendations depending on your optimization goal:")
+            for ch in combined_summary['conflicts']:
+                st.write(f"- **{ch}**")
+            st.info("Decision depends on your business objective (revenue vs profit)!")
+        else:
+            st.success("All views agree on recommendations - no conflicts!")
+
+        # View-specific summaries
+        st.markdown("---")
+        st.subheader("Recommendations by View")
+
+        view_tabs = st.tabs(["Online", "Offline", "Total Revenue", "Profit"])
+
+        for i, (view, tab) in enumerate(zip(['online', 'offline', 'total', 'profit'], view_tabs)):
+            with tab:
+                view_data = combined_summary['views'][view]
+                st.markdown(f"**Thresholds:** INCREASE > ${view_data['threshold_high']:.2f}, REDUCE < ${view_data['threshold_low']:.2f}")
+
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("INCREASE", view_data['counts']['increase'])
+                with col2:
+                    st.metric("HOLD", view_data['counts']['hold'])
+                with col3:
+                    st.metric("REDUCE", view_data['counts']['reduce'])
+
+    # =========================================================================
+    # Tab 5: Visualizations
+    # =========================================================================
+    with tab5:
+        st.subheader("Executive Visualizations")
+
+        viz_option = st.selectbox(
+            "Select Visualization",
+            [
+                "Baseline vs Channels (Donut)",
+                "Contribution Rank Over Time",
+                "ROI vs Effectiveness (Bubble)",
+                "Response Curves",
+                "Current vs Marginal ROI",
+                "Spend vs Breakeven",
+                "Stacked Contributions Over Time",
+                "Contribution Waterfall",
+            ]
+        )
+
+        # Generate selected visualization
+        fig = None
+
+        if viz_option == "Baseline vs Channels (Donut)":
+            breakdown = demo._get_contribution_breakdown()
+            fig = create_baseline_channels_donut(
+                breakdown['baseline'], breakdown['channels']
+            )
+
+        elif viz_option == "Contribution Rank Over Time":
+            contrib_ts = demo.contribs[demo.channel_cols].copy()
+            contrib_ts.index = demo.dates
+            fig = create_contribution_rank_over_time(contrib_ts, resample_freq='Q')
+
+        elif viz_option == "ROI vs Effectiveness (Bubble)":
+            metrics = demo._get_channel_metrics()
+            fig = create_roi_effectiveness_bubble(metrics)
+
+        elif viz_option == "Response Curves":
+            curves = demo._get_response_curves()
+            fig = create_response_curves(curves[:7])
+
+        elif viz_option == "Current vs Marginal ROI":
+            result = demo.marginal_analyzer.run_full_analysis()
+            channels = [ch.channel for ch in result.channel_analysis]
+            current_rois = [ch.current_roi for ch in result.channel_analysis]
+            marginal_rois = [ch.marginal_roi for ch in result.channel_analysis]
+            fig = create_current_vs_marginal_roi(channels, current_rois, marginal_rois)
+
+        elif viz_option == "Spend vs Breakeven":
+            result = demo.marginal_analyzer.run_full_analysis()
+            channels = [ch.channel for ch in result.channel_analysis]
+            current_spends = [ch.current_spend for ch in result.channel_analysis]
+            breakeven_spends = [ch.breakeven_spend for ch in result.channel_analysis]
+            fig = create_spend_vs_breakeven(channels, current_spends, breakeven_spends)
+
+        elif viz_option == "Stacked Contributions Over Time":
+            fig = create_stacked_contributions_area(
+                demo.dates,
+                demo.contribs[demo.channel_cols]
+            )
+
+        elif viz_option == "Contribution Waterfall":
+            contrib_dict = {ch: float(demo.contribs[ch].sum()) for ch in demo.channel_cols}
+            contrib_dict['Baseline'] = float(demo.contribs['intercept'].sum())
+            fig = create_contribution_waterfall_chart(contrib_dict)
+
+        if fig is not None:
+            st.pyplot(fig)
+            plt.close(fig)
+
+        # Download option
+        st.markdown("---")
+        if st.button("Generate All Visualizations"):
+            with st.spinner("Generating all visualizations..."):
+                import io
+                import zipfile
+
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+                    # Generate each visualization
+                    viz_funcs = [
+                        ("01_donut.png", lambda: create_baseline_channels_donut(
+                            demo._get_contribution_breakdown()['baseline'],
+                            demo._get_contribution_breakdown()['channels']
+                        )),
+                        ("02_rank_over_time.png", lambda: create_contribution_rank_over_time(
+                            demo.contribs[demo.channel_cols].set_index(demo.dates)
+                        )),
+                        ("03_bubble.png", lambda: create_roi_effectiveness_bubble(
+                            demo._get_channel_metrics()
+                        )),
+                        ("04_response_curves.png", lambda: create_response_curves(
+                            demo._get_response_curves()[:7]
+                        )),
+                    ]
+
+                    for filename, func in viz_funcs:
+                        fig = func()
+                        img_buffer = io.BytesIO()
+                        fig.savefig(img_buffer, format='png', dpi=150, bbox_inches='tight')
+                        plt.close(fig)
+                        zf.writestr(filename, img_buffer.getvalue())
+
+                st.download_button(
+                    "Download All Visualizations (ZIP)",
+                    data=zip_buffer.getvalue(),
+                    file_name="mmm_visualizations.zip",
+                    mime="application/zip"
+                )

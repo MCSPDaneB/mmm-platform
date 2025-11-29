@@ -7,7 +7,10 @@
       "Bash(venvScriptspython.exe -c \"import pymc; print(''pymc:'', pymc.__version__); import pymc_extras; print(''pymc_extras:'', pymc_extras.__version__)\")",
       "Bash(.venvScriptspython.exe -c \"import pymc; print(''pymc:'', pymc.__version__); import pymc_extras; print(''pymc_extras:'', pymc_extras.__version__)\")",
       "Bash(./venv/Scripts/python.exe:*)",
-      "Bash(./venv/Scripts/pip.exe:*)"
+      "Bash(./venv/Scripts/pip.exe:*)",
+      "Bash(dir /s \"C:\\localProjects\\pymc_testing\\mmm_platform\")",
+      "Bash(dir \"C:\\localProjects\\pymc_testing\\mmm_platform\")",
+      "Bash(findstr:*)"
     ],
     "deny": [],
     "ask": []

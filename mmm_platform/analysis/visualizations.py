@@ -549,12 +549,17 @@ def create_channel_roi_bar_chart(
 def create_contribution_waterfall_chart(
     contributions: Dict[str, float],
     figsize: Tuple[int, int] = (14, 8),
-    title: str = "Contribution Breakdown"
+    title: str = "Contribution Breakdown (Waterfall)"
 ) -> plt.Figure:
-    """Create a waterfall-style chart showing contribution breakdown.
+    """Create a true waterfall chart showing contribution breakdown.
+
+    The chart shows baseline at the top, then each channel contribution
+    cascading down to build the total. Each bar starts where the previous
+    one ended, creating a waterfall effect.
 
     Args:
-        contributions: Dictionary of component names to contribution values
+        contributions: Dictionary of component names to contribution values.
+                      Should include 'Baseline' key for the baseline contribution.
         figsize: Figure size
         title: Plot title
 
@@ -563,35 +568,491 @@ def create_contribution_waterfall_chart(
     """
     fig, ax = plt.subplots(figsize=figsize)
 
-    names = list(contributions.keys())
-    values = list(contributions.values())
+    # Separate baseline from channels
+    baseline_val = contributions.get('Baseline', 0)
+    channel_contribs = {k: v for k, v in contributions.items() if k != 'Baseline'}
 
-    # Calculate percentages
-    total = sum(abs(v) for v in values)
-    percentages = [(v / total * 100) if total > 0 else 0 for v in values]
+    # Sort channels by contribution (descending)
+    sorted_channels = sorted(channel_contribs.items(), key=lambda x: -x[1])
 
-    # Sort by absolute contribution
-    sorted_indices = np.argsort([abs(v) for v in values])[::-1]
-    sorted_names = [names[i] for i in sorted_indices]
-    sorted_values = [values[i] for i in sorted_indices]
-    sorted_pcts = [percentages[i] for i in sorted_indices]
+    # Build waterfall data: Baseline first, then channels, then Total
+    names = ['Baseline'] + [ch[0] for ch in sorted_channels] + ['Total']
+    values = [baseline_val] + [ch[1] for ch in sorted_channels]
+    total = sum(values)
 
-    # Colors based on sign
-    colors = ['steelblue' if v >= 0 else 'lightcoral' for v in sorted_values]
+    # Calculate running totals for bar positions
+    # Each bar starts at the cumulative sum up to that point
+    running_total = 0
+    bar_starts = []
+    bar_values = []
 
-    bars = ax.barh(range(len(sorted_names)), sorted_pcts, color=colors, alpha=0.7)
+    for val in values:
+        bar_starts.append(running_total)
+        bar_values.append(val)
+        running_total += val
 
-    ax.set_yticks(range(len(sorted_names)))
-    ax.set_yticklabels(sorted_names)
-    ax.set_xlabel("% of Total Absolute Contribution")
-    ax.set_title(title)
+    # Add total bar (starts at 0, goes to total)
+    bar_starts.append(0)
+    bar_values.append(total)
+
+    # Y positions (reversed so Baseline is at top)
+    y_pos = np.arange(len(names))[::-1]
+
+    # Colors: baseline=orange, positive=blue, negative=red, total=green
+    colors = []
+    for i, (name, val) in enumerate(zip(names, bar_values)):
+        if name == 'Baseline':
+            colors.append('#E59400')  # Orange for baseline
+        elif name == 'Total':
+            colors.append('#2E8B57')  # Green for total
+        elif val >= 0:
+            colors.append('#4A90D9')  # Blue for positive
+        else:
+            colors.append('#DC143C')  # Red for negative
+
+    # Draw bars
+    bars = ax.barh(y_pos, bar_values, left=bar_starts, color=colors, alpha=0.8, height=0.6)
+
+    # Draw connector lines between bars (waterfall effect)
+    for i in range(len(names) - 2):  # Don't connect to Total
+        end_of_current = bar_starts[i] + bar_values[i]
+        # Draw line from end of current bar to start of next bar
+        ax.plot([end_of_current, end_of_current],
+                [y_pos[i] - 0.3, y_pos[i + 1] + 0.3],
+                color='gray', linestyle='--', linewidth=1, alpha=0.5)
+
+    # Labels and formatting
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(names)
+    ax.set_xlabel("Contribution Value")
+    ax.set_title(title, fontsize=14, fontweight='bold')
     ax.grid(axis="x", alpha=0.3)
 
-    # Add value labels
-    for i, (bar, pct, val) in enumerate(zip(bars, sorted_pcts, sorted_values)):
-        ax.text(bar.get_width() + 0.5, bar.get_y() + bar.get_height()/2,
-                f'{pct:.1f}% ({val:,.0f})',
-                va='center', fontsize=9)
+    # Add value labels on bars
+    for i, (bar, val, start) in enumerate(zip(bars, bar_values, bar_starts)):
+        # Position label at end of bar
+        label_x = start + val
+        label_text = f'{val:,.0f}'
+
+        # Adjust label position based on bar direction
+        if val >= 0:
+            ax.text(label_x + total * 0.01, y_pos[i], label_text,
+                    va='center', ha='left', fontsize=9, fontweight='bold')
+        else:
+            ax.text(start - total * 0.01, y_pos[i], label_text,
+                    va='center', ha='right', fontsize=9, fontweight='bold')
+
+    # Add percentage labels
+    for i, (name, val) in enumerate(zip(names, bar_values)):
+        if name != 'Total' and total > 0:
+            pct = (val / total) * 100
+            ax.text(bar_starts[i] + val / 2, y_pos[i] - 0.35,
+                    f'({pct:.1f}%)', va='top', ha='center', fontsize=8, color='gray')
+
+    # Format x-axis
+    def format_axis(x, p):
+        if abs(x) >= 1e6:
+            return f'{x/1e6:.1f}M'
+        elif abs(x) >= 1e3:
+            return f'{x/1e3:.0f}K'
+        else:
+            return f'{x:.0f}'
+
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(format_axis))
+
+    # Set x-axis limits with padding
+    ax.set_xlim(-total * 0.05, total * 1.15)
 
     plt.tight_layout()
+    return fig
+
+
+def create_baseline_channels_donut(
+    baseline_contrib: float,
+    channels_contrib: float,
+    figsize: Tuple[int, int] = (8, 8),
+    title: str = "Contribution: Baseline vs All Channels"
+) -> plt.Figure:
+    """Create a donut chart showing baseline vs all channels contribution.
+
+    Args:
+        baseline_contrib: Total baseline contribution (intercept + trend + seasonality)
+        channels_contrib: Total contribution from all marketing channels
+        figsize: Figure size
+        title: Plot title
+
+    Returns:
+        Matplotlib figure
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+
+    sizes = [baseline_contrib, channels_contrib]
+    labels = ['Baseline', 'All Channels']
+    colors = ['#E59400', '#4A90D9']
+
+    # Create donut
+    wedges, texts, autotexts = ax.pie(
+        sizes,
+        labels=None,
+        autopct='%1.0f%%',
+        colors=colors,
+        startangle=90,
+        pctdistance=0.75,
+        wedgeprops=dict(width=0.5)
+    )
+
+    for autotext in autotexts:
+        autotext.set_fontsize(16)
+        autotext.set_fontweight('bold')
+
+    ax.legend(wedges, labels, loc='lower center', ncol=2, fontsize=12)
+    ax.set_title(title, fontsize=14, fontweight='bold')
+
+    plt.tight_layout()
+    return fig
+
+
+def create_contribution_rank_over_time(
+    contrib_ts: pd.DataFrame,
+    resample_freq: str = 'Q',
+    figsize: Tuple[int, int] = (14, 7),
+    title: str = "Contribution Rank Over Time"
+) -> plt.Figure:
+    """Create a line chart showing contribution rank changes over time.
+
+    Args:
+        contrib_ts: DataFrame with columns as channels and DatetimeIndex
+        resample_freq: Resampling frequency ('Q' for quarterly, 'M' for monthly)
+        figsize: Figure size
+        title: Plot title
+
+    Returns:
+        Matplotlib figure
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Resample and calculate ranks
+    contrib_resampled = contrib_ts.resample(resample_freq).sum()
+    ranks = contrib_resampled.rank(axis=1, ascending=False)
+
+    # Color palette
+    n_cols = len(ranks.columns)
+    colors = plt.cm.tab10(np.linspace(0, 1, min(n_cols, 10)))
+
+    for i, col in enumerate(ranks.columns):
+        color = colors[i % len(colors)]
+        ax.plot(ranks.index, ranks[col], 'o-', label=col,
+                color=color, linewidth=2, markersize=6)
+
+    ax.set_xlabel('Time Period', fontsize=12)
+    ax.set_ylabel('Contribution Rank', fontsize=12)
+    ax.set_title(title, fontsize=14, fontweight='bold')
+    ax.invert_yaxis()  # Rank 1 at top
+    ax.set_yticks(range(1, len(ranks.columns) + 1))
+    ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    return fig
+
+
+def create_roi_effectiveness_bubble(
+    channel_metrics: List[Dict],
+    figsize: Tuple[int, int] = (10, 8),
+    title: str = "ROI vs. Effectiveness"
+) -> plt.Figure:
+    """Create a bubble chart showing ROI vs effectiveness.
+
+    Args:
+        channel_metrics: List of dicts with keys: name, spend, roi, effectiveness
+        figsize: Figure size
+        title: Plot title
+
+    Returns:
+        Matplotlib figure
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Normalize bubble sizes
+    spends = [m['spend'] for m in channel_metrics]
+    max_spend = max(spends) if spends else 1
+    min_size = 200
+    max_size = 2000
+
+    # Color palette
+    n_channels = len(channel_metrics)
+    colors = plt.cm.tab10(np.linspace(0, 1, min(n_channels, 10)))
+
+    for i, m in enumerate(channel_metrics):
+        bubble_size = min_size + (m['spend'] / max_spend) * (max_size - min_size)
+        color = colors[i % len(colors)]
+        ax.scatter(m['roi'], m['effectiveness'], s=bubble_size, color=color,
+                   alpha=0.6, edgecolors='white', linewidth=2, label=m['name'])
+
+    ax.set_xlabel('ROI', fontsize=12)
+    ax.set_ylabel('Effectiveness (Incremental Outcome)', fontsize=12)
+    ax.set_title(title, fontsize=14, fontweight='bold')
+    ax.legend(loc='lower right', fontsize=9)
+    ax.grid(True, alpha=0.3)
+
+    # Add note
+    ax.text(0.02, 0.98,
+            "Note: Bubble size = Media Spend\nEffectiveness = Incremental Outcome",
+            transform=ax.transAxes, fontsize=9, verticalalignment='top',
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+    plt.tight_layout()
+    return fig
+
+
+def create_response_curves(
+    channel_data: List[Dict],
+    figsize: Tuple[int, int] = (12, 8),
+    title: str = "Response Curves by Marketing Channel"
+) -> plt.Figure:
+    """Create response curves showing spend vs contribution for each channel.
+
+    Args:
+        channel_data: List of dicts with keys:
+            - name: channel display name
+            - spend_range: array of spend values
+            - contribution: array of contribution values at each spend level
+            - current_spend: current total spend
+            - current_contrib: current contribution
+        figsize: Figure size
+        title: Plot title
+
+    Returns:
+        Matplotlib figure
+    """
+    from matplotlib.lines import Line2D
+
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Color palette
+    n_channels = len(channel_data)
+    colors = plt.cm.tab10(np.linspace(0, 1, min(n_channels, 10)))
+
+    for i, ch in enumerate(channel_data):
+        color = colors[i % len(colors)]
+        spend_range = ch['spend_range']
+        contribution = ch['contribution']
+        current_spend = ch['current_spend']
+
+        # Find index of current spend
+        current_idx = np.argmin(np.abs(spend_range - current_spend))
+
+        # Plot solid line below current spend, dashed above
+        ax.plot(spend_range[:current_idx+1], contribution[:current_idx+1],
+                color=color, linewidth=2, label=ch['name'])
+        ax.plot(spend_range[current_idx:], contribution[current_idx:],
+                color=color, linewidth=2, linestyle='--')
+
+        # Mark current spend point
+        ax.scatter([current_spend], [contribution[current_idx]],
+                   color=color, s=100, zorder=5, edgecolors='black', linewidth=2)
+
+    ax.set_xlabel('Spend', fontsize=12)
+    ax.set_ylabel('Incremental Outcome', fontsize=12)
+    ax.set_title(title, fontsize=14, fontweight='bold')
+
+    # Format axes
+    def format_axis(x, p):
+        if x >= 1e6:
+            return f'{x/1e6:.0f}M'
+        elif x >= 1e3:
+            return f'{x/1e3:.0f}K'
+        else:
+            return f'{x:.0f}'
+
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(format_axis))
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(format_axis))
+
+    # Build legend
+    legend_elements = [
+        Line2D([0], [0], color='gray', linestyle='-', label='Below current spend'),
+        Line2D([0], [0], color='gray', linestyle='--', label='Above current spend'),
+        Line2D([0], [0], marker='o', color='gray', label='Current spend',
+               markersize=8, linestyle='None')
+    ]
+
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles=handles + legend_elements, loc='upper left', fontsize=9)
+
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    return fig
+
+
+def create_current_vs_marginal_roi(
+    channels: List[str],
+    current_rois: List[float],
+    marginal_rois: List[float],
+    channel_display_names: Optional[Dict[str, str]] = None,
+    figsize: Tuple[int, int] = (12, 7),
+    title: str = "Current ROI vs Marginal ROI by Channel"
+) -> plt.Figure:
+    """Create a grouped bar chart comparing current and marginal ROI.
+
+    Args:
+        channels: List of channel names
+        current_rois: List of current (average) ROI values
+        marginal_rois: List of marginal ROI values
+        channel_display_names: Optional mapping of channel names to display names
+        figsize: Figure size
+        title: Plot title
+
+    Returns:
+        Matplotlib figure
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Create display names
+    if channel_display_names:
+        display_names = [channel_display_names.get(ch, ch) for ch in channels]
+    else:
+        display_names = [
+            ch.replace("PaidMedia_", "")
+              .replace("_spend", "")
+              .replace("_", " ")
+            for ch in channels
+        ]
+
+    # Sort by current spend (approximated by keeping original order)
+    x = np.arange(len(display_names))
+    width = 0.35
+
+    bars1 = ax.bar(x - width/2, current_rois, width, label='Current (Avg) ROI', color='#4A90D9')
+    bars2 = ax.bar(x + width/2, marginal_rois, width, label='Marginal ROI', color='#E59400')
+
+    ax.axhline(1, color='red', linestyle='--', alpha=0.7, label='Breakeven (ROI = 1)')
+    ax.set_xticks(x)
+    ax.set_xticklabels(display_names, rotation=45, ha='right')
+    ax.set_ylabel('ROI ($)')
+    ax.set_title(title, fontsize=14, fontweight='bold')
+    ax.legend()
+    ax.grid(axis='y', alpha=0.3)
+
+    plt.tight_layout()
+    return fig
+
+
+def create_spend_vs_breakeven(
+    channels: List[str],
+    current_spends: List[float],
+    breakeven_spends: List[float],
+    channel_display_names: Optional[Dict[str, str]] = None,
+    figsize: Tuple[int, int] = (12, 7),
+    title: str = "Current Spend vs Breakeven Spend (Headroom)"
+) -> plt.Figure:
+    """Create a horizontal bar chart comparing current spend to breakeven spend.
+
+    Args:
+        channels: List of channel names
+        current_spends: List of current spend values
+        breakeven_spends: List of breakeven spend values
+        channel_display_names: Optional mapping of channel names to display names
+        figsize: Figure size
+        title: Plot title
+
+    Returns:
+        Matplotlib figure
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Filter to channels with valid breakeven
+    valid_indices = [i for i, b in enumerate(breakeven_spends) if b is not None]
+    channels = [channels[i] for i in valid_indices]
+    current_spends = [current_spends[i] for i in valid_indices]
+    breakeven_spends = [breakeven_spends[i] for i in valid_indices]
+
+    # Create display names
+    if channel_display_names:
+        display_names = [channel_display_names.get(ch, ch) for ch in channels]
+    else:
+        display_names = [
+            ch.replace("PaidMedia_", "")
+              .replace("_spend", "")
+              .replace("_", " ")
+            for ch in channels
+        ]
+
+    y = np.arange(len(display_names))
+    height = 0.35
+
+    bars1 = ax.barh(y - height/2, current_spends, height, label='Current Spend', color='#4A90D9')
+    bars2 = ax.barh(y + height/2, breakeven_spends, height, label='Breakeven Spend', color='#90D94A', alpha=0.7)
+
+    ax.set_yticks(y)
+    ax.set_yticklabels(display_names)
+    ax.set_xlabel('Spend ($)')
+    ax.set_title(title, fontsize=14, fontweight='bold')
+    ax.legend()
+
+    # Format x-axis
+    def format_axis(x, p):
+        if x >= 1e6:
+            return f'{x/1e6:.1f}M'
+        elif x >= 1e3:
+            return f'{x/1e3:.0f}K'
+        else:
+            return f'{x:.0f}'
+
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(format_axis))
+    ax.grid(axis='x', alpha=0.3)
+
+    plt.tight_layout()
+    return fig
+
+
+def create_stacked_contributions_area(
+    dates: pd.DatetimeIndex,
+    contributions: pd.DataFrame,
+    figsize: Tuple[int, int] = (14, 7),
+    title: str = "Contribution Over Time by Channel"
+) -> plt.Figure:
+    """Create a stacked area chart of contributions over time.
+
+    Args:
+        dates: DatetimeIndex for x-axis
+        contributions: DataFrame with columns as components, values as contributions
+        figsize: Figure size
+        title: Plot title
+
+    Returns:
+        Matplotlib figure
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+
+    # Ensure all values are positive for stacking
+    contrib_positive = contributions.clip(lower=0)
+
+    # Color palette
+    n_cols = len(contrib_positive.columns)
+    colors = plt.cm.tab20(np.linspace(0, 1, n_cols))
+
+    # Stack plot
+    ax.stackplot(dates,
+                 [contrib_positive[col].values for col in contrib_positive.columns],
+                 labels=contrib_positive.columns,
+                 colors=colors)
+
+    ax.set_xlabel('Time Period', fontsize=12)
+    ax.set_ylabel('Contribution', fontsize=12)
+    ax.set_title(title, fontsize=14, fontweight='bold')
+    ax.legend(loc='upper left', bbox_to_anchor=(0, -0.15), ncol=5, fontsize=9)
+
+    # Format y-axis
+    def format_axis(x, p):
+        if x >= 1e6:
+            return f'{x/1e6:.1f}M'
+        elif x >= 1e3:
+            return f'{x/1e3:.0f}K'
+        else:
+            return f'{x:.0f}'
+
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(format_axis))
+
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.2)
     return fig

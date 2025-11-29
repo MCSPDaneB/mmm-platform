@@ -18,6 +18,11 @@ def show():
     """Show the model configuration page."""
     st.title("⚙️ Configure Model")
 
+    # Check for demo mode
+    if st.session_state.get("demo_mode", False):
+        st.info("**Demo Mode**: Configuration is pre-set with simulated data. Go to **Results** to explore!")
+        st.stop()
+
     # Check if data is loaded
     if st.session_state.get("current_data") is None:
         st.warning("Please upload data first!")

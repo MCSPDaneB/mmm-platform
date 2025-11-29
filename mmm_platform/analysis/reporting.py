@@ -10,6 +10,8 @@ import logging
 
 from .diagnostics import ModelDiagnostics
 from .contributions import ContributionAnalyzer
+from .marginal_roi import MarginalROIAnalyzer
+from .executive_summary import ExecutiveSummaryGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -261,3 +263,56 @@ class ReportGenerator:
         contribs.to_csv(output_path, index=False)
 
         logger.info(f"Contributions exported to {output_path}")
+
+    def generate_executive_summary(self) -> dict:
+        """
+        Generate executive summary with investment recommendations.
+
+        Returns
+        -------
+        dict
+            Executive summary data including:
+            - Portfolio metrics
+            - Channel recommendations (INCREASE/HOLD/REDUCE)
+            - Marginal ROI analysis
+            - Reallocation opportunities
+        """
+        try:
+            exec_gen = ExecutiveSummaryGenerator.from_mmm_wrapper(self.wrapper)
+            return exec_gen.get_summary_dict()
+        except Exception as e:
+            logger.warning(f"Could not generate executive summary: {e}")
+            return {
+                "error": str(e),
+                "message": "Executive summary requires inference data from model fitting."
+            }
+
+    def print_executive_summary(self) -> None:
+        """Print formatted executive summary to console."""
+        try:
+            exec_gen = ExecutiveSummaryGenerator.from_mmm_wrapper(self.wrapper)
+            exec_gen.print_summary()
+        except Exception as e:
+            logger.warning(f"Could not generate executive summary: {e}")
+            print(f"Error generating executive summary: {e}")
+
+    def export_priority_table_csv(self, output_path: Path) -> None:
+        """
+        Export investment priority table to CSV.
+
+        Parameters
+        ----------
+        output_path : Path
+            Path to save the CSV.
+        """
+        try:
+            marginal_analyzer = MarginalROIAnalyzer.from_mmm_wrapper(self.wrapper)
+            priority_df = marginal_analyzer.get_priority_table()
+
+            output_path = Path(output_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            priority_df.to_csv(output_path, index=False)
+
+            logger.info(f"Priority table exported to {output_path}")
+        except Exception as e:
+            logger.warning(f"Could not export priority table: {e}")
