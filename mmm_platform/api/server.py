@@ -254,7 +254,7 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
         # Validate the data
         from mmm_platform.core.validation import DataValidator
         validator = DataValidator(config)
-        validation_result = validator.validate(df)
+        validation_result = validator.validate_all(df)
         if not validation_result.is_valid:
             raise ValueError(f"Data validation failed: {validation_result.errors}")
 
