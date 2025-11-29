@@ -289,6 +289,7 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
         from mmm_platform.analysis.contributions import ContributionAnalyzer
         contrib_analyzer = ContributionAnalyzer.from_mmm_wrapper(wrapper)
         channel_roi = contrib_analyzer.get_channel_roi()
+        grouped_contrib = contrib_analyzer.get_grouped_contributions()
 
         # Save inference data
         results_path = job_store.results_dir / f"{job_id}"
@@ -297,21 +298,35 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
         idata_path = results_path / "inference_data.nc"
         wrapper.idata.to_netcdf(str(idata_path))
 
-        # Save contributions
+        # Save contributions CSV
         contributions.to_csv(results_path / "contributions.csv")
+
+        # Save channel ROI CSV
+        channel_roi.to_csv(results_path / "channel_roi.csv", index=False)
 
         logger.info(f"Job {job_id}: Results saved to {results_path}")
 
-        # Prepare result
+        # Prepare comprehensive result
         result = {
             "fit_statistics": fit_stats,
             "channel_roi": channel_roi.to_dict(orient="records"),
             "contributions": {
                 "total_by_channel": contributions.sum().to_dict(),
+                "time_series": contributions.reset_index().to_dict(orient="records"),
             },
+            "grouped_contributions": grouped_contrib.to_dict(orient="records"),
             "diagnostics": {
                 "r2": fit_stats.get("r2"),
                 "mape": fit_stats.get("mape"),
+                "rmse": fit_stats.get("rmse"),
+                "n_observations": fit_stats.get("n_observations"),
+            },
+            "model_info": {
+                "channels": config.get_channel_columns(),
+                "target_column": config.data.target_column,
+                "date_column": config.data.date_column,
+                "revenue_scale": config.data.revenue_scale,
+                "spend_scale": config.data.spend_scale,
             },
             "inference_data_path": str(idata_path),
         }
@@ -481,6 +496,56 @@ async def delete_job(job_id: str):
         shutil.rmtree(results_path)
 
     return {"message": f"Job {job_id} deleted"}
+
+
+@app.get("/download/{job_id}/idata")
+async def download_inference_data(job_id: str):
+    """Download the inference data file for a completed job."""
+    from fastapi.responses import FileResponse
+
+    job = job_store.get_job(job_id)
+
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    if job["status"] != JobStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="Job not completed")
+
+    idata_path = job_store.results_dir / job_id / "inference_data.nc"
+
+    if not idata_path.exists():
+        raise HTTPException(status_code=404, detail="Inference data file not found")
+
+    return FileResponse(
+        path=str(idata_path),
+        filename=f"{job_id}_inference_data.nc",
+        media_type="application/octet-stream"
+    )
+
+
+@app.get("/download/{job_id}/contributions")
+async def download_contributions(job_id: str):
+    """Download the contributions CSV for a completed job."""
+    from fastapi.responses import FileResponse
+
+    job = job_store.get_job(job_id)
+
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    if job["status"] != JobStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="Job not completed")
+
+    csv_path = job_store.results_dir / job_id / "contributions.csv"
+
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail="Contributions file not found")
+
+    return FileResponse(
+        path=str(csv_path),
+        filename=f"{job_id}_contributions.csv",
+        media_type="text/csv"
+    )
 
 
 # ============================================================================

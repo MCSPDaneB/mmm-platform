@@ -28,6 +28,11 @@ def show():
         show_demo_results()
         return
 
+    # Check for EC2 results mode
+    if st.session_state.get("ec2_mode") and st.session_state.get("ec2_results"):
+        show_ec2_results()
+        return
+
     # Check if model is fitted (non-demo mode)
     if not st.session_state.get("model_fitted") or st.session_state.get("current_model") is None:
         st.warning("Please run the model first, or load the demo from the Home page!")
@@ -645,6 +650,119 @@ def show():
             )
         except Exception as e:
             st.warning(f"Could not generate Bayesian significance report: {str(e)}")
+
+
+def show_ec2_results():
+    """Show results page for EC2 mode with results from the API."""
+    results = st.session_state.ec2_results
+    job_id = st.session_state.get("ec2_job_id", "unknown")
+
+    st.info(f"Showing results from EC2 model run. Job ID: `{job_id}`")
+
+    # Tabs
+    tab1, tab2, tab3 = st.tabs([
+        "Overview",
+        "Channel ROI",
+        "Contributions"
+    ])
+
+    # =========================================================================
+    # Tab 1: Overview
+    # =========================================================================
+    with tab1:
+        st.subheader("Model Overview")
+
+        fit_stats = results.get("fit_statistics", {})
+        diagnostics = results.get("diagnostics", {})
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            r2 = diagnostics.get("r2") or fit_stats.get("r2", "N/A")
+            st.metric("R²", f"{r2:.3f}" if isinstance(r2, (int, float)) else r2)
+        with col2:
+            mape = diagnostics.get("mape") or fit_stats.get("mape", "N/A")
+            st.metric("MAPE", f"{mape:.1f}%" if isinstance(mape, (int, float)) else mape)
+        with col3:
+            rmse = diagnostics.get("rmse") or fit_stats.get("rmse", "N/A")
+            st.metric("RMSE", f"{rmse:.1f}" if isinstance(rmse, (int, float)) else rmse)
+        with col4:
+            n_obs = diagnostics.get("n_observations") or fit_stats.get("n_observations", "N/A")
+            st.metric("Observations", n_obs)
+
+        st.markdown("---")
+        st.subheader("Fit Statistics")
+        st.json(fit_stats)
+
+    # =========================================================================
+    # Tab 2: Channel ROI
+    # =========================================================================
+    with tab2:
+        st.subheader("Channel ROI")
+
+        channel_roi = results.get("channel_roi", [])
+        if channel_roi:
+            roi_df = pd.DataFrame(channel_roi)
+            st.dataframe(roi_df, use_container_width=True, hide_index=True)
+
+            # ROI bar chart
+            if "channel" in roi_df.columns and "roi" in roi_df.columns:
+                fig = px.bar(
+                    roi_df.sort_values("roi", ascending=True),
+                    x="roi",
+                    y="channel",
+                    orientation="h",
+                    title="ROI by Channel",
+                    labels={"roi": "ROI", "channel": "Channel"}
+                )
+                fig.add_vline(x=1, line_dash="dash", line_color="red", annotation_text="Breakeven")
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("No channel ROI data available")
+
+    # =========================================================================
+    # Tab 3: Contributions
+    # =========================================================================
+    with tab3:
+        st.subheader("Contributions")
+
+        contributions = results.get("contributions", {})
+
+        # Total by channel
+        total_by_channel = contributions.get("total_by_channel", {})
+        if total_by_channel:
+            st.markdown("#### Total Contribution by Channel")
+            contrib_df = pd.DataFrame([
+                {"Channel": k, "Contribution": v}
+                for k, v in total_by_channel.items()
+            ]).sort_values("Contribution", ascending=False)
+
+            st.dataframe(contrib_df, use_container_width=True, hide_index=True)
+
+            # Pie chart
+            fig = px.pie(
+                contrib_df[contrib_df["Contribution"] > 0],
+                values="Contribution",
+                names="Channel",
+                title="Contribution Breakdown"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Time series
+        time_series = contributions.get("time_series", [])
+        if time_series:
+            st.markdown("#### Contribution Time Series")
+            ts_df = pd.DataFrame(time_series)
+            st.dataframe(ts_df.head(20), use_container_width=True, hide_index=True)
+            st.caption(f"Showing first 20 of {len(ts_df)} rows")
+
+    # Reset button
+    st.markdown("---")
+    if st.button("Clear EC2 Results & Run New Model"):
+        st.session_state.ec2_mode = False
+        st.session_state.ec2_results = None
+        st.session_state.ec2_job_id = None
+        st.session_state.model_fitted = False
+        st.rerun()
 
 
 def show_demo_results():

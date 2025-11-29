@@ -309,6 +309,65 @@ class EC2ModelClient:
         response = self._client.delete(f"/jobs/{job_id}")
         response.raise_for_status()
 
+    def download_inference_data(self, job_id: str, output_path: str) -> str:
+        """
+        Download the inference data file for a completed job.
+
+        Parameters
+        ----------
+        job_id : str
+            The job ID.
+        output_path : str
+            Path to save the .nc file.
+
+        Returns
+        -------
+        str
+            Path to the downloaded file.
+        """
+        from pathlib import Path
+
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Stream the download
+        with self._client.stream("GET", f"/download/{job_id}/idata") as response:
+            response.raise_for_status()
+            with open(output_path, "wb") as f:
+                for chunk in response.iter_bytes():
+                    f.write(chunk)
+
+        return str(output_path)
+
+    def download_contributions(self, job_id: str, output_path: str) -> str:
+        """
+        Download the contributions CSV for a completed job.
+
+        Parameters
+        ----------
+        job_id : str
+            The job ID.
+        output_path : str
+            Path to save the CSV file.
+
+        Returns
+        -------
+        str
+            Path to the downloaded file.
+        """
+        from pathlib import Path
+
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with self._client.stream("GET", f"/download/{job_id}/contributions") as response:
+            response.raise_for_status()
+            with open(output_path, "wb") as f:
+                for chunk in response.iter_bytes():
+                    f.write(chunk)
+
+        return str(output_path)
+
 
 # Convenience function
 def get_client(base_url: Optional[str] = None) -> EC2ModelClient:

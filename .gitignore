@@ -49,6 +49,7 @@ saved_models/
 data/
 output/
 projects/
+ec2_results/
 *.mmm
 
 # Logs

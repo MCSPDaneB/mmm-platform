@@ -298,21 +298,43 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
             # Get results
             results = client.get_results(job_id)
 
-            status_text.text("Loading results...")
+            status_text.text("Downloading inference data from EC2...")
+            progress_bar.progress(90)
+
+            # Download inference data file
+            import arviz as az
+            from pathlib import Path
+
+            download_dir = Path("ec2_results") / job_id
+            download_dir.mkdir(parents=True, exist_ok=True)
+
+            idata_path = download_dir / "inference_data.nc"
+            client.download_inference_data(job_id, str(idata_path))
+
+            status_text.text("Loading inference data...")
             progress_bar.progress(95)
 
-            # Store results in session state
-            st.session_state.ec2_results = {
-                "job_id": job_id,
-                "fit_statistics": results.fit_statistics,
-                "channel_roi": results.channel_roi,
-                "contributions": results.contributions,
-            }
+            # Load the inference data
+            idata = az.from_netcdf(str(idata_path))
 
-            # Create a lightweight wrapper for results display
-            # (Full wrapper would need idata which is on EC2)
+            # Create MMMWrapper with the downloaded data
+            wrapper = MMMWrapper(config)
+            wrapper.df_raw = df.copy()
+            wrapper.idata = idata
+            wrapper.fitted_at = datetime.now()
+            wrapper.fit_duration_seconds = total_time
+
+            # Prepare data so wrapper is fully functional
+            try:
+                wrapper.prepare_data()
+            except Exception as prep_error:
+                st.warning(f"Could not fully prepare wrapper: {prep_error}")
+
+            # Store in session state (same as local model)
+            st.session_state.current_model = wrapper
             st.session_state.model_fitted = True
             st.session_state.ec2_job_id = job_id
+            # Don't set ec2_mode - we now have a full wrapper like local mode
 
             progress_bar.progress(100)
             status_text.text("Complete!")
@@ -342,10 +364,20 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
                 roi_df = pd.DataFrame(results.channel_roi)
                 st.dataframe(roi_df, use_container_width=True, hide_index=True)
 
+            # Save model if requested
+            if save_model:
+                from mmm_platform.model.persistence import ModelPersistence
+
+                save_dir = Path("saved_models") / f"{config.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                try:
+                    ModelPersistence.save(wrapper, save_dir)
+                    st.info(f"Model saved to: {save_dir}")
+                except Exception as e:
+                    st.warning(f"Could not save model: {e}")
+
             st.balloons()
             st.markdown("---")
-            st.success("Model complete! Results are stored on EC2.")
-            st.info(f"Job ID: `{job_id}` - Use this to retrieve full results if needed.")
+            st.success("Navigate to **Results** in the sidebar to explore the full model output.")
 
         except Exception as e:
             progress_bar.progress(100)
