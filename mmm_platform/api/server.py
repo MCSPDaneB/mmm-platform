@@ -247,7 +247,16 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
         job_store.update_job(job_id, message="Creating model...", progress=0.25)
 
         wrapper = MMMWrapper(config)
-        wrapper.load_data(df)
+
+        # Set DataFrame directly (load_data expects a file path)
+        wrapper.df_raw = df.copy()
+
+        # Validate the data
+        from mmm_platform.core.validation import DataValidator
+        validator = DataValidator(config)
+        validation_result = validator.validate(df)
+        if not validation_result.is_valid:
+            raise ValueError(f"Data validation failed: {validation_result.errors}")
 
         logger.info(f"Job {job_id}: Starting model fitting (this may take a while)...")
         job_store.update_job(
