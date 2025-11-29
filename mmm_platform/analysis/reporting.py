@@ -139,6 +139,44 @@ class ReportGenerator:
         channel_roi = self.contributions.get_channel_roi()
         grouped = self.contributions.get_grouped_contributions()
 
+        # Build channel ROI rows
+        channel_rows = []
+        for _, row in channel_roi.iterrows():
+            channel_rows.append(
+                f"<tr><td>{row['channel']}</td>"
+                f"<td>${row['spend_real']:,.0f}</td>"
+                f"<td>${row['contribution_real']:,.0f}</td>"
+                f"<td>{row['roi']:.2f}</td></tr>"
+            )
+        channel_rows_html = "\n            ".join(channel_rows)
+
+        # Build grouped contribution rows
+        grouped_rows = []
+        for _, row in grouped.iterrows():
+            grouped_rows.append(
+                f"<tr><td>{row['group']}</td>"
+                f"<td>${row['contribution_real']:,.0f}</td>"
+                f"<td>{row['pct_of_total']:.1f}%</td></tr>"
+            )
+        grouped_rows_html = "\n            ".join(grouped_rows)
+
+        # Build warning divs
+        warning_html = "".join(
+            f'<div class="warning">{issue}</div>'
+            for issue in summary['diagnostics']['issues']
+        )
+
+        # Build recommendation divs
+        rec_header = '<h3>Recommendations</h3>' if summary['diagnostics']['recommendations'] else ''
+        rec_html = "".join(
+            f'<div class="recommendation">{rec}</div>'
+            for rec in summary['diagnostics']['recommendations']
+        )
+
+        # Diagnostics status
+        diag_class = 'pass' if summary['diagnostics']['overall_passed'] else 'fail'
+        diag_text = 'PASSED' if summary['diagnostics']['overall_passed'] else 'ISSUES DETECTED'
+
         html = f"""
 <!DOCTYPE html>
 <html>
@@ -190,14 +228,12 @@ class ReportGenerator:
         </div>
 
         <h2>Diagnostics</h2>
-        <p>Overall: <span class="{'pass' if summary['diagnostics']['overall_passed'] else 'fail'}">
-            {'PASSED' if summary['diagnostics']['overall_passed'] else 'ISSUES DETECTED'}
-        </span></p>
+        <p>Overall: <span class="{diag_class}">{diag_text}</span></p>
 
-        {''.join([f'<div class="warning">{issue}</div>' for issue in summary['diagnostics']['issues']])}
+        {warning_html}
 
-        {'<h3>Recommendations</h3>' if summary['diagnostics']['recommendations'] else ''}
-        {''.join([f'<div class="recommendation">{rec}</div>' for rec in summary['diagnostics']['recommendations']])}
+        {rec_header}
+        {rec_html}
 
         <h2>Channel ROI</h2>
         <table>
@@ -207,14 +243,7 @@ class ReportGenerator:
                 <th>Contribution</th>
                 <th>ROI</th>
             </tr>
-            {''.join([f"""
-            <tr>
-                <td>{row['channel']}</td>
-                <td>{'${:,.0f}'.format(row['spend_real'])}</td>
-                <td>{'${:,.0f}'.format(row['contribution_real'])}</td>
-                <td>{row['roi']:.2f}</td>
-            </tr>
-            """ for _, row in channel_roi.iterrows()])}
+            {channel_rows_html}
         </table>
 
         <h2>Contribution Breakdown</h2>
@@ -224,13 +253,7 @@ class ReportGenerator:
                 <th>Contribution</th>
                 <th>% of Total</th>
             </tr>
-            {''.join([f"""
-            <tr>
-                <td>{row['group']}</td>
-                <td>{'${:,.0f}'.format(row['contribution_real'])}</td>
-                <td>{row['pct_of_total']:.1f}%</td>
-            </tr>
-            """ for _, row in grouped.iterrows()])}
+            {grouped_rows_html}
         </table>
     </div>
 </body>
