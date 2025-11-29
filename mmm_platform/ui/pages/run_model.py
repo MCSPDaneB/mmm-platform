@@ -220,9 +220,7 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
                     "roi_prior_low": ch.roi_prior_low,
                     "roi_prior_mid": ch.roi_prior_mid,
                     "roi_prior_high": ch.roi_prior_high,
-                    "adstock_type": ch.adstock_type,
-                    "adstock_max_lag": ch.adstock_max_lag,
-                    "saturation_type": ch.saturation_type,
+                    "adstock_type": ch.adstock_type.value if hasattr(ch.adstock_type, 'value') else str(ch.adstock_type),
                 })
 
             # Build control configs

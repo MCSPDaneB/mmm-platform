@@ -10,7 +10,8 @@
       "Bash(./venv/Scripts/pip.exe:*)",
       "Bash(dir /s \"C:\\localProjects\\pymc_testing\\mmm_platform\")",
       "Bash(dir \"C:\\localProjects\\pymc_testing\\mmm_platform\")",
-      "Bash(findstr:*)"
+      "Bash(findstr:*)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []

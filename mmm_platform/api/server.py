@@ -44,9 +44,9 @@ class ChannelConfig(BaseModel):
     roi_prior_low: float = 0.5
     roi_prior_mid: float = 1.5
     roi_prior_high: float = 3.0
-    adstock_type: str = "geometric"
-    adstock_max_lag: int = 8
-    saturation_type: str = "logistic"
+    adstock_type: str = "medium"
+    adstock_max_lag: Optional[int] = 8
+    saturation_type: Optional[str] = "logistic"
 
 
 class ControlConfig(BaseModel):

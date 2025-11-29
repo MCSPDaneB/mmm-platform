@@ -1,7 +1,10 @@
 """
-FastAPI application for running MMM models on EC2.
+API module for MMM Platform.
+
+- client.py: Client for Streamlit to communicate with EC2 API
+- server.py: FastAPI server (only runs on EC2)
 """
 
-from .server import app
+from .client import EC2ModelClient, JobStatus, get_client
 
-__all__ = ["app"]
+__all__ = ["EC2ModelClient", "JobStatus", "get_client"]
