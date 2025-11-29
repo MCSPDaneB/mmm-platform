@@ -304,6 +304,23 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
         # Save channel ROI CSV
         channel_roi.to_csv(results_path / "channel_roi.csv", index=False)
 
+        # Save df_scaled (needed for local reconstruction)
+        wrapper.df_scaled.to_parquet(results_path / "df_scaled.parquet")
+
+        # Save df_raw
+        wrapper.df_raw.to_parquet(results_path / "df_raw.parquet")
+
+        # Save model state (control_cols, lam_vec, beta params)
+        import json
+        model_state = {
+            "control_cols": wrapper.control_cols,
+            "lam_vec": wrapper.lam_vec.tolist() if wrapper.lam_vec is not None else None,
+            "beta_mu": float(wrapper.beta_mu) if wrapper.beta_mu is not None else None,
+            "beta_sigma": float(wrapper.beta_sigma) if wrapper.beta_sigma is not None else None,
+        }
+        with open(results_path / "model_state.json", "w") as f:
+            json.dump(model_state, f)
+
         logger.info(f"Job {job_id}: Results saved to {results_path}")
 
         # Prepare comprehensive result
@@ -545,6 +562,41 @@ async def download_contributions(job_id: str):
         path=str(csv_path),
         filename=f"{job_id}_contributions.csv",
         media_type="text/csv"
+    )
+
+
+@app.get("/download/{job_id}/model_data")
+async def download_model_data(job_id: str):
+    """Download the model data bundle (df_scaled, df_raw, model_state) as a zip."""
+    from fastapi.responses import FileResponse
+    import zipfile
+
+    job = job_store.get_job(job_id)
+
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+
+    if job["status"] != JobStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="Job not completed")
+
+    results_path = job_store.results_dir / job_id
+
+    # Create a zip file with all model data
+    zip_path = results_path / "model_data.zip"
+
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for filename in ["df_scaled.parquet", "df_raw.parquet", "model_state.json"]:
+            file_path = results_path / filename
+            if file_path.exists():
+                zf.write(file_path, filename)
+
+    if not zip_path.exists():
+        raise HTTPException(status_code=404, detail="Model data not found")
+
+    return FileResponse(
+        path=str(zip_path),
+        filename=f"{job_id}_model_data.zip",
+        media_type="application/zip"
     )
 
 

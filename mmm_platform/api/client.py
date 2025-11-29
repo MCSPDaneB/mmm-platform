@@ -368,6 +368,53 @@ class EC2ModelClient:
 
         return str(output_path)
 
+    def download_model_data(self, job_id: str, output_dir: str) -> dict:
+        """
+        Download the model data bundle (df_scaled, df_raw, model_state) for a completed job.
+
+        Parameters
+        ----------
+        job_id : str
+            The job ID.
+        output_dir : str
+            Directory to extract the files to.
+
+        Returns
+        -------
+        dict
+            Paths to the downloaded files.
+        """
+        from pathlib import Path
+        import zipfile
+        import tempfile
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Download the zip file
+        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+            tmp_path = tmp.name
+
+        with self._client.stream("GET", f"/download/{job_id}/model_data") as response:
+            response.raise_for_status()
+            with open(tmp_path, "wb") as f:
+                for chunk in response.iter_bytes():
+                    f.write(chunk)
+
+        # Extract the zip
+        with zipfile.ZipFile(tmp_path, 'r') as zf:
+            zf.extractall(output_dir)
+
+        # Clean up temp file
+        Path(tmp_path).unlink()
+
+        # Return paths to extracted files
+        return {
+            "df_scaled": str(output_dir / "df_scaled.parquet"),
+            "df_raw": str(output_dir / "df_raw.parquet"),
+            "model_state": str(output_dir / "model_state.json"),
+        }
+
 
 # Convenience function
 def get_client(base_url: Optional[str] = None) -> EC2ModelClient:

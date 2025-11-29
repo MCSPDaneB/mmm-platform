@@ -298,20 +298,33 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
             # Get results
             results = client.get_results(job_id)
 
-            status_text.text("Downloading inference data from EC2...")
+            status_text.text("Downloading model data from EC2...")
             progress_bar.progress(90)
 
-            # Download inference data file
+            # Download all model data
             import arviz as az
+            import json
+            import numpy as np
             from pathlib import Path
 
             download_dir = Path("ec2_results") / job_id
             download_dir.mkdir(parents=True, exist_ok=True)
 
+            # Download inference data
             idata_path = download_dir / "inference_data.nc"
             client.download_inference_data(job_id, str(idata_path))
 
-            status_text.text("Loading inference data...")
+            status_text.text("Downloading model state from EC2...")
+            progress_bar.progress(92)
+
+            # Download model data bundle (df_scaled, df_raw, model_state)
+            try:
+                model_data_paths = client.download_model_data(job_id, str(download_dir))
+            except Exception as download_err:
+                st.warning(f"Could not download model data bundle: {download_err}. Falling back to local rebuild.")
+                model_data_paths = None
+
+            status_text.text("Loading model data...")
             progress_bar.progress(95)
 
             # Load the inference data
@@ -319,22 +332,42 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
 
             # Create MMMWrapper with the downloaded data
             wrapper = MMMWrapper(config)
-            wrapper.df_raw = df.copy()
             wrapper.idata = idata
             wrapper.fitted_at = datetime.now()
             wrapper.fit_duration_seconds = total_time
 
-            # Prepare data and build model so wrapper is fully functional
-            # The mmm object is needed for computing contributions
-            try:
-                wrapper.prepare_data()
-                wrapper.build_model()
-                # Set the idata on the mmm object and mark as fitted
-                # This is required for PyMC-Marketing methods to work
-                wrapper.mmm.idata = idata
-                wrapper.mmm.is_fitted_ = True
-            except Exception as prep_error:
-                st.warning(f"Could not fully prepare wrapper: {prep_error}")
+            # Load the exact data that was used on EC2
+            if model_data_paths and Path(model_data_paths["df_scaled"]).exists():
+                # Use the exact df_scaled from EC2
+                wrapper.df_scaled = pd.read_parquet(model_data_paths["df_scaled"])
+                wrapper.df_raw = pd.read_parquet(model_data_paths["df_raw"])
+
+                # Load model state
+                with open(model_data_paths["model_state"], "r") as f:
+                    model_state = json.load(f)
+
+                wrapper.control_cols = model_state.get("control_cols")
+                wrapper.lam_vec = np.array(model_state["lam_vec"]) if model_state.get("lam_vec") else None
+                wrapper.beta_mu = model_state.get("beta_mu")
+                wrapper.beta_sigma = model_state.get("beta_sigma")
+
+                # Build model with the correct data
+                try:
+                    wrapper.build_model()
+                    wrapper.mmm.idata = idata
+                    wrapper.mmm.is_fitted_ = True
+                except Exception as build_error:
+                    st.warning(f"Could not build model: {build_error}")
+            else:
+                # Fallback: prepare data locally (may have slight differences)
+                wrapper.df_raw = df.copy()
+                try:
+                    wrapper.prepare_data()
+                    wrapper.build_model()
+                    wrapper.mmm.idata = idata
+                    wrapper.mmm.is_fitted_ = True
+                except Exception as prep_error:
+                    st.warning(f"Could not fully prepare wrapper: {prep_error}")
 
             # Store in session state (same as local model)
             st.session_state.current_model = wrapper
