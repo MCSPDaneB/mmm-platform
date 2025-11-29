@@ -210,8 +210,8 @@ class ReportGenerator:
             {''.join([f"""
             <tr>
                 <td>{row['channel']}</td>
-                <td>${row['spend_real']:,.0f}</td>
-                <td>${row['contribution_real']:,.0f}</td>
+                <td>{'${:,.0f}'.format(row['spend_real'])}</td>
+                <td>{'${:,.0f}'.format(row['contribution_real'])}</td>
                 <td>{row['roi']:.2f}</td>
             </tr>
             """ for _, row in channel_roi.iterrows()])}
@@ -227,7 +227,7 @@ class ReportGenerator:
             {''.join([f"""
             <tr>
                 <td>{row['group']}</td>
-                <td>${row['contribution_real']:,.0f}</td>
+                <td>{'${:,.0f}'.format(row['contribution_real'])}</td>
                 <td>{row['pct_of_total']:.1f}%</td>
             </tr>
             """ for _, row in grouped.iterrows()])}
