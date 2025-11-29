@@ -312,11 +312,20 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
 
         # Save model state (control_cols, lam_vec, beta params)
         import json
+
+        # Handle beta_mu/beta_sigma which can be scalars or arrays
+        def to_serializable(val):
+            if val is None:
+                return None
+            if hasattr(val, 'tolist'):
+                return val.tolist()
+            return float(val)
+
         model_state = {
             "control_cols": wrapper.control_cols,
             "lam_vec": wrapper.lam_vec.tolist() if wrapper.lam_vec is not None else None,
-            "beta_mu": float(wrapper.beta_mu) if wrapper.beta_mu is not None else None,
-            "beta_sigma": float(wrapper.beta_sigma) if wrapper.beta_sigma is not None else None,
+            "beta_mu": to_serializable(wrapper.beta_mu),
+            "beta_sigma": to_serializable(wrapper.beta_sigma),
         }
         with open(results_path / "model_state.json", "w") as f:
             json.dump(model_state, f)

@@ -348,8 +348,11 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
 
                 wrapper.control_cols = model_state.get("control_cols")
                 wrapper.lam_vec = np.array(model_state["lam_vec"]) if model_state.get("lam_vec") else None
-                wrapper.beta_mu = model_state.get("beta_mu")
-                wrapper.beta_sigma = model_state.get("beta_sigma")
+                # beta_mu/beta_sigma can be scalars or arrays
+                beta_mu = model_state.get("beta_mu")
+                beta_sigma = model_state.get("beta_sigma")
+                wrapper.beta_mu = np.array(beta_mu) if isinstance(beta_mu, list) else beta_mu
+                wrapper.beta_sigma = np.array(beta_sigma) if isinstance(beta_sigma, list) else beta_sigma
 
                 # Build model with the correct data
                 try:
