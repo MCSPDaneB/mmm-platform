@@ -872,7 +872,12 @@ def show():
 
                     # Clear pending dummies
                     st.session_state.pending_dummies = []
-                    st.success(f"Added {added_count} dummy variable(s) to controls table!")
+
+                    # Invalidate current config since dummy variables changed
+                    if "current_config" in st.session_state:
+                        del st.session_state["current_config"]
+
+                    st.success(f"Added {added_count} dummy variable(s) to controls table! Please rebuild the configuration.")
                     st.rerun()
 
             with col2:

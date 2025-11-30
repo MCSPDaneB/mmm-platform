@@ -115,6 +115,7 @@ class EC2ModelClient:
         channels: List[Dict[str, Any]],
         data_config: Dict[str, Any],
         controls: List[Dict[str, Any]] = None,
+        dummy_variables: List[Dict[str, Any]] = None,
         sampling_config: Dict[str, Any] = None,
     ) -> str:
         """
@@ -132,6 +133,8 @@ class EC2ModelClient:
             Data configuration (target_column, date_column, etc.).
         controls : list[dict], optional
             Control variable configurations.
+        dummy_variables : list[dict], optional
+            Dummy variable configurations (name, start_date, end_date, sign_constraint).
         sampling_config : dict, optional
             Sampling configuration (draws, tune, chains, etc.).
 
@@ -155,6 +158,7 @@ class EC2ModelClient:
             "data": data_records,
             "channels": channels,
             "controls": controls or [],
+            "dummy_variables": dummy_variables or [],
             "data_config": data_config,
             "sampling_config": sampling_config or {},
         }

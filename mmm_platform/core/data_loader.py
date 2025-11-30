@@ -130,11 +130,16 @@ class DataLoader:
 
         # Create configured dummy variables
         for dummy in config.dummy_variables:
+            # Convert dates to datetime for proper comparison
+            start = pd.to_datetime(dummy.start_date)
+            end = pd.to_datetime(dummy.end_date)
             df[dummy.name] = (
-                (df[date_col] >= dummy.start_date) &
-                (df[date_col] <= dummy.end_date)
+                (df[date_col] >= start) &
+                (df[date_col] <= end)
             ).astype(int)
-            logger.info(f"Created dummy variable: {dummy.name}")
+            # Log count of active periods to verify it worked
+            count = df[dummy.name].sum()
+            logger.info(f"Created dummy variable: {dummy.name} ({count} periods active)")
 
         # Create month dummies if configured
         if config.month_dummies and config.month_dummies.months:
@@ -217,6 +222,8 @@ class DataLoader:
 
         # Remove duplicates while preserving order
         final_control_cols = list(dict.fromkeys(final_control_cols))
+
+        logger.info(f"Final control columns ({len(final_control_cols)}): {final_control_cols}")
 
         return df, final_control_cols
 
