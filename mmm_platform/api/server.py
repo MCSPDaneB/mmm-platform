@@ -54,6 +54,13 @@ class ControlConfig(BaseModel):
     expected_sign: str = "positive"
 
 
+class DummyVariableConfig(BaseModel):
+    name: str
+    start_date: str
+    end_date: str
+    sign_constraint: str = "positive"
+
+
 class DataConfig(BaseModel):
     target_column: str
     date_column: str
@@ -75,6 +82,7 @@ class ModelRunRequest(BaseModel):
     data: List[Dict[str, Any]] = Field(..., description="Data as list of row dicts")
     channels: List[ChannelConfig]
     controls: List[ControlConfig] = []
+    dummy_variables: List[DummyVariableConfig] = []
     data_config: DataConfig
     sampling_config: SamplingConfig = SamplingConfig()
 
@@ -184,7 +192,8 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
         from mmm_platform.config.schema import (
             ModelConfig, ChannelConfig as SchemaChannelConfig,
             ControlConfig as SchemaControlConfig, DataConfig as SchemaDataConfig,
-            SamplingConfig as SchemaSamplingConfig
+            SamplingConfig as SchemaSamplingConfig,
+            DummyVariableConfig as SchemaDummyVariableConfig
         )
 
         logger.info(f"Job {job_id}: Loading data...")
@@ -223,10 +232,24 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
             for ctrl in request.controls
         ]
 
+        # Build dummy variables
+        dummy_variables = [
+            SchemaDummyVariableConfig(
+                name=dv.name,
+                start_date=dv.start_date,
+                end_date=dv.end_date,
+                sign_constraint=dv.sign_constraint
+            )
+            for dv in request.dummy_variables
+        ]
+
+        logger.info(f"Job {job_id}: Configured {len(dummy_variables)} dummy variables: {[dv.name for dv in dummy_variables]}")
+
         config = ModelConfig(
             name=request.model_name,
             channels=channels,
             controls=controls,
+            dummy_variables=dummy_variables,
             data=SchemaDataConfig(
                 target_column=request.data_config.target_column,
                 date_column=request.data_config.date_column,
