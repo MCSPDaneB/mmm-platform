@@ -37,17 +37,33 @@ def render_category_columns_manager(key_prefix: str = ""):
     st.subheader("Category Columns")
     st.caption(f"Define custom columns for grouping results (max {MAX_CATEGORY_COLUMNS})")
 
-    # Display existing columns
+    # Display existing columns with edit capability
     if st.session_state.category_columns:
-        cols = st.columns(min(len(st.session_state.category_columns) + 1, MAX_CATEGORY_COLUMNS + 1))
-
         for i, cat_col in enumerate(st.session_state.category_columns):
-            with cols[i]:
-                st.markdown(f"**{cat_col['name']}**")
-                st.caption(f"{len(cat_col.get('options', []))} options")
-                if st.button("✕", key=f"{key_prefix}remove_cat_col_{i}", help="Remove this column"):
-                    st.session_state.category_columns.pop(i)
-                    st.rerun()
+            with st.expander(f"**{cat_col['name']}** ({len(cat_col.get('options', []))} options)", expanded=False):
+                # Show current options as editable text
+                current_options = ", ".join(cat_col.get("options", []))
+                new_options = st.text_input(
+                    "Options (comma-separated)",
+                    value=current_options,
+                    key=f"{key_prefix}edit_cat_options_{i}",
+                    help="Edit the options for this category"
+                )
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("Update", key=f"{key_prefix}update_cat_{i}"):
+                        options = [o.strip() for o in new_options.split(",") if o.strip()]
+                        if options:
+                            st.session_state.category_columns[i]["options"] = options
+                            st.success("Updated!")
+                            st.rerun()
+                        else:
+                            st.warning("At least one option is required")
+                with col2:
+                    if st.button("Remove Column", key=f"{key_prefix}remove_cat_col_{i}", type="secondary"):
+                        st.session_state.category_columns.pop(i)
+                        st.rerun()
 
     # Add new column section
     if len(st.session_state.category_columns) < MAX_CATEGORY_COLUMNS:
