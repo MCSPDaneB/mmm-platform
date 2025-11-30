@@ -19,11 +19,16 @@ from mmm_platform.config.loader import ConfigLoader
 MAX_CATEGORY_COLUMNS = 5
 
 
-def render_category_columns_manager():
+def render_category_columns_manager(key_prefix: str = ""):
     """
     Render the category columns management section.
     This allows users to add/remove custom category columns that appear in both
     channel and control configuration tables.
+
+    Parameters
+    ----------
+    key_prefix : str
+        Prefix for widget keys to avoid duplicates when rendered multiple times
     """
     # Initialize session state for category columns if not exists
     if "category_columns" not in st.session_state:
@@ -40,7 +45,7 @@ def render_category_columns_manager():
             with cols[i]:
                 st.markdown(f"**{cat_col['name']}**")
                 st.caption(f"{len(cat_col.get('options', []))} options")
-                if st.button("✕", key=f"remove_cat_col_{i}", help="Remove this column"):
+                if st.button("✕", key=f"{key_prefix}remove_cat_col_{i}", help="Remove this column"):
                     st.session_state.category_columns.pop(i)
                     st.rerun()
 
@@ -50,17 +55,17 @@ def render_category_columns_manager():
             new_col_name = st.text_input(
                 "Column Name",
                 placeholder="e.g., Funnel Stage",
-                key="new_cat_col_name"
+                key=f"{key_prefix}new_cat_col_name"
             )
             new_col_options = st.text_input(
                 "Options (comma-separated)",
                 placeholder="e.g., Awareness, Consideration, Conversion",
-                key="new_cat_col_options"
+                key=f"{key_prefix}new_cat_col_options"
             )
 
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("Add Column", key="add_cat_col_btn"):
+                if st.button("Add Column", key=f"{key_prefix}add_cat_col_btn"):
                     if new_col_name:
                         # Check for duplicate names
                         existing_names = [c["name"] for c in st.session_state.category_columns]
@@ -271,7 +276,7 @@ def show():
             st.markdown("---")
 
             # Category columns manager
-            render_category_columns_manager()
+            render_category_columns_manager(key_prefix="channels_")
 
             st.markdown("---")
             st.subheader("Channel Settings Table")
@@ -443,6 +448,11 @@ def show():
         )
 
         if selected_controls:
+            st.markdown("---")
+
+            # Category columns manager (same as channels tab)
+            render_category_columns_manager(key_prefix="controls_")
+
             st.markdown("---")
 
             # Option to upload controls CSV
