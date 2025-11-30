@@ -1,0 +1,458 @@
+{
+  "name": "bevmo_offline",
+  "description": "",
+  "data": {
+    "date_column": "time",
+    "target_column": "kpi_offline_revenue",
+    "date_format": null,
+    "dayfirst": true,
+    "revenue_scale": 1000.0,
+    "spend_scale": 1000.0
+  },
+  "channels": [
+    {
+      "name": "PaidMedia_Bing_Brand_spend",
+      "display_name": "Bing",
+      "categories": {
+        "Category": "Search"
+      },
+      "adstock_type": "short",
+      "roi_prior_low": 0.1,
+      "roi_prior_mid": 0.3,
+      "roi_prior_high": 1.5,
+      "curve_sharpness_override": null
+    },
+    {
+      "name": "PaidMedia_Criteo_Criteo_spend",
+      "display_name": "Criteo",
+      "categories": {
+        "Category": "Programmatic"
+      },
+      "adstock_type": "short",
+      "roi_prior_low": 0.1,
+      "roi_prior_mid": 0.2,
+      "roi_prior_high": 1.5,
+      "curve_sharpness_override": null
+    },
+    {
+      "name": "PaidMedia_GooglePMAX_GooglePMAX_spend",
+      "display_name": "Google PMAX",
+      "categories": {
+        "Category": "PMAX"
+      },
+      "adstock_type": "short",
+      "roi_prior_low": 4.0,
+      "roi_prior_mid": 10.0,
+      "roi_prior_high": 16.0,
+      "curve_sharpness_override": null
+    },
+    {
+      "name": "PaidMedia_GoogleSearch_Brand_spend",
+      "display_name": "GS Brand",
+      "categories": {
+        "Category": "Search"
+      },
+      "adstock_type": "short",
+      "roi_prior_low": 2.5,
+      "roi_prior_mid": 6.54,
+      "roi_prior_high": 12.0,
+      "curve_sharpness_override": null
+    },
+    {
+      "name": "PaidMedia_GoogleSearch_Nonbrand_spend",
+      "display_name": "GS NonBrand",
+      "categories": {
+        "Category": "Search"
+      },
+      "adstock_type": "short",
+      "roi_prior_low": 2.5,
+      "roi_prior_mid": 6.46,
+      "roi_prior_high": 12.0,
+      "curve_sharpness_override": null
+    },
+    {
+      "name": "PaidMedia_Meta_Meta_spend",
+      "display_name": "Meta",
+      "categories": {
+        "Category": "Social"
+      },
+      "adstock_type": "short",
+      "roi_prior_low": 2.0,
+      "roi_prior_mid": 4.73,
+      "roi_prior_high": 9.0,
+      "curve_sharpness_override": null
+    },
+    {
+      "name": "PaidMedia_Pinterest_Pinterest_spend",
+      "display_name": "Pinterest",
+      "categories": {
+        "Category": "Social"
+      },
+      "adstock_type": "short",
+      "roi_prior_low": 0.1,
+      "roi_prior_mid": 0.3,
+      "roi_prior_high": 1.5,
+      "curve_sharpness_override": null
+    },
+    {
+      "name": "PaidMedia_Snapchat_Snapchat_spend",
+      "display_name": "Snapchat",
+      "categories": {
+        "Category": "Social"
+      },
+      "adstock_type": "short",
+      "roi_prior_low": 0.2,
+      "roi_prior_mid": 0.5,
+      "roi_prior_high": 1.5,
+      "curve_sharpness_override": null
+    },
+    {
+      "name": "PaidMedia_Tiktok_Tiktok_spend",
+      "display_name": "TikTok",
+      "categories": {
+        "Category": "Video"
+      },
+      "adstock_type": "medium",
+      "roi_prior_low": 0.1,
+      "roi_prior_mid": 0.3,
+      "roi_prior_high": 1.5,
+      "curve_sharpness_override": null
+    },
+    {
+      "name": "PaidMedia_Vistar_Vistar_spend",
+      "display_name": "Vistar",
+      "categories": {
+        "Category": "OOH"
+      },
+      "adstock_type": "short",
+      "roi_prior_low": 1.0,
+      "roi_prior_mid": 3.0,
+      "roi_prior_high": 6.0,
+      "curve_sharpness_override": null
+    },
+    {
+      "name": "PaidMedia_Yelp_Yelp_spend",
+      "display_name": "Yelp",
+      "categories": {
+        "Category": "Social"
+      },
+      "adstock_type": "short",
+      "roi_prior_low": 0.8,
+      "roi_prior_mid": 2.0,
+      "roi_prior_high": 4.0,
+      "curve_sharpness_override": null
+    },
+    {
+      "name": "PaidMedia_Youtube_Youtube_spend",
+      "display_name": "YouTube",
+      "categories": {
+        "Category": "Video"
+      },
+      "adstock_type": "long",
+      "roi_prior_low": 0.5,
+      "roi_prior_mid": 1.5,
+      "roi_prior_high": 4.0,
+      "curve_sharpness_override": null
+    }
+  ],
+  "controls": [
+    {
+      "name": "promo_5c_sale",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_fathers_day",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_wine_month",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_halloween",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_christmas",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_valentines_day",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_march_madness",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_case_sale",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_nye",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "dummy_instore_24",
+      "display_name": null,
+      "categories": {
+        "Category": "Base"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "events_blackfriday",
+      "display_name": null,
+      "categories": {
+        "Category": "Base"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_super_bowl_pre",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_super_bowl_post",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_thanksgiving_pre",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_thanksgiving_post",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_labor_day_pre",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_labor_day_post",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_independence_day_pre",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_independence_day_post",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_st_patricks_day_pre",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_st_patricks_day_post",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_cinco_de_mayo_pre",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "promo_cinco_de_mayo_post",
+      "display_name": null,
+      "categories": {
+        "Category": "Promo"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": true,
+      "scale": false
+    },
+    {
+      "name": "nonPaidMedia_Email",
+      "display_name": null,
+      "categories": {
+        "Category": "DM & Email"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": false,
+      "scale": true
+    },
+    {
+      "name": "nonPaidMedia_DM",
+      "display_name": null,
+      "categories": {
+        "Category": "DM & Email"
+      },
+      "sign_constraint": "positive",
+      "is_dummy": false,
+      "scale": true
+    }
+  ],
+  "category_columns": [
+    {
+      "name": "Category",
+      "options": [
+        "Social",
+        "Search",
+        "OOH",
+        "Video",
+        "Programmatic",
+        "PMAX",
+        "Promo",
+        "Base",
+        "DM & Email"
+      ]
+    }
+  ],
+  "dummy_variables": [],
+  "month_dummies": null,
+  "adstock": {
+    "l_max": 8,
+    "short_decay": 0.15,
+    "medium_decay": 0.4,
+    "long_decay": 0.7,
+    "prior_concentration": 20.0
+  },
+  "saturation": {
+    "saturation_percentile": 50,
+    "lam_sigma": 0.3,
+    "curve_sharpness": 25
+  },
+  "seasonality": {
+    "yearly_seasonality": 2
+  },
+  "sampling": {
+    "draws": 1500,
+    "tune": 1500,
+    "chains": 4,
+    "target_accept": 0.9,
+    "random_seed": 42,
+    "cores": null
+  },
+  "control_prior": {
+    "distribution": "HalfNormal",
+    "mu": null,
+    "sigma": 1.0,
+    "alpha": null,
+    "beta": null
+  }
+}

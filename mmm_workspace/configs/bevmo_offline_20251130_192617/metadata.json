@@ -1,0 +1,10 @@
+{
+  "version": "1.0",
+  "type": "config",
+  "name": "bevmo_offline",
+  "created_at": "2025-11-30T19:26:17.945248",
+  "config_name": "bevmo_offline",
+  "n_channels": 12,
+  "n_controls": 25,
+  "n_rows": 98
+}

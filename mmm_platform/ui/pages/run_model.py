@@ -635,8 +635,10 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
                     st.warning(f"Could not save model: {e}")
 
             st.balloons()
-            st.markdown("---")
-            st.success("Navigate to **Results** in the sidebar to explore the full model output.")
+
+            # Rerun to show the fitted model view
+            time.sleep(1)
+            st.rerun()
 
         except Exception as e:
             progress_bar.progress(100)
@@ -755,8 +757,10 @@ def run_model_local(config, df, draws, tune, chains, save_model):
                 st.info(f"Model saved to: {save_dir}")
 
             st.balloons()
-            st.markdown("---")
-            st.success("Navigate to **Results** in the sidebar to explore the model output.")
+
+            # Rerun to show the fitted model view
+            time.sleep(1)
+            st.rerun()
 
         except Exception as e:
             progress_bar.progress(100)
