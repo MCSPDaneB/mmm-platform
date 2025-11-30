@@ -700,9 +700,10 @@ def show():
                     "start_date": dummy.get("start_date"),  # Keep date info
                     "end_date": dummy.get("end_date"),
                 }
-                # Add empty category values for dummies
+                # Add category values for dummies (use saved values or empty)
+                dummy_categories = dummy.get("categories", {})
                 for cat_col in category_cols:
-                    row_data[cat_col["name"]] = ""
+                    row_data[cat_col["name"]] = dummy_categories.get(cat_col["name"], "")
 
                 control_table_data.append(row_data)
 
@@ -773,6 +774,7 @@ def show():
                         "name": row["Control"],
                         "start_date": original_row.get("start_date"),
                         "end_date": original_row.get("end_date"),
+                        "categories": categories,
                         "sign_constraint": row["Sign Constraint"],
                     })
                 else:
