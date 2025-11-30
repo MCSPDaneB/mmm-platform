@@ -107,6 +107,13 @@ class ModelPersistence:
         path = Path(path)
         path.mkdir(parents=True, exist_ok=True)
 
+        # Get fit statistics if available
+        fit_stats = {}
+        try:
+            fit_stats = mmm_wrapper.get_fit_statistics()
+        except Exception:
+            pass
+
         # Save metadata
         metadata = {
             "version": "1.0",
@@ -117,6 +124,9 @@ class ModelPersistence:
             "n_channels": len(mmm_wrapper.config.channels),
             "n_controls": len(mmm_wrapper.control_cols) if mmm_wrapper.control_cols else 0,
             "include_data": include_data,
+            "r2": fit_stats.get("r2"),
+            "mape": fit_stats.get("mape"),
+            "rmse": fit_stats.get("rmse"),
         }
 
         with open(path / cls.METADATA_FILE, "w") as f:

@@ -168,14 +168,24 @@ def _show_models_section():
                 fitted_at = model.get("fitted_at")
                 if fitted_at:
                     st.write(f"**Fitted:** {fitted_at[:16].replace('T', ' ')}")
-                duration = model.get("fit_duration_seconds", 0)
-                if duration:
-                    st.write(f"**Duration:** {duration:.1f}s")
-
-            with col2:
                 st.write(f"**Channels:** {model.get('n_channels', 'N/A')}")
                 st.write(f"**Controls:** {model.get('n_controls', 'N/A')}")
-                st.write(f"**Path:** `{model_path}`")
+
+            with col2:
+                # Fit statistics
+                r2 = model.get("r2")
+                mape = model.get("mape")
+                rmse = model.get("rmse")
+                duration = model.get("fit_duration_seconds", 0)
+
+                if r2 is not None:
+                    st.write(f"**R²:** {r2:.3f}")
+                if mape is not None:
+                    st.write(f"**MAPE:** {mape:.1f}%")
+                if rmse is not None:
+                    st.write(f"**RMSE:** {rmse:.1f}")
+                if duration:
+                    st.write(f"**Fit Time:** {duration:.0f}s")
 
             # Actions
             col1, col2, col3 = st.columns(3)
