@@ -8,6 +8,7 @@ import numpy as np
 import datetime
 import plotly.express as px
 import plotly.graph_objects as go
+import arviz as az
 
 from mmm_platform.analysis.diagnostics import ModelDiagnostics
 from mmm_platform.analysis.contributions import ContributionAnalyzer, CATEGORY_COLORS

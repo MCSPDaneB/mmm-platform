@@ -12,138 +12,7 @@ from pathlib import Path
 from mmm_platform.model.mmm import MMMWrapper
 from mmm_platform.model.fitting import ModelFitter
 from mmm_platform.api.client import EC2ModelClient, JobStatus
-import arviz as az
 import numpy as np
-
-
-def show_fitted_model_view():
-    """Show the fitted model variables table and allow starting a new model."""
-    wrapper = st.session_state.current_model
-    config = st.session_state.current_config
-
-    # Header with fit statistics
-    st.subheader("Fitted Model")
-
-    fit_stats = wrapper.get_fit_statistics()
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("R²", f"{fit_stats['r2']:.3f}")
-    with col2:
-        st.metric("MAPE", f"{fit_stats['mape']:.1f}%")
-    with col3:
-        st.metric("RMSE", f"{fit_stats['rmse']:.1f}")
-    with col4:
-        st.metric("Fit Time", f"{fit_stats['fit_duration_seconds']:.1f}s")
-
-    st.markdown("---")
-
-    # Model Variables Table
-    st.subheader("Model Variables")
-
-    # Build the variables table from posterior
-    variables_data = []
-
-    try:
-        idata = wrapper.idata
-
-        # Channels (saturation_beta)
-        if "saturation_beta" in idata.posterior:
-            beta_summary = az.summary(idata, var_names=["saturation_beta"], hdi_prob=0.95)
-            channel_cols = config.get_channel_columns()
-            for i, ch in enumerate(channel_cols):
-                try:
-                    row = beta_summary.iloc[i]
-                    hdi_low = row["hdi_2.5%"]
-                    hdi_high = row["hdi_97.5%"]
-                    significant = "Yes" if (hdi_low > 0 or hdi_high < 0) else "No"
-                    variables_data.append({
-                        "Variable": ch,
-                        "Type": "Channel",
-                        "Coef Mean": f"{row['mean']:.4f}",
-                        "Coef Std": f"{row['sd']:.4f}",
-                        "95% CI": f"[{hdi_low:.4f}, {hdi_high:.4f}]",
-                        "Significant": significant
-                    })
-                except Exception:
-                    pass
-
-        # Controls (gamma_control)
-        if "gamma_control" in idata.posterior:
-            gamma_summary = az.summary(idata, var_names=["gamma_control"], hdi_prob=0.95)
-            control_cols = wrapper.control_cols or []
-            for i, ctrl in enumerate(control_cols):
-                try:
-                    row = gamma_summary.iloc[i]
-                    hdi_low = row["hdi_2.5%"]
-                    hdi_high = row["hdi_97.5%"]
-                    significant = "Yes" if (hdi_low > 0 or hdi_high < 0) else "No"
-
-                    # Determine if this is a dummy variable
-                    dummy_names = [dv.name for dv in config.dummy_variables]
-                    is_dummy = ctrl in dummy_names or ctrl.replace("_inv", "") in dummy_names
-                    var_type = "Dummy" if is_dummy else "Control"
-
-                    variables_data.append({
-                        "Variable": ctrl,
-                        "Type": var_type,
-                        "Coef Mean": f"{row['mean']:.4f}",
-                        "Coef Std": f"{row['sd']:.4f}",
-                        "95% CI": f"[{hdi_low:.4f}, {hdi_high:.4f}]",
-                        "Significant": significant
-                    })
-                except Exception:
-                    pass
-
-        # Intercept
-        if "intercept" in idata.posterior:
-            intercept_summary = az.summary(idata, var_names=["intercept"], hdi_prob=0.95)
-            row = intercept_summary.iloc[0]
-            hdi_low = row["hdi_2.5%"]
-            hdi_high = row["hdi_97.5%"]
-            variables_data.append({
-                "Variable": "intercept",
-                "Type": "Intercept",
-                "Coef Mean": f"{row['mean']:.4f}",
-                "Coef Std": f"{row['sd']:.4f}",
-                "95% CI": f"[{hdi_low:.4f}, {hdi_high:.4f}]",
-                "Significant": "Yes"
-            })
-
-    except Exception as e:
-        st.warning(f"Could not extract all variable statistics: {e}")
-
-    # Display the table
-    if variables_data:
-        df_vars = pd.DataFrame(variables_data)
-        st.dataframe(df_vars, use_container_width=True, hide_index=True)
-
-        # Summary counts
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Channels", len([v for v in variables_data if v["Type"] == "Channel"]))
-        with col2:
-            st.metric("Controls", len([v for v in variables_data if v["Type"] == "Control"]))
-        with col3:
-            st.metric("Dummies", len([v for v in variables_data if v["Type"] == "Dummy"]))
-        with col4:
-            sig_count = len([v for v in variables_data if v["Significant"] == "Yes"])
-            st.metric("Significant", f"{sig_count}/{len(variables_data)}")
-    else:
-        st.warning("No variable statistics available.")
-
-    st.markdown("---")
-
-    # Navigation and New Model button
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        st.info("Go to **Results** in the sidebar to explore the full model output.")
-    with col2:
-        if st.button("🔄 New Model", type="primary", use_container_width=True):
-            # Clear model state
-            st.session_state.model_fitted = False
-            st.session_state.current_model = None
-            st.session_state.current_config = None
-            st.rerun()
 
 
 def show():
@@ -167,18 +36,27 @@ def show():
     config = st.session_state.current_config
     df = st.session_state.current_data
 
-    # Debug: Show model state
+    # Check model state
     model_fitted = st.session_state.get("model_fitted", False)
     has_model = st.session_state.get("current_model") is not None
 
-    # If model is already fitted, show Model Variables table
+    # If model is already fitted, show simple status and redirect to Results
     if model_fitted and has_model:
-        show_fitted_model_view()
+        st.success("Model is fitted! Go to **Results** to view the analysis.")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.info("Navigate to **Results** in the sidebar to explore model output.")
+        with col2:
+            if st.button("New Model", type="primary", use_container_width=True):
+                st.session_state.model_fitted = False
+                st.session_state.current_model = None
+                st.rerun()
         return
     elif model_fitted and not has_model:
         st.warning("Model was fitted but model object is missing. Please run again.")
+        st.session_state.model_fitted = False
     elif has_model and not model_fitted:
-        st.info("Model object exists but not marked as fitted. Setting fitted=True.")
         st.session_state.model_fitted = True
         st.rerun()
 
