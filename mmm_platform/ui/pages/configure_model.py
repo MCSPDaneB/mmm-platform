@@ -1123,6 +1123,7 @@ def build_config_from_state() -> ModelConfig:
             name=dv["name"],
             start_date=dv["start_date"],
             end_date=dv["end_date"],
+            categories=dv.get("categories", {}),
             sign_constraint=SignConstraint(dv.get("sign_constraint", "unconstrained")),
         )
         for dv in state.get("dummy_variables", [])

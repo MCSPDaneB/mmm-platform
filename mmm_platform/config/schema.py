@@ -230,6 +230,7 @@ class DummyVariableConfig(BaseModel):
     name: str = Field(..., description="Name for the dummy variable")
     start_date: str = Field(..., description="Start date (YYYY-MM-DD)")
     end_date: str = Field(..., description="End date (YYYY-MM-DD)")
+    categories: dict[str, str] = Field(default_factory=dict, description="Category values keyed by column name")
     sign_constraint: SignConstraint = Field(
         SignConstraint.UNCONSTRAINED,
         description="Expected sign of coefficient"

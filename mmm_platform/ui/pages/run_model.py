@@ -429,6 +429,7 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
                     "name": dv.name,
                     "start_date": dv.start_date,
                     "end_date": dv.end_date,
+                    "categories": dv.categories if hasattr(dv, 'categories') else {},
                     "sign_constraint": dv.sign_constraint.value if hasattr(dv.sign_constraint, 'value') else str(dv.sign_constraint),
                 })
 

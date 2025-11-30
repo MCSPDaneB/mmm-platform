@@ -58,6 +58,7 @@ class DummyVariableConfig(BaseModel):
     name: str
     start_date: str
     end_date: str
+    categories: Dict[str, str] = {}
     sign_constraint: str = "positive"
 
 
@@ -238,6 +239,7 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
                 name=dv.name,
                 start_date=dv.start_date,
                 end_date=dv.end_date,
+                categories=dv.categories,
                 sign_constraint=dv.sign_constraint
             )
             for dv in request.dummy_variables
