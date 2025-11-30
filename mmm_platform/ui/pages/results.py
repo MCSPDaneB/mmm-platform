@@ -16,6 +16,8 @@ from mmm_platform.analysis.bayesian_significance import (
     BayesianSignificanceAnalyzer,
     get_interpretation_guide,
 )
+from mmm_platform.analysis.marginal_roi import MarginalROIAnalyzer
+from mmm_platform.analysis.executive_summary import ExecutiveSummaryGenerator
 from mmm_platform.config.schema import DummyVariableConfig, SignConstraint
 
 
@@ -194,11 +196,15 @@ def show():
     # Create analyzers
     diagnostics = ModelDiagnostics.from_mmm_wrapper(wrapper)
     contributions = ContributionAnalyzer.from_mmm_wrapper(wrapper)
+    marginal_analyzer = MarginalROIAnalyzer.from_mmm_wrapper(wrapper)
+    exec_generator = ExecutiveSummaryGenerator(marginal_analyzer)
 
     # Tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
         "Overview",
         "Channel ROI",
+        "Marginal ROI & Priority",
+        "Executive Summary",
         "Bayesian Significance",
         "Diagnostics",
         "Time Series",
@@ -420,9 +426,182 @@ def show():
             st.plotly_chart(fig2, use_container_width=True)
 
     # =========================================================================
-    # Tab 3: Bayesian Significance Analysis
+    # Tab 3: Marginal ROI & Investment Priority
     # =========================================================================
     with tab3:
+        st.subheader("Marginal ROI & Investment Priority")
+
+        st.markdown("""
+        This analysis uses **saturation curve derivatives** to calculate the true marginal ROI
+        (return on the *next* dollar spent), not just the average ROI.
+        """)
+
+        try:
+            # Get priority table
+            priority_df = marginal_analyzer.get_priority_table()
+
+            # Key metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                n_increase = len(priority_df[priority_df['action'] == 'INCREASE'])
+                st.metric("Channels to INCREASE", n_increase)
+            with col2:
+                n_hold = len(priority_df[priority_df['action'] == 'HOLD'])
+                st.metric("Channels to HOLD", n_hold)
+            with col3:
+                n_reduce = len(priority_df[priority_df['action'] == 'REDUCE'])
+                st.metric("Channels to REDUCE", n_reduce)
+
+            st.markdown("---")
+
+            # Priority table
+            st.subheader("Investment Priority Table")
+
+            display_df = priority_df.copy()
+            display_df['current_spend'] = display_df['current_spend'].apply(lambda x: f"${x:,.0f}")
+            display_df['current_roi'] = display_df['current_roi'].apply(lambda x: f"${x:.2f}")
+            display_df['marginal_roi'] = display_df['marginal_roi'].apply(lambda x: f"${x:.2f}")
+            display_df['breakeven_spend'] = display_df['breakeven_spend'].apply(
+                lambda x: f"${x:,.0f}" if x is not None else "N/A"
+            )
+            display_df['headroom_amount'] = display_df['headroom_amount'].apply(lambda x: f"${x:,.0f}")
+
+            styled_df = display_df[['channel', 'current_spend', 'current_roi', 'marginal_roi',
+                                     'priority_rank', 'breakeven_spend', 'headroom_amount', 'action', 'needs_test']]
+            styled_df.columns = ['Channel', 'Current Spend', 'Current ROI', 'Marginal ROI',
+                                 'Priority', 'Breakeven Spend', 'Headroom', 'Action', 'Needs Test']
+
+            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+
+            st.markdown("""
+            **Key Concepts:**
+            - **Marginal ROI**: Return on the *next* dollar spent (from saturation curve derivative)
+            - **Breakeven Spend**: Spend level where marginal ROI = $1.00
+            - **Headroom**: Additional spend available before hitting breakeven
+            - **Needs Test**: High uncertainty in ROI estimate - validate with incrementality test
+            """)
+
+            # Visualizations
+            st.markdown("---")
+            st.subheader("Current vs Marginal ROI")
+
+            result = marginal_analyzer.run_full_analysis()
+            channel_names = [ch.channel_name for ch in result.channel_analysis]
+            current_rois = [ch.current_roi for ch in result.channel_analysis]
+            marginal_rois = [ch.marginal_roi for ch in result.channel_analysis]
+
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                name='Current (Avg) ROI',
+                x=channel_names,
+                y=current_rois,
+                marker_color='steelblue'
+            ))
+            fig.add_trace(go.Bar(
+                name='Marginal ROI',
+                x=channel_names,
+                y=marginal_rois,
+                marker_color='orange'
+            ))
+            fig.add_hline(y=1, line_dash="dash", line_color="red", annotation_text="Breakeven")
+            fig.update_layout(
+                barmode='group',
+                title="Current ROI vs Marginal ROI by Channel",
+                xaxis_tickangle=-45
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        except Exception as e:
+            st.error(f"Error running marginal ROI analysis: {str(e)}")
+            st.info("Make sure the model has been properly fitted with posterior samples available.")
+
+    # =========================================================================
+    # Tab 4: Executive Summary
+    # =========================================================================
+    with tab4:
+        st.subheader("Executive Summary")
+
+        try:
+            summary = exec_generator.get_summary_dict()
+
+            # Portfolio Overview
+            st.markdown("### Portfolio Overview")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Spend", f"${summary['portfolio']['total_spend']:,.0f}")
+            with col2:
+                st.metric("Total Contribution", f"${summary['portfolio']['total_contribution']:,.0f}")
+            with col3:
+                st.metric("Portfolio ROI", f"${summary['portfolio']['portfolio_roi']:.2f}")
+
+            st.markdown("---")
+
+            # Recommendations Summary
+            st.markdown("### Investment Recommendations")
+
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("INCREASE", summary['counts']['increase'], delta="High marginal ROI")
+            with col2:
+                st.metric("HOLD", summary['counts']['hold'], delta="Profitable")
+            with col3:
+                st.metric("REDUCE", summary['counts']['reduce'], delta="Below breakeven")
+            with col4:
+                st.metric("Need Validation", summary['counts']['needs_validation'], delta="Run tests")
+
+            st.markdown("---")
+
+            # Channel recommendations
+            st.markdown("### Channel Recommendations")
+
+            if summary['recommendations']['increase']:
+                st.markdown("**INCREASE Investment:**")
+                for ch in summary['recommendations']['increase']:
+                    test_note = " *(validate with test)*" if ch['needs_test'] else ""
+                    st.markdown(f"- **{ch['channel_name']}**: Marginal ROI ${ch['marginal_roi']:.2f}, "
+                               f"Headroom ${ch['headroom_amount']:,.0f}{test_note}")
+
+            if summary['recommendations']['hold']:
+                st.markdown("**HOLD Steady:**")
+                for ch in summary['recommendations']['hold']:
+                    st.markdown(f"- **{ch['channel_name']}**: Marginal ROI ${ch['marginal_roi']:.2f}")
+
+            if summary['recommendations']['reduce']:
+                st.markdown("**REDUCE/Reallocate:**")
+                for ch in summary['recommendations']['reduce']:
+                    st.markdown(f"- **{ch['channel_name']}**: Marginal ROI ${ch['marginal_roi']:.2f} *(below breakeven)*")
+
+            st.markdown("---")
+
+            # Reallocation Opportunity
+            st.markdown("### Reallocation Opportunity")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric(
+                    "Funds from REDUCE channels",
+                    f"${summary['portfolio']['reallocation_potential']:,.0f}"
+                )
+            with col2:
+                st.metric(
+                    "Headroom in INCREASE channels",
+                    f"${summary['portfolio']['headroom_available']:,.0f}"
+                )
+
+            if summary['reallocation_moves']:
+                st.markdown("**Top Reallocation Moves:**")
+                for i, move in enumerate(summary['reallocation_moves'][:3]):
+                    test_note = " *(validate first)*" if move['needs_validation'] else ""
+                    st.markdown(f"{i+1}. Allocate **${move['amount']:,.0f}** to **{move['to_channel']}** "
+                               f"(expected return: ${move['expected_return']:,.0f}){test_note}")
+
+        except Exception as e:
+            st.error(f"Error generating executive summary: {str(e)}")
+            st.info("Make sure the model has been properly fitted with posterior samples available.")
+
+    # =========================================================================
+    # Tab 5: Bayesian Significance Analysis
+    # =========================================================================
+    with tab5:
         st.subheader("Bayesian Significance Analysis")
 
         # Get prior ROIs from config
@@ -688,9 +867,9 @@ def show():
             st.info("Make sure the model has been properly fitted with posterior samples available.")
 
     # =========================================================================
-    # Tab 4: Diagnostics
+    # Tab 6: Diagnostics
     # =========================================================================
-    with tab4:
+    with tab6:
         st.subheader("Model Diagnostics")
 
         # Run diagnostics
@@ -739,9 +918,9 @@ def show():
             )
 
     # =========================================================================
-    # Tab 5: Time Series
+    # Tab 7: Time Series
     # =========================================================================
-    with tab5:
+    with tab7:
         st.subheader("Time Series Analysis")
 
         # Actual vs Fitted
@@ -1075,9 +1254,9 @@ def show():
         st.plotly_chart(fig3, use_container_width=True)
 
     # =========================================================================
-    # Tab 6: Export
+    # Tab 8: Export
     # =========================================================================
-    with tab6:
+    with tab8:
         st.subheader("Export Results")
 
         col1, col2 = st.columns(2)
@@ -1152,9 +1331,9 @@ def show():
             st.warning(f"Could not generate Bayesian significance report: {str(e)}")
 
     # =========================================================================
-    # Tab 7: Visualizations
+    # Tab 9: Visualizations
     # =========================================================================
-    with tab7:
+    with tab9:
         st.subheader("Executive Visualizations")
 
         import matplotlib.pyplot as plt
