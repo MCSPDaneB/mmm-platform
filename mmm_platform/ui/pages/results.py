@@ -1665,10 +1665,14 @@ def show():
                     )
 
 
+def _logistic_saturation(x: np.ndarray, lam: float) -> np.ndarray:
+    """Apply logistic saturation: (1 - exp(-lam*x)) / (1 + exp(-lam*x))"""
+    return (1 - np.exp(-lam * x)) / (1 + np.exp(-lam * x))
+
+
 def _show_saturation_curves(wrapper, config, channel_cols, display_names, selected_channel, spend_scale, revenue_scale):
     """Show interactive saturation curves."""
     import plotly.graph_objects as go
-    from mmm_platform.core.transforms import compute_logistic_saturation
 
     posterior = wrapper.idata.posterior
 
@@ -1702,10 +1706,10 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
 
         # Generate curve points
         spend_range_scaled = np.linspace(0.001, max_spend_scaled, 200)
-        response_scaled = beta * compute_logistic_saturation(spend_range_scaled, lam)
+        response_scaled = beta * _logistic_saturation(spend_range_scaled, lam)
 
         # Current position
-        current_response_scaled = beta * compute_logistic_saturation(current_spend_scaled, lam)
+        current_response_scaled = beta * _logistic_saturation(current_spend_scaled, lam)
 
         curves_data.append({
             'channel': ch,
@@ -1790,7 +1794,7 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
 
         # Calculate metrics at slider position
         slider_spend_scaled = slider_spend / spend_scale
-        slider_response_scaled = curve['beta'] * compute_logistic_saturation(slider_spend_scaled, curve['lam'])
+        slider_response_scaled = curve['beta'] * _logistic_saturation(slider_spend_scaled, curve['lam'])
         slider_response = slider_response_scaled * revenue_scale
 
         # Marginal ROI calculation
