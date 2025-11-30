@@ -63,7 +63,7 @@ def main():
             "⚙️ Configure Model",
             "🚀 Run Model",
             "📈 Results",
-            "💾 Saved Models",
+            "💾 Saved Configs & Models",
         ],
     )
 
@@ -108,7 +108,7 @@ def main():
     elif page == "📈 Results":
         from mmm_platform.ui.pages import results
         results.show()
-    elif page == "💾 Saved Models":
+    elif page == "💾 Saved Configs & Models":
         from mmm_platform.ui.pages import saved_models
         saved_models.show()
 
