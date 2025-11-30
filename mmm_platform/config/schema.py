@@ -5,8 +5,8 @@ These schemas define the structure and validation rules for all
 configuration options in the MMM platform.
 """
 
-from typing import Optional, Literal
-from pydantic import BaseModel, Field, field_validator
+from typing import Optional, Literal, Any
+from pydantic import BaseModel, Field, field_validator, model_validator
 from enum import Enum
 
 
@@ -36,14 +36,46 @@ class PriorConfig(BaseModel):
         extra = "allow"  # Allow additional prior parameters
 
 
+class CategoryColumnConfig(BaseModel):
+    """Definition of a custom category column for grouping variables."""
+    name: str = Field(..., description="Column name (e.g., 'Channel Type', 'Funnel Stage')")
+    options: list[str] = Field(default_factory=list, description="Available options for this column")
+
+
 class ChannelConfig(BaseModel):
     """Configuration for a single media channel."""
     name: str = Field(..., description="Column name in the data")
     display_name: Optional[str] = Field(None, description="Human-readable name for display")
+    categories: dict[str, str] = Field(default_factory=dict, description="Category values keyed by column name")
     adstock_type: AdstockType = Field(AdstockType.MEDIUM, description="Adstock decay category")
     roi_prior_low: float = Field(0.1, ge=0, description="Lower bound for ROI prior")
     roi_prior_mid: float = Field(1.0, ge=0, description="Central estimate for ROI prior")
     roi_prior_high: float = Field(5.0, ge=0, description="Upper bound for ROI prior")
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_old_category_field(cls, data: Any) -> Any:
+        """Migrate old 'category' field name to 'categories' dict."""
+        if isinstance(data, dict):
+            # If old 'category' field exists, migrate it to 'categories'
+            if "category" in data and "categories" not in data:
+                old_category = data.pop("category")
+                if old_category:
+                    data["categories"] = {"Category": old_category}
+                else:
+                    data["categories"] = {}
+        return data
+
+    @field_validator("categories", mode="before")
+    @classmethod
+    def migrate_old_category(cls, v):
+        """Migrate old single category field to categories dict."""
+        if v is None:
+            return {}
+        if isinstance(v, str):
+            # Old format: single category string
+            return {"Category": v}
+        return v
 
     @field_validator("roi_prior_high")
     @classmethod
@@ -60,11 +92,26 @@ class ChannelConfig(BaseModel):
         name = self.name.replace("_spend", "").replace("PaidMedia_", "")
         return name.replace("_", " ")
 
+    def get_category(self, column_name: str = "Category") -> str:
+        """Return category value for a specific column, or infer from column name."""
+        if column_name in self.categories and self.categories[column_name]:
+            return self.categories[column_name]
+        # Auto-detect from column name (extract meaningful part from PaidMedia_X_spend pattern)
+        name = self.name
+        if name.startswith("PaidMedia_"):
+            parts = name.replace("PaidMedia_", "").replace("_spend", "").split("_")
+            if parts:
+                return parts[0].title()
+        elif "_" in name:
+            return name.split("_")[0].title()
+        return "Paid Media"
+
 
 class ControlConfig(BaseModel):
     """Configuration for a control variable."""
     name: str = Field(..., description="Column name in the data")
     display_name: Optional[str] = Field(None, description="Human-readable name")
+    categories: dict[str, str] = Field(default_factory=dict, description="Category values keyed by column name")
     sign_constraint: SignConstraint = Field(
         SignConstraint.UNCONSTRAINED,
         description="Expected sign of coefficient"
@@ -72,9 +119,54 @@ class ControlConfig(BaseModel):
     is_dummy: bool = Field(False, description="Whether this is a 0/1 dummy variable")
     scale: bool = Field(False, description="Whether to scale this variable")
 
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_old_category_field(cls, data: Any) -> Any:
+        """Migrate old 'category' field name to 'categories' dict."""
+        if isinstance(data, dict):
+            # If old 'category' field exists, migrate it to 'categories'
+            if "category" in data and "categories" not in data:
+                old_category = data.pop("category")
+                if old_category:
+                    data["categories"] = {"Category": old_category}
+                else:
+                    data["categories"] = {}
+        return data
+
+    @field_validator("categories", mode="before")
+    @classmethod
+    def migrate_old_category(cls, v):
+        """Migrate old single category field to categories dict."""
+        if v is None:
+            return {}
+        if isinstance(v, str):
+            # Old format: single category string
+            return {"Category": v}
+        return v
+
     def get_display_name(self) -> str:
         """Return display name or formatted column name."""
         return self.display_name or self.name.replace("_", " ").title()
+
+    def get_category(self, column_name: str = "Category") -> str:
+        """Return category value for a specific column, or infer from column name."""
+        if column_name in self.categories and self.categories[column_name]:
+            return self.categories[column_name]
+        # Auto-detect from column name patterns
+        name_lower = self.name.lower()
+        if "promo" in name_lower:
+            return "Promotions"
+        if "season" in name_lower or "fourier" in name_lower:
+            return "Seasonality"
+        if "month_" in name_lower:
+            return "Month Effects"
+        if "dummy_" in name_lower or "shock" in name_lower:
+            return "Events/Dummies"
+        if "trend" in name_lower or self.name == "t":
+            return "Trend"
+        if "_" in self.name:
+            return self.name.split("_")[0].title()
+        return "Other"
 
 
 class DummyVariableConfig(BaseModel):
@@ -151,6 +243,12 @@ class ModelConfig(BaseModel):
     # Control configurations
     controls: list[ControlConfig] = Field(default_factory=list)
 
+    # Custom category columns for grouping (max 5)
+    category_columns: list[CategoryColumnConfig] = Field(
+        default_factory=list,
+        description="Custom category columns for grouping variables in results"
+    )
+
     # Auto-generated dummies
     dummy_variables: list[DummyVariableConfig] = Field(default_factory=list)
     month_dummies: Optional[MonthDummyConfig] = Field(None)
@@ -197,6 +295,43 @@ class ModelConfig(BaseModel):
     def get_adstock_type_dict(self) -> dict[str, str]:
         """Get adstock type mapping for all channels."""
         return {ch.name: ch.adstock_type.value for ch in self.channels}
+
+    def get_category_column_names(self) -> list[str]:
+        """Get list of category column names."""
+        return [col.name for col in self.category_columns]
+
+    def get_channel_category_map(self, column_name: str = "Category") -> dict[str, str]:
+        """Get mapping of channel names to category values for a specific column."""
+        return {ch.name: ch.get_category(column_name) for ch in self.channels}
+
+    def get_control_category_map(self, column_name: str = "Category") -> dict[str, str]:
+        """Get mapping of control names to category values for a specific column."""
+        return {ctrl.name: ctrl.get_category(column_name) for ctrl in self.controls}
+
+    def get_all_channel_category_maps(self) -> dict[str, dict[str, str]]:
+        """Get all category mappings for all columns for channels."""
+        return {col.name: self.get_channel_category_map(col.name) for col in self.category_columns}
+
+    def get_all_control_category_maps(self) -> dict[str, dict[str, str]]:
+        """Get all category mappings for all columns for controls."""
+        return {col.name: self.get_control_category_map(col.name) for col in self.category_columns}
+
+    # Legacy methods for backward compatibility
+    def get_channel_categories(self, column_name: str = "Category") -> list[str]:
+        """Get unique channel categories for a specific column."""
+        return list(set(ch.get_category(column_name) for ch in self.channels))
+
+    def get_control_categories(self, column_name: str = "Category") -> list[str]:
+        """Get unique control categories for a specific column."""
+        return list(set(ctrl.get_category(column_name) for ctrl in self.controls))
+
+    def get_channels_by_category(self, category: str, column_name: str = "Category") -> list[ChannelConfig]:
+        """Get channels in a specific category for a specific column."""
+        return [ch for ch in self.channels if ch.get_category(column_name) == category]
+
+    def get_controls_by_category(self, category: str, column_name: str = "Category") -> list[ControlConfig]:
+        """Get controls in a specific category for a specific column."""
+        return [ctrl for ctrl in self.controls if ctrl.get_category(column_name) == category]
 
     class Config:
         use_enum_values = True

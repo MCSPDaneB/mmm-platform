@@ -4,10 +4,42 @@ Contribution analysis and decomposition.
 
 import numpy as np
 import pandas as pd
-from typing import Any, Optional
+from typing import Any, Optional, Dict
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+# Category color mapping for visualizations
+CATEGORY_COLORS = {
+    "BASELINE": "#808080",
+    "Baseline": "#808080",
+    "SEASONALITY": "#9370DB",
+    "Seasonality": "#9370DB",
+    "TREND": "#4B0082",
+    "Trend": "#4B0082",
+    "PAID MEDIA": "#4A90D9",
+    "Paid Media": "#4A90D9",
+    "Display": "#5DADE2",
+    "Search": "#2ECC71",
+    "Social": "#E74C3C",
+    "Video": "#F39C12",
+    "Email/DM": "#8E44AD",
+    "Affiliate": "#1ABC9C",
+    "Brand": "#3498DB",
+    "Performance": "#E67E22",
+    "PROMOTIONS": "#27AE60",
+    "Promotions": "#27AE60",
+    "MONTH EFFECTS": "#3498DB",
+    "Month Effects": "#3498DB",
+    "EVENTS/DUMMIES": "#E67E22",
+    "Events/Dummies": "#E67E22",
+    "Economic": "#95A5A6",
+    "Competitor": "#C0392B",
+    "Weather": "#16A085",
+    "OTHER": "#7F8C8D",
+    "Other": "#7F8C8D",
+}
 
 
 class ContributionAnalyzer:
@@ -190,38 +222,103 @@ class ContributionAnalyzer:
 
         return pd.DataFrame(results)
 
-    def get_grouped_contributions(self) -> pd.DataFrame:
+    def get_grouped_contributions(
+        self,
+        channel_categories: Optional[Dict[str, str]] = None,
+        control_categories: Optional[Dict[str, str]] = None,
+    ) -> pd.DataFrame:
         """
         Get contributions grouped by category.
 
-        Groups:
-        - Intercept/Baseline
-        - Paid Media
-        - Promotions
-        - Email/DM
-        - Seasonality
-        - Trend
-        - Other
+        Parameters
+        ----------
+        channel_categories : dict, optional
+            Mapping of channel column names to categories.
+            If not provided, groups all channels under "PAID MEDIA".
+        control_categories : dict, optional
+            Mapping of control column names to categories.
+            If not provided, uses pattern matching as fallback.
+
+        Returns
+        -------
+        pd.DataFrame
+            Contributions grouped by category.
         """
         component_cols = [c for c in self.contribs.columns if c != self.target_col]
 
-        # Define groups by pattern matching
-        groups = {
-            "BASELINE": [c for c in component_cols if "intercept" in c.lower()],
-            "PAID MEDIA": [c for c in self.channel_cols if c in component_cols],
-            "PROMOTIONS": [c for c in component_cols if "promo" in c.lower()],
-            "EMAIL/DM": [c for c in component_cols if "email" in c.lower() or "_dm" in c.lower()],
-            "SEASONALITY": [c for c in component_cols if "season" in c.lower()],
-            "TREND": [c for c in component_cols if c == "t"],
-            "MONTH EFFECTS": [c for c in component_cols if "month_" in c.lower()],
-            "DUMMIES/EVENTS": [c for c in component_cols if "dummy_" in c.lower() or "shock" in c.lower()],
-        }
-
-        # Calculate what's left as "OTHER"
+        groups: Dict[str, list] = {}
         assigned = set()
-        for cols in groups.values():
-            assigned.update(cols)
-        groups["OTHER"] = [c for c in component_cols if c not in assigned]
+
+        # 1. Baseline/intercept (always hardcoded - model structure)
+        intercept_cols = [c for c in component_cols if "intercept" in c.lower()]
+        if intercept_cols:
+            groups["Baseline"] = intercept_cols
+            assigned.update(intercept_cols)
+
+        # 2. Seasonality (always hardcoded - model structure)
+        seasonality_cols = [c for c in component_cols if "season" in c.lower() or "fourier" in c.lower()]
+        if seasonality_cols:
+            groups["Seasonality"] = seasonality_cols
+            assigned.update(seasonality_cols)
+
+        # 3. Trend (always hardcoded - model structure)
+        trend_cols = [c for c in component_cols if c == "t"]
+        if trend_cols:
+            groups["Trend"] = trend_cols
+            assigned.update(trend_cols)
+
+        # 4. Group channels by provided categories
+        if channel_categories:
+            for col in self.channel_cols:
+                if col in component_cols and col not in assigned:
+                    category = channel_categories.get(col, "Paid Media")
+                    if category not in groups:
+                        groups[category] = []
+                    groups[category].append(col)
+                    assigned.add(col)
+        else:
+            # Fallback: all channels under "Paid Media"
+            channel_cols_present = [c for c in self.channel_cols if c in component_cols and c not in assigned]
+            if channel_cols_present:
+                groups["Paid Media"] = channel_cols_present
+                assigned.update(channel_cols_present)
+
+        # 5. Group controls by provided categories
+        if control_categories:
+            for col in self.control_cols:
+                if col in component_cols and col not in assigned:
+                    category = control_categories.get(col, "Other")
+                    if category not in groups:
+                        groups[category] = []
+                    groups[category].append(col)
+                    assigned.add(col)
+        else:
+            # Fallback: pattern matching for controls
+            for col in self.control_cols:
+                if col in component_cols and col not in assigned:
+                    col_lower = col.lower()
+                    if "promo" in col_lower:
+                        category = "Promotions"
+                    elif "email" in col_lower or "_dm" in col_lower:
+                        category = "Email/DM"
+                    elif "month_" in col_lower:
+                        category = "Month Effects"
+                    elif "dummy_" in col_lower or "shock" in col_lower:
+                        category = "Events/Dummies"
+                    else:
+                        category = "Other"
+
+                    if category not in groups:
+                        groups[category] = []
+                    groups[category].append(col)
+                    assigned.add(col)
+
+        # 6. Anything remaining goes to "Other"
+        remaining_cols = [c for c in component_cols if c not in assigned]
+        if remaining_cols:
+            if "Other" not in groups:
+                groups["Other"] = []
+            groups["Other"].extend(remaining_cols)
 
         # Calculate contributions using absolute values for percentage
         total_abs = self.contribs[component_cols].abs().sum().sum()
@@ -241,6 +338,7 @@ class ContributionAnalyzer:
                 "abs_contribution": float(abs_contrib),
                 "pct_of_total": float(abs_contrib / total_abs * 100) if total_abs > 0 else 0,
                 "n_variables": len(cols),
+                "color": CATEGORY_COLORS.get(group_name, "#7F8C8D"),
             })
 
         df = pd.DataFrame(results)

@@ -144,6 +144,7 @@ class ChannelResult(Base):
 
     channel_name = Column(String(255), nullable=False)
     display_name = Column(String(255), nullable=True)
+    categories = Column(JSON, nullable=True)  # Category values keyed by column name
 
     # Spend and contribution
     total_spend = Column(Float, nullable=True)
@@ -177,6 +178,7 @@ class ControlResult(Base):
 
     control_name = Column(String(255), nullable=False)
     display_name = Column(String(255), nullable=True)
+    categories = Column(JSON, nullable=True)  # Category values keyed by column name
 
     # Contribution
     total_contribution = Column(Float, nullable=True)

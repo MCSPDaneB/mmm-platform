@@ -9,7 +9,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from mmm_platform.analysis.diagnostics import ModelDiagnostics
-from mmm_platform.analysis.contributions import ContributionAnalyzer
+from mmm_platform.analysis.contributions import ContributionAnalyzer, CATEGORY_COLORS
 from mmm_platform.analysis.reporting import ReportGenerator
 from mmm_platform.analysis.bayesian_significance import (
     BayesianSignificanceAnalyzer,
@@ -98,8 +98,47 @@ def show():
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # Grouped contributions table
-        grouped = contributions.get_grouped_contributions()
+        # Category column selector for grouping
+        category_column_names = config.get_category_column_names()
+        selected_category_col = None
+
+        if category_column_names:
+            selected_category_col = st.selectbox(
+                "Group results by",
+                options=["None"] + category_column_names,
+                key="overview_category_grouping",
+                help="Select a category column to group results"
+            )
+            if selected_category_col == "None":
+                selected_category_col = None
+
+        # Grouped contributions table (use category mappings from config)
+        if selected_category_col:
+            channel_categories = config.get_channel_category_map(selected_category_col)
+            control_categories = config.get_control_category_map(selected_category_col)
+        else:
+            channel_categories = None
+            control_categories = None
+
+        grouped = contributions.get_grouped_contributions(
+            channel_categories=channel_categories,
+            control_categories=control_categories,
+        )
+
+        # Bar chart with category colors
+        if len(grouped) > 0:
+            fig_grouped = px.bar(
+                grouped,
+                x="group",
+                y="pct_of_total",
+                title="Contribution by Category (%)",
+                labels={"group": "Category", "pct_of_total": "% of Total"},
+                color="group",
+                color_discrete_map=CATEGORY_COLORS,
+            )
+            fig_grouped.update_layout(showlegend=False, xaxis_tickangle=-45)
+            st.plotly_chart(fig_grouped, use_container_width=True)
+
         st.dataframe(
             grouped[["group", "contribution_real", "pct_of_total"]].rename(columns={
                 "group": "Group",
@@ -119,24 +158,81 @@ def show():
         roi_df = contributions.get_channel_roi()
 
         if len(roi_df) > 0:
-            # ROI bar chart
-            fig = px.bar(
-                roi_df,
-                x="channel",
-                y="roi",
-                title="ROI by Channel",
-                labels={"channel": "Channel", "roi": "ROI"},
-                color="roi",
-                color_continuous_scale="RdYlGn",
+            # Category column selector for ROI grouping
+            roi_category_column_names = config.get_category_column_names()
+            roi_selected_category_col = None
+
+            col1, col2 = st.columns([2, 3])
+            with col1:
+                # View toggle
+                view_by = st.radio(
+                    "View by",
+                    ["Channel", "Category"],
+                    horizontal=True,
+                    key="roi_view_toggle"
+                )
+            with col2:
+                if roi_category_column_names and view_by == "Category":
+                    roi_selected_category_col = st.selectbox(
+                        "Category column",
+                        options=roi_category_column_names,
+                        key="roi_category_column",
+                        help="Select which category column to group by"
+                    )
+
+            # Add category column from config
+            if roi_selected_category_col:
+                channel_categories = config.get_channel_category_map(roi_selected_category_col)
+            else:
+                channel_categories = config.get_channel_category_map()
+            roi_df["category"] = roi_df["channel"].apply(
+                lambda ch: channel_categories.get(ch, "Paid Media")
             )
-            fig.update_layout(xaxis_tickangle=-45)
-            st.plotly_chart(fig, use_container_width=True)
 
-            # Detailed table
-            st.subheader("Channel Details")
+            if view_by == "Category":
+                # Aggregate by category
+                category_roi = roi_df.groupby("category").agg({
+                    "spend_real": "sum",
+                    "contribution_real": "sum",
+                }).reset_index()
+                category_roi["roi"] = category_roi["contribution_real"] / (category_roi["spend_real"] + 1e-9)
+                category_roi = category_roi.sort_values("roi", ascending=False)
 
-            display_df = roi_df[["channel", "spend_real", "contribution_real", "roi"]].copy()
-            display_df.columns = ["Channel", "Spend ($)", "Contribution ($)", "ROI"]
+                fig = px.bar(
+                    category_roi,
+                    x="category",
+                    y="roi",
+                    title="ROI by Category",
+                    labels={"category": "Category", "roi": "ROI"},
+                    color="category",
+                    color_discrete_map=CATEGORY_COLORS,
+                )
+                fig.update_layout(showlegend=False, xaxis_tickangle=-45)
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Category table
+                display_df = category_roi[["category", "spend_real", "contribution_real", "roi"]].copy()
+                display_df.columns = ["Category", "Spend ($)", "Contribution ($)", "ROI"]
+            else:
+                # ROI bar chart by channel, colored by category
+                fig = px.bar(
+                    roi_df.sort_values("roi", ascending=False),
+                    x="channel",
+                    y="roi",
+                    title="ROI by Channel (colored by Category)",
+                    labels={"channel": "Channel", "roi": "ROI"},
+                    color="category",
+                    color_discrete_map=CATEGORY_COLORS,
+                )
+                fig.update_layout(xaxis_tickangle=-45)
+                st.plotly_chart(fig, use_container_width=True)
+
+                # Channel table
+                display_df = roi_df[["channel", "category", "spend_real", "contribution_real", "roi"]].copy()
+                display_df.columns = ["Channel", "Category", "Spend ($)", "Contribution ($)", "ROI"]
+
+            # Format table
+            st.subheader("Details")
             display_df["Spend ($)"] = display_df["Spend ($)"].apply(lambda x: f"${x:,.0f}")
             display_df["Contribution ($)"] = display_df["Contribution ($)"].apply(lambda x: f"${x:,.0f}")
             display_df["ROI"] = display_df["ROI"].apply(lambda x: f"{x:.2f}")
@@ -155,7 +251,9 @@ def show():
                 labels={
                     "spend_real": "Total Spend ($)",
                     "contribution_real": "Total Contribution ($)"
-                }
+                },
+                color="category",
+                color_discrete_map=CATEGORY_COLORS,
             )
             fig2.update_traces(textposition="top center")
 

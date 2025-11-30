@@ -4,14 +4,78 @@ Model configuration page for MMM Platform.
 
 import streamlit as st
 import pandas as pd
-from typing import Optional
+from typing import Optional, List
 
 from mmm_platform.config.schema import (
     ModelConfig, ChannelConfig, ControlConfig, DataConfig,
     SamplingConfig, AdstockConfig, SaturationConfig, SeasonalityConfig,
-    AdstockType, SignConstraint, PriorConfig
+    AdstockType, SignConstraint, PriorConfig, CategoryColumnConfig
 )
 from mmm_platform.config.loader import ConfigLoader
+
+
+# Maximum number of custom category columns allowed
+MAX_CATEGORY_COLUMNS = 5
+
+
+def render_category_columns_manager():
+    """
+    Render the category columns management section.
+    This allows users to add/remove custom category columns that appear in both
+    channel and control configuration tables.
+    """
+    # Initialize session state for category columns if not exists
+    if "category_columns" not in st.session_state:
+        st.session_state.category_columns = []
+
+    st.subheader("Category Columns")
+    st.caption(f"Define custom columns for grouping results (max {MAX_CATEGORY_COLUMNS})")
+
+    # Display existing columns
+    if st.session_state.category_columns:
+        cols = st.columns(min(len(st.session_state.category_columns) + 1, MAX_CATEGORY_COLUMNS + 1))
+
+        for i, cat_col in enumerate(st.session_state.category_columns):
+            with cols[i]:
+                st.markdown(f"**{cat_col['name']}**")
+                st.caption(f"{len(cat_col.get('options', []))} options")
+                if st.button("✕", key=f"remove_cat_col_{i}", help="Remove this column"):
+                    st.session_state.category_columns.pop(i)
+                    st.rerun()
+
+    # Add new column section
+    if len(st.session_state.category_columns) < MAX_CATEGORY_COLUMNS:
+        with st.expander("➕ Add Category Column", expanded=False):
+            new_col_name = st.text_input(
+                "Column Name",
+                placeholder="e.g., Funnel Stage",
+                key="new_cat_col_name"
+            )
+            new_col_options = st.text_input(
+                "Options (comma-separated)",
+                placeholder="e.g., Awareness, Consideration, Conversion",
+                key="new_cat_col_options"
+            )
+
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Add Column", key="add_cat_col_btn"):
+                    if new_col_name:
+                        # Check for duplicate names
+                        existing_names = [c["name"] for c in st.session_state.category_columns]
+                        if new_col_name in existing_names:
+                            st.error(f"Column '{new_col_name}' already exists!")
+                        else:
+                            options = [o.strip() for o in new_col_options.split(",") if o.strip()]
+                            st.session_state.category_columns.append({
+                                "name": new_col_name,
+                                "options": options if options else ["Other"]
+                            })
+                            st.rerun()
+                    else:
+                        st.warning("Please enter a column name")
+    else:
+        st.info(f"Maximum of {MAX_CATEGORY_COLUMNS} category columns reached")
 
 
 def show():
@@ -190,6 +254,7 @@ def show():
                     for _, row in uploaded_priors.iterrows():
                         priors_dict[row["channel"]] = {
                             "display_name": row.get("display_name", row["channel"]),
+                            "categories": {},  # Categories are now set via the UI category columns
                             "roi_low": row.get("roi_low", 0.5),
                             "roi_mid": row.get("roi_mid", 2.0),
                             "roi_high": row.get("roi_high", 5.0),
@@ -203,51 +268,78 @@ def show():
 
             # Build channel config table
             st.markdown("---")
+
+            # Category columns manager
+            render_category_columns_manager()
+
+            st.markdown("---")
             st.subheader("Channel Settings Table")
             st.markdown("Edit the table below to configure channel priors:")
+
+            # Get category columns from session state
+            category_cols = st.session_state.get("category_columns", [])
 
             # Prepare data for editable table
             channel_table_data = []
             for ch in selected_channels:
+                row_data = {
+                    "Channel": ch,
+                    "Display Name": ch.replace("PaidMedia_", "").replace("_spend", "").replace("_", " ").title(),
+                    "ROI Low": 0.5,
+                    "ROI Mid": 2.0,
+                    "ROI High": 5.0,
+                    "Adstock": "medium",
+                    "Total Spend": df[ch].sum(),
+                }
+
+                # Override with priors if available
                 if ch in priors_dict:
                     prior = priors_dict[ch]
-                    channel_table_data.append({
-                        "Channel": ch,
-                        "Display Name": prior.get("display_name", ch.replace("PaidMedia_", "").replace("_spend", "").replace("_", " ").title()),
-                        "ROI Low": prior.get("roi_low", 0.5),
-                        "ROI Mid": prior.get("roi_mid", 2.0),
-                        "ROI High": prior.get("roi_high", 5.0),
-                        "Adstock": prior.get("adstock_type", "medium"),
-                        "Total Spend": df[ch].sum(),
-                    })
+                    row_data["Display Name"] = prior.get("display_name", row_data["Display Name"])
+                    row_data["ROI Low"] = prior.get("roi_low", 0.5)
+                    row_data["ROI Mid"] = prior.get("roi_mid", 2.0)
+                    row_data["ROI High"] = prior.get("roi_high", 5.0)
+                    row_data["Adstock"] = prior.get("adstock_type", "medium")
+
+                    # Add category values from priors (categories dict)
+                    prior_categories = prior.get("categories", {})
+                    for cat_col in category_cols:
+                        row_data[cat_col["name"]] = prior_categories.get(cat_col["name"], "")
                 else:
-                    channel_table_data.append({
-                        "Channel": ch,
-                        "Display Name": ch.replace("PaidMedia_", "").replace("_spend", "").replace("_", " ").title(),
-                        "ROI Low": 0.5,
-                        "ROI Mid": 2.0,
-                        "ROI High": 5.0,
-                        "Adstock": "medium",
-                        "Total Spend": df[ch].sum(),
-                    })
+                    # Add empty category values
+                    for cat_col in category_cols:
+                        row_data[cat_col["name"]] = ""
+
+                channel_table_data.append(row_data)
 
             channel_df = pd.DataFrame(channel_table_data)
+
+            # Build column config dynamically
+            column_config = {
+                "Channel": st.column_config.TextColumn("Channel", disabled=True),
+                "Display Name": st.column_config.TextColumn("Display Name"),
+                "ROI Low": st.column_config.NumberColumn("ROI Low", min_value=0.0, format="%.2f"),
+                "ROI Mid": st.column_config.NumberColumn("ROI Mid", min_value=0.0, format="%.2f"),
+                "ROI High": st.column_config.NumberColumn("ROI High", min_value=0.0, format="%.2f"),
+                "Adstock": st.column_config.SelectboxColumn(
+                    "Adstock",
+                    options=["short", "medium", "long"],
+                ),
+                "Total Spend": st.column_config.NumberColumn("Total Spend", disabled=True, format="%.2f"),
+            }
+
+            # Add dynamic category columns
+            for cat_col in category_cols:
+                column_config[cat_col["name"]] = st.column_config.SelectboxColumn(
+                    cat_col["name"],
+                    options=cat_col.get("options", ["Other"]),
+                    help=f"Select {cat_col['name']} for grouping in results"
+                )
 
             # Editable data table
             edited_channels = st.data_editor(
                 channel_df,
-                column_config={
-                    "Channel": st.column_config.TextColumn("Channel", disabled=True),
-                    "Display Name": st.column_config.TextColumn("Display Name"),
-                    "ROI Low": st.column_config.NumberColumn("ROI Low", min_value=0.0, format="%.2f"),
-                    "ROI Mid": st.column_config.NumberColumn("ROI Mid", min_value=0.0, format="%.2f"),
-                    "ROI High": st.column_config.NumberColumn("ROI High", min_value=0.0, format="%.2f"),
-                    "Adstock": st.column_config.SelectboxColumn(
-                        "Adstock",
-                        options=["short", "medium", "long"],
-                    ),
-                    "Total Spend": st.column_config.NumberColumn("Total Spend", disabled=True, format="%.2f"),
-                },
+                column_config=column_config,
                 hide_index=True,
                 use_container_width=True,
                 num_rows="fixed",
@@ -256,9 +348,16 @@ def show():
             # Convert edited table to channels config
             channels_config = []
             for _, row in edited_channels.iterrows():
+                # Build categories dict from dynamic columns
+                categories = {}
+                for cat_col in category_cols:
+                    if cat_col["name"] in row and row[cat_col["name"]]:
+                        categories[cat_col["name"]] = row[cat_col["name"]]
+
                 channels_config.append({
                     "name": row["Channel"],
                     "display_name": row["Display Name"],
+                    "categories": categories,
                     "adstock_type": row["Adstock"],
                     "roi_prior_low": row["ROI Low"],
                     "roi_prior_mid": row["ROI Mid"],
@@ -372,6 +471,7 @@ def show():
                     controls_dict = {}
                     for _, row in uploaded_controls.iterrows():
                         controls_dict[row["control"]] = {
+                            "categories": row.get("categories", {}),
                             "sign_constraint": row.get("sign_constraint", "positive"),
                             "is_dummy": bool(row.get("is_dummy", False)),
                             "scale": bool(row.get("scale", True)),
@@ -387,54 +487,75 @@ def show():
             st.subheader("Control Settings Table")
             st.markdown("Edit the table below to configure control variables:")
 
+            # Get category columns from session state (same as channels)
+            category_cols = st.session_state.get("category_columns", [])
+
             # Prepare data for editable table
             control_table_data = []
             for ctrl in selected_controls:
                 is_dummy_default = df[ctrl].isin([0, 1]).all() if ctrl in df.columns else False
 
+                row_data = {
+                    "Control": ctrl,
+                    "Sign Constraint": "positive",
+                    "Is Dummy": is_dummy_default,
+                    "Scale": not is_dummy_default,
+                    "Mean": df[ctrl].mean() if ctrl in df.columns else 0,
+                    "Std": df[ctrl].std() if ctrl in df.columns else 0,
+                }
+
+                # Override with settings if available
                 if ctrl in controls_dict:
                     settings = controls_dict[ctrl]
-                    control_table_data.append({
-                        "Control": ctrl,
-                        "Sign Constraint": settings.get("sign_constraint", "positive"),
-                        "Is Dummy": settings.get("is_dummy", is_dummy_default),
-                        "Scale": settings.get("scale", not is_dummy_default),
-                        "Mean": df[ctrl].mean() if ctrl in df.columns else 0,
-                        "Std": df[ctrl].std() if ctrl in df.columns else 0,
-                    })
+                    row_data["Sign Constraint"] = settings.get("sign_constraint", "positive")
+                    row_data["Is Dummy"] = settings.get("is_dummy", is_dummy_default)
+                    row_data["Scale"] = settings.get("scale", not is_dummy_default)
+
+                    # Add category values from settings (categories dict)
+                    settings_categories = settings.get("categories", {})
+                    for cat_col in category_cols:
+                        row_data[cat_col["name"]] = settings_categories.get(cat_col["name"], "")
                 else:
-                    control_table_data.append({
-                        "Control": ctrl,
-                        "Sign Constraint": "positive",
-                        "Is Dummy": is_dummy_default,
-                        "Scale": not is_dummy_default,
-                        "Mean": df[ctrl].mean() if ctrl in df.columns else 0,
-                        "Std": df[ctrl].std() if ctrl in df.columns else 0,
-                    })
+                    # Add empty category values
+                    for cat_col in category_cols:
+                        row_data[cat_col["name"]] = ""
+
+                control_table_data.append(row_data)
 
             control_df = pd.DataFrame(control_table_data)
+
+            # Build column config dynamically
+            control_column_config = {
+                "Control": st.column_config.TextColumn("Control", disabled=True),
+                "Sign Constraint": st.column_config.SelectboxColumn(
+                    "Sign Constraint",
+                    options=["positive", "negative", "unconstrained"],
+                    help="Expected direction of effect"
+                ),
+                "Is Dummy": st.column_config.CheckboxColumn(
+                    "Is Dummy",
+                    help="Check if this is a binary 0/1 variable"
+                ),
+                "Scale": st.column_config.CheckboxColumn(
+                    "Scale",
+                    help="Check to scale this variable (usually False for dummies)"
+                ),
+                "Mean": st.column_config.NumberColumn("Mean", disabled=True, format="%.2f"),
+                "Std": st.column_config.NumberColumn("Std", disabled=True, format="%.2f"),
+            }
+
+            # Add dynamic category columns
+            for cat_col in category_cols:
+                control_column_config[cat_col["name"]] = st.column_config.SelectboxColumn(
+                    cat_col["name"],
+                    options=cat_col.get("options", ["Other"]),
+                    help=f"Select {cat_col['name']} for grouping in results"
+                )
 
             # Editable data table
             edited_controls = st.data_editor(
                 control_df,
-                column_config={
-                    "Control": st.column_config.TextColumn("Control", disabled=True),
-                    "Sign Constraint": st.column_config.SelectboxColumn(
-                        "Sign Constraint",
-                        options=["positive", "negative", "unconstrained"],
-                        help="Expected direction of effect"
-                    ),
-                    "Is Dummy": st.column_config.CheckboxColumn(
-                        "Is Dummy",
-                        help="Check if this is a binary 0/1 variable"
-                    ),
-                    "Scale": st.column_config.CheckboxColumn(
-                        "Scale",
-                        help="Check to scale this variable (usually False for dummies)"
-                    ),
-                    "Mean": st.column_config.NumberColumn("Mean", disabled=True, format="%.2f"),
-                    "Std": st.column_config.NumberColumn("Std", disabled=True, format="%.2f"),
-                },
+                column_config=control_column_config,
                 hide_index=True,
                 use_container_width=True,
                 num_rows="fixed",
@@ -443,8 +564,15 @@ def show():
             # Convert edited table to controls config
             controls_config = []
             for _, row in edited_controls.iterrows():
+                # Build categories dict from dynamic columns
+                categories = {}
+                for cat_col in category_cols:
+                    if cat_col["name"] in row and row[cat_col["name"]]:
+                        categories[cat_col["name"]] = row[cat_col["name"]]
+
                 controls_config.append({
                     "name": row["Control"],
+                    "categories": categories,
                     "sign_constraint": row["Sign Constraint"],
                     "is_dummy": row["Is Dummy"],
                     "scale": row["Scale"],
@@ -632,11 +760,18 @@ def build_config_from_state() -> ModelConfig:
     """Build a ModelConfig from session state."""
     state = st.session_state.config_state
 
-    # Build channel configs
+    # Build category columns from session state
+    category_columns = [
+        CategoryColumnConfig(name=col["name"], options=col.get("options", []))
+        for col in st.session_state.get("category_columns", [])
+    ]
+
+    # Build channel configs with categories dict
     channels = [
         ChannelConfig(
             name=ch["name"],
             display_name=ch.get("display_name"),
+            categories=ch.get("categories", {}),
             adstock_type=AdstockType(ch.get("adstock_type", "medium")),
             roi_prior_low=ch.get("roi_prior_low", 0.5),
             roi_prior_mid=ch.get("roi_prior_mid", 2.0),
@@ -645,10 +780,11 @@ def build_config_from_state() -> ModelConfig:
         for ch in state.get("channels", [])
     ]
 
-    # Build control configs
+    # Build control configs with categories dict
     controls = [
         ControlConfig(
             name=ctrl["name"],
+            categories=ctrl.get("categories", {}),
             sign_constraint=SignConstraint(ctrl.get("sign_constraint", "unconstrained")),
             is_dummy=ctrl.get("is_dummy", False),
             scale=ctrl.get("scale", False),
@@ -669,6 +805,7 @@ def build_config_from_state() -> ModelConfig:
         ),
         channels=channels,
         controls=controls,
+        category_columns=category_columns,
         adstock=AdstockConfig(
             l_max=state.get("l_max", 8),
             short_decay=state.get("short_decay", 0.15),

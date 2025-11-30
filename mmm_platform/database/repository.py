@@ -263,6 +263,7 @@ class ModelRepository:
                 model_run_id=run_id,
                 channel_name=r.get("channel_name"),
                 display_name=r.get("display_name"),
+                categories=r.get("categories"),
                 total_spend=r.get("total_spend"),
                 total_contribution=r.get("total_contribution"),
                 roi=r.get("roi"),
@@ -290,6 +291,7 @@ class ModelRepository:
                 model_run_id=run_id,
                 control_name=r.get("control_name"),
                 display_name=r.get("display_name"),
+                categories=r.get("categories"),
                 total_contribution=r.get("total_contribution"),
                 expected_sign=r.get("expected_sign"),
                 actual_sign=r.get("actual_sign"),
@@ -317,3 +319,98 @@ class ModelRepository:
             .filter(ControlResult.model_run_id == run_id)
             .all()
         )
+
+    def get_all_category_values(
+        self,
+        column_name: str,
+        variable_type: Optional[str] = None
+    ) -> List[str]:
+        """
+        Get all unique category values for a specific column from the database.
+
+        Parameters
+        ----------
+        column_name : str
+            The category column name to get values for.
+        variable_type : str, optional
+            'channel', 'control', or None for both.
+
+        Returns
+        -------
+        List[str]
+            Unique category values sorted by frequency (most common first).
+        """
+        from collections import Counter
+
+        values = []
+
+        # Get categories from result tables (JSON field)
+        if variable_type in (None, 'channel'):
+            channel_results = (
+                self.session.query(ChannelResult.categories)
+                .filter(ChannelResult.categories.isnot(None))
+                .all()
+            )
+            for (cats,) in channel_results:
+                if cats and column_name in cats:
+                    values.append(cats[column_name])
+
+        if variable_type in (None, 'control'):
+            control_results = (
+                self.session.query(ControlResult.categories)
+                .filter(ControlResult.categories.isnot(None))
+                .all()
+            )
+            for (cats,) in control_results:
+                if cats and column_name in cats:
+                    values.append(cats[column_name])
+
+        # Also get from saved configs
+        configs = self.session.query(ModelConfig.config_json).all()
+        for (config_json,) in configs:
+            if config_json:
+                if variable_type in (None, 'channel'):
+                    for ch in config_json.get('channels', []):
+                        cats = ch.get('categories', {})
+                        if isinstance(cats, dict) and column_name in cats:
+                            values.append(cats[column_name])
+                if variable_type in (None, 'control'):
+                    for ctrl in config_json.get('controls', []):
+                        cats = ctrl.get('categories', {})
+                        if isinstance(cats, dict) and column_name in cats:
+                            values.append(cats[column_name])
+
+        # Return unique values sorted by frequency
+        counts = Counter([v for v in values if v])
+        return [val for val, _ in counts.most_common()]
+
+    def get_all_category_columns(self) -> List[str]:
+        """
+        Get all unique category column names used across all configs.
+
+        Returns
+        -------
+        List[str]
+            Unique category column names.
+        """
+        column_names = set()
+
+        # Get from saved configs
+        configs = self.session.query(ModelConfig.config_json).all()
+        for (config_json,) in configs:
+            if config_json:
+                # Get from category_columns definition
+                for col in config_json.get('category_columns', []):
+                    if col.get('name'):
+                        column_names.add(col['name'])
+                # Also check channels and controls for any category keys
+                for ch in config_json.get('channels', []):
+                    cats = ch.get('categories', {})
+                    if isinstance(cats, dict):
+                        column_names.update(cats.keys())
+                for ctrl in config_json.get('controls', []):
+                    cats = ctrl.get('categories', {})
+                    if isinstance(cats, dict):
+                        column_names.update(cats.keys())
+
+        return list(column_names)

@@ -110,10 +110,21 @@ class ConfigLoader:
                 "revenue_scale": 1000.0,
                 "spend_scale": 1000.0,
             },
+            "category_columns": [
+                {
+                    "name": "Channel Type",
+                    "options": ["Paid Media", "Organic", "Direct"],
+                },
+                {
+                    "name": "Funnel Stage",
+                    "options": ["Awareness", "Consideration", "Conversion"],
+                },
+            ],
             "channels": [
                 {
                     "name": "channel_1_spend",
                     "display_name": "Channel 1",
+                    "categories": {"Channel Type": "Paid Media", "Funnel Stage": "Awareness"},
                     "adstock_type": "medium",
                     "roi_prior_low": 0.5,
                     "roi_prior_mid": 2.0,
@@ -124,6 +135,7 @@ class ConfigLoader:
                 {
                     "name": "promo_variable",
                     "display_name": "Promotion",
+                    "categories": {"Channel Type": "Promotions"},
                     "sign_constraint": "positive",
                     "is_dummy": True,
                     "scale": False,
