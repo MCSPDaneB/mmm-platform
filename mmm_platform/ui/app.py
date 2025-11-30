@@ -85,9 +85,9 @@ def main():
 
     # Status indicators
     st.sidebar.subheader("Status")
-    data_status = "✅" if st.session_state.current_data is not None else "⏳"
-    config_status = "✅" if st.session_state.current_config is not None else "⏳"
-    model_status = "✅" if st.session_state.model_fitted else "⏳"
+    data_status = "✅" if st.session_state.get("current_data") is not None else "⏳"
+    config_status = "✅" if st.session_state.get("current_config") is not None else "⏳"
+    model_status = "✅" if st.session_state.get("model_fitted", False) else "⏳"
 
     st.sidebar.write(f"{data_status} Data loaded")
     st.sidebar.write(f"{config_status} Model configured")
