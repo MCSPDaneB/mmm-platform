@@ -662,9 +662,11 @@ def show():
             # First add regular controls from data columns
             for ctrl in selected_controls:
                 is_dummy_default = df[ctrl].isin([0, 1]).all() if ctrl in df.columns else False
+                default_display = ctrl.replace("_", " ").title()
 
                 row_data = {
                     "Control": ctrl,
+                    "Display Name": default_display,
                     "Sign Constraint": "positive",
                     "Is Dummy": is_dummy_default,
                     "Scale": not is_dummy_default,
@@ -676,6 +678,7 @@ def show():
                 # Override with settings if available
                 if ctrl in controls_dict:
                     settings = controls_dict[ctrl]
+                    row_data["Display Name"] = settings.get("display_name", default_display)
                     row_data["Sign Constraint"] = settings.get("sign_constraint", "positive")
                     row_data["Is Dummy"] = settings.get("is_dummy", is_dummy_default)
                     row_data["Scale"] = settings.get("scale", not is_dummy_default)
@@ -693,8 +696,10 @@ def show():
 
             # Then add configured dummy variables (from Results page)
             for dummy in config_dummies:
+                default_display = dummy["name"].replace("_", " ").title()
                 row_data = {
                     "Control": dummy["name"],
+                    "Display Name": dummy.get("display_name", default_display),
                     "Sign Constraint": dummy.get("sign_constraint", "positive"),
                     "Is Dummy": True,
                     "Scale": False,
@@ -714,12 +719,16 @@ def show():
             control_df = pd.DataFrame(control_table_data)
 
             # Build column config dynamically - hide internal columns
-            display_columns = ["Control", "Sign Constraint", "Is Dummy", "Scale", "Mean", "Std"]
+            display_columns = ["Control", "Display Name", "Sign Constraint", "Is Dummy", "Scale", "Mean", "Std"]
             for cat_col in category_cols:
                 display_columns.append(cat_col["name"])
 
             control_column_config = {
                 "Control": st.column_config.TextColumn("Control", disabled=True),
+                "Display Name": st.column_config.TextColumn(
+                    "Display Name",
+                    help="Human-readable name for display in results"
+                ),
                 "Sign Constraint": st.column_config.SelectboxColumn(
                     "Sign Constraint",
                     options=["positive", "negative", "unconstrained"],
@@ -779,6 +788,7 @@ def show():
                         # Keep as dummy variable config
                         dummy_variables_config.append({
                             "name": row["Control"],
+                            "display_name": row["Display Name"],
                             "start_date": original_row.get("start_date"),
                             "end_date": original_row.get("end_date"),
                             "categories": categories,
@@ -788,6 +798,7 @@ def show():
                         # Regular control
                         controls_config.append({
                             "name": row["Control"],
+                            "display_name": row["Display Name"],
                             "categories": categories,
                             "sign_constraint": row["Sign Constraint"],
                             "is_dummy": row["Is Dummy"],

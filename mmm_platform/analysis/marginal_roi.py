@@ -187,6 +187,7 @@ class MarginalROIAnalyzer:
         uncertainty_threshold: float = 5.0,  # ROI CI width threshold for "needs test"
         increase_threshold: float = 1.5,  # Marginal ROI > this AND headroom -> INCREASE
         reduce_threshold: float = 1.0,  # Marginal ROI < this -> REDUCE
+        display_names: Optional[Dict[str, str]] = None,  # Column name -> display name
     ):
         """
         Initialize MarginalROIAnalyzer.
@@ -215,6 +216,8 @@ class MarginalROIAnalyzer:
             Marginal ROI threshold for INCREASE recommendation
         reduce_threshold : float
             Marginal ROI threshold for REDUCE recommendation
+        display_names : dict, optional
+            Mapping from column names to display names
         """
         self.idata = idata
         self.df_scaled = df_scaled
@@ -227,6 +230,7 @@ class MarginalROIAnalyzer:
         self.uncertainty_threshold = uncertainty_threshold
         self.increase_threshold = increase_threshold
         self.reduce_threshold = reduce_threshold
+        self.display_names = display_names or {}
 
         # Get posterior summaries
         self._alpha_summary = None
@@ -267,6 +271,10 @@ class MarginalROIAnalyzer:
 
     def _get_channel_display_name(self, channel: str) -> str:
         """Convert channel column name to display name."""
+        # Use provided display name if available
+        if channel in self.display_names:
+            return self.display_names[channel]
+        # Fallback to formatted column name
         return (channel
                 .replace("PaidMedia_", "")
                 .replace("_spend", "")
@@ -513,6 +521,11 @@ class MarginalROIAnalyzer:
         MarginalROIAnalyzer
             Analyzer instance
         """
+        # Build display names dict from config
+        display_names = {}
+        for ch_config in mmm_wrapper.config.channels:
+            display_names[ch_config.name] = ch_config.get_display_name()
+
         return cls(
             idata=mmm_wrapper.idata,
             df_scaled=mmm_wrapper.df_scaled,
@@ -521,4 +534,5 @@ class MarginalROIAnalyzer:
             target_col=mmm_wrapper.config.data.target_column,
             spend_scale=mmm_wrapper.config.data.spend_scale,
             revenue_scale=mmm_wrapper.config.data.revenue_scale,
+            display_names=display_names,
         )

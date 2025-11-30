@@ -201,7 +201,7 @@ def show():
     exec_generator = ExecutiveSummaryGenerator(marginal_analyzer)
 
     # Tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
         "Overview",
         "Channel ROI",
         "Marginal ROI & Priority",
@@ -211,7 +211,8 @@ def show():
         "Time Series",
         "Export",
         "Visualizations",
-        "Model Coefficients"
+        "Model Coefficients",
+        "Media Curves"
     ])
 
     # =========================================================================
@@ -225,13 +226,13 @@ def show():
 
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("R²", f"{fit_stats['r2']:.3f}")
+            st.metric("R²", f"{fit_stats['r2']:.2f}")
         with col2:
-            st.metric("MAPE", f"{fit_stats['mape']:.1f}%")
+            st.metric("MAPE", f"{fit_stats['mape']:.2f}%")
         with col3:
-            st.metric("RMSE", f"{fit_stats['rmse']:.1f}")
+            st.metric("RMSE", f"{fit_stats['rmse']:.2f}")
         with col4:
-            st.metric("Fit Time", f"{fit_stats['fit_duration_seconds']:.1f}s")
+            st.metric("Fit Time", f"{fit_stats['fit_duration_seconds']:.2f}s")
 
         st.markdown("---")
 
@@ -242,7 +243,7 @@ def show():
 
         # Pie chart
         breakdown_data = pd.DataFrame([
-            {"Category": "Baseline", "Value": abs(breakdown["intercept"]["real_value"])},
+            {"Category": "Base", "Value": abs(breakdown["intercept"]["real_value"])},
             {"Category": "Channels", "Value": abs(breakdown["channels"]["real_value"])},
             {"Category": "Controls", "Value": abs(breakdown["controls"]["real_value"])},
             {"Category": "Seasonality", "Value": abs(breakdown["seasonality"]["real_value"])},
@@ -375,10 +376,10 @@ def show():
                 # ROI bar chart by channel, colored by category
                 fig = px.bar(
                     roi_df.sort_values("roi", ascending=False),
-                    x="channel",
+                    x="display_name",
                     y="roi",
                     title="ROI by Channel (colored by Category)",
-                    labels={"channel": "Channel", "roi": "ROI"},
+                    labels={"display_name": "Channel", "roi": "ROI"},
                     color="category",
                     color_discrete_map=CATEGORY_COLORS,
                 )
@@ -386,7 +387,7 @@ def show():
                 st.plotly_chart(fig, use_container_width=True)
 
                 # Channel table
-                display_df = roi_df[["channel", "category", "spend_real", "contribution_real", "roi"]].copy()
+                display_df = roi_df[["display_name", "category", "spend_real", "contribution_real", "roi"]].copy()
                 display_df.columns = ["Channel", "Category", "Spend ($)", "Contribution ($)", "ROI"]
 
             # Format table
@@ -404,7 +405,7 @@ def show():
                 roi_df,
                 x="spend_real",
                 y="contribution_real",
-                text="channel",
+                text="display_name",
                 title="Spend vs Contribution by Channel",
                 labels={
                     "spend_real": "Total Spend ($)",
@@ -644,9 +645,9 @@ def show():
                 for ci in sig_report.credible_intervals:
                     ci_data.append({
                         "Channel": ci.channel,
-                        "Mean": f"{ci.mean:.4f}",
-                        "HDI Low": f"{ci.hdi_low:.4f}",
-                        "HDI High": f"{ci.hdi_high:.4f}",
+                        "Mean": f"{ci.mean:.2f}",
+                        "HDI Low": f"{ci.hdi_low:.2f}",
+                        "HDI High": f"{ci.hdi_high:.2f}",
                         "Excludes Zero": "Yes" if ci.excludes_zero else "No"
                     })
 
@@ -913,8 +914,13 @@ def show():
             control_df["Status"] = control_df["sign_valid"].apply(
                 lambda x: "✅" if x else "⚠️"
             )
+            # Use display_name if available, otherwise fall back to control
+            display_col = "display_name" if "display_name" in control_df.columns else "control"
+            columns_to_show = [display_col, "contribution_real", "expected_sign", "actual_sign", "Status"]
+            display_ctrl_df = control_df[columns_to_show].copy()
+            display_ctrl_df.columns = ["Control", "Contribution ($)", "Expected Sign", "Actual Sign", "Status"]
             st.dataframe(
-                control_df[["control", "contribution_real", "expected_sign", "actual_sign", "Status"]],
+                display_ctrl_df,
                 use_container_width=True,
                 hide_index=True
             )
@@ -1351,7 +1357,7 @@ def show():
             "Select Visualization",
             [
                 "Contribution Waterfall",
-                "Baseline vs Channels (Donut)",
+                "Base vs Channels (Donut)",
                 "Stacked Contributions Over Time",
                 "ROI vs Spend (Bubble)",
                 "Response Curves",
@@ -1371,7 +1377,7 @@ def show():
 
                 # Add baseline/intercept
                 if 'intercept' in contribs_df.columns:
-                    contrib_dict['Baseline'] = float(contribs_df['intercept'].sum()) * config.data.revenue_scale
+                    contrib_dict['Base'] = float(contribs_df['intercept'].sum()) * config.data.revenue_scale
 
                 # Add channels
                 for ch in channel_cols:
@@ -1392,7 +1398,7 @@ def show():
 
                 fig = create_contribution_waterfall_chart(contrib_dict)
 
-            elif viz_option == "Baseline vs Channels (Donut)":
+            elif viz_option == "Base vs Channels (Donut)":
                 breakdown = contributions.get_contribution_breakdown()
                 baseline = abs(breakdown["intercept"]["real_value"])
                 channels = abs(breakdown["channels"]["real_value"])
@@ -1466,7 +1472,7 @@ def show():
                 # Regenerate for download
                 if viz_option == "Contribution Waterfall":
                     fig_for_download = create_contribution_waterfall_chart(contrib_dict)
-                elif viz_option == "Baseline vs Channels (Donut)":
+                elif viz_option == "Base vs Channels (Donut)":
                     fig_for_download = create_baseline_channels_donut(baseline, channels)
                 elif viz_option == "Stacked Contributions Over Time":
                     fig_for_download = create_stacked_contributions_area(dates, channel_contribs)
@@ -1514,9 +1520,9 @@ def show():
                         variables_data.append({
                             "Variable": ch,
                             "Type": "Channel",
-                            "Coef Mean": f"{row['mean']:.4f}",
-                            "Coef Std": f"{row['sd']:.4f}",
-                            "95% HDI": f"[{hdi_low:.4f}, {hdi_high:.4f}]",
+                            "Coef Mean": f"{row['mean']:.2f}",
+                            "Coef Std": f"{row['sd']:.2f}",
+                            "95% HDI": f"[{hdi_low:.2f}, {hdi_high:.2f}]",
                             "Significant": significant
                         })
                     except Exception:
@@ -1541,9 +1547,9 @@ def show():
                         variables_data.append({
                             "Variable": ctrl,
                             "Type": var_type,
-                            "Coef Mean": f"{row['mean']:.4f}",
-                            "Coef Std": f"{row['sd']:.4f}",
-                            "95% HDI": f"[{hdi_low:.4f}, {hdi_high:.4f}]",
+                            "Coef Mean": f"{row['mean']:.2f}",
+                            "Coef Std": f"{row['sd']:.2f}",
+                            "95% HDI": f"[{hdi_low:.2f}, {hdi_high:.2f}]",
                             "Significant": significant
                         })
                     except Exception:
@@ -1558,9 +1564,9 @@ def show():
                 variables_data.append({
                     "Variable": "intercept",
                     "Type": "Intercept",
-                    "Coef Mean": f"{row['mean']:.4f}",
-                    "Coef Std": f"{row['sd']:.4f}",
-                    "95% HDI": f"[{hdi_low:.4f}, {hdi_high:.4f}]",
+                    "Coef Mean": f"{row['mean']:.2f}",
+                    "Coef Std": f"{row['sd']:.2f}",
+                    "95% HDI": f"[{hdi_low:.2f}, {hdi_high:.2f}]",
                     "Significant": "Yes"
                 })
 
@@ -1598,6 +1604,358 @@ def show():
         else:
             st.warning("No variable statistics available.")
 
+    # =========================================================================
+    # Tab 11: Media Curves
+    # =========================================================================
+    with tab11:
+        st.subheader("Interactive Media Curves")
+        st.caption("Explore saturation curves and adstock decay for each channel")
+
+        # Check if we have the required posterior variables
+        idata = wrapper.idata
+        if idata is None:
+            st.warning("No inference data available for curve visualization")
+        else:
+            posterior = idata.posterior
+            has_saturation = "saturation_lam" in posterior and "saturation_beta" in posterior
+            has_adstock = "adstock_alpha" in posterior
+
+            if not has_saturation:
+                st.warning("Saturation parameters not found in model posterior")
+            else:
+                # Get channel info
+                channel_cols = config.get_channel_columns()
+
+                # Build display names
+                display_names = {}
+                for ch_config in config.channels:
+                    display_names[ch_config.name] = ch_config.get_display_name()
+
+                channel_display_names = [display_names.get(ch, ch) for ch in channel_cols]
+
+                # Controls row
+                ctrl_col1, ctrl_col2 = st.columns([1, 2])
+
+                with ctrl_col1:
+                    view_type = st.radio(
+                        "View",
+                        ["Saturation Curves", "Adstock Decay"] if has_adstock else ["Saturation Curves"],
+                        horizontal=True
+                    )
+
+                with ctrl_col2:
+                    channel_options = ["All Channels"] + channel_display_names
+                    selected_channel = st.selectbox("Channel", channel_options)
+
+                st.markdown("---")
+
+                # Get scales
+                spend_scale = config.data.spend_scale
+                revenue_scale = config.data.revenue_scale
+
+                if view_type == "Saturation Curves":
+                    _show_saturation_curves(
+                        wrapper, config, channel_cols, display_names,
+                        selected_channel, spend_scale, revenue_scale
+                    )
+                else:
+                    _show_adstock_curves(
+                        wrapper, config, channel_cols, display_names,
+                        selected_channel
+                    )
+
+
+def _show_saturation_curves(wrapper, config, channel_cols, display_names, selected_channel, spend_scale, revenue_scale):
+    """Show interactive saturation curves."""
+    import plotly.graph_objects as go
+    from mmm_platform.core.transforms import compute_logistic_saturation
+
+    posterior = wrapper.idata.posterior
+
+    # Initialize scenario state
+    if 'curve_scenarios' not in st.session_state:
+        st.session_state.curve_scenarios = {}
+
+    # Determine which channels to show
+    if selected_channel == "All Channels":
+        channels_to_show = list(range(len(channel_cols)))
+    else:
+        # Find index of selected channel
+        channel_display_names = [display_names.get(ch, ch) for ch in channel_cols]
+        idx = channel_display_names.index(selected_channel)
+        channels_to_show = [idx]
+
+    # Generate curve data for each channel
+    curves_data = []
+    for i in channels_to_show:
+        ch = channel_cols[i]
+        display_name = display_names.get(ch, ch)
+
+        # Get posterior means
+        lam = float(posterior['saturation_lam'].mean(dim=['chain', 'draw']).values[i])
+        beta = float(posterior['saturation_beta'].mean(dim=['chain', 'draw']).values[i])
+
+        # Get current spend data
+        spend_data = wrapper.df_scaled[ch].values
+        current_spend_scaled = spend_data.mean()
+        max_spend_scaled = spend_data.max() * 2.5
+
+        # Generate curve points
+        spend_range_scaled = np.linspace(0.001, max_spend_scaled, 200)
+        response_scaled = beta * compute_logistic_saturation(spend_range_scaled, lam)
+
+        # Current position
+        current_response_scaled = beta * compute_logistic_saturation(current_spend_scaled, lam)
+
+        curves_data.append({
+            'channel': ch,
+            'display_name': display_name,
+            'spend_range': spend_range_scaled * spend_scale,
+            'response': response_scaled * revenue_scale,
+            'current_spend': current_spend_scaled * spend_scale,
+            'current_response': current_response_scaled * revenue_scale,
+            'lam': lam,
+            'beta': beta,
+            'max_spend': max_spend_scaled * spend_scale,
+        })
+
+    # Create Plotly figure
+    fig = go.Figure()
+
+    colors = px.colors.qualitative.Set2
+
+    for idx, curve in enumerate(curves_data):
+        color = colors[idx % len(colors)]
+
+        # Main curve
+        fig.add_trace(go.Scatter(
+            x=curve['spend_range'],
+            y=curve['response'],
+            mode='lines',
+            name=curve['display_name'],
+            line=dict(color=color, width=3),
+            hovertemplate=f"<b>{curve['display_name']}</b><br>" +
+                         "Spend: $%{x:,.0f}<br>Response: $%{y:,.0f}<extra></extra>"
+        ))
+
+        # Current position marker
+        fig.add_trace(go.Scatter(
+            x=[curve['current_spend']],
+            y=[curve['current_response']],
+            mode='markers',
+            name=f"{curve['display_name']} (Current)",
+            marker=dict(size=12, color=color, symbol='circle',
+                       line=dict(width=2, color='black')),
+            hovertemplate=f"<b>{curve['display_name']} - Current</b><br>" +
+                         "Spend: $%{x:,.0f}<br>Response: $%{y:,.0f}<extra></extra>",
+            showlegend=False
+        ))
+
+    # Add breakeven line
+    fig.add_hline(y=0, line_dash="dot", line_color="gray", opacity=0.5)
+
+    fig.update_layout(
+        title="Saturation Curves - Response vs Spend",
+        xaxis_title="Spend ($)",
+        yaxis_title="Response ($)",
+        hovermode='closest',
+        showlegend=True,
+        height=500,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Interactive exploration (only for single channel)
+    if len(channels_to_show) == 1:
+        curve = curves_data[0]
+        ch = curve['channel']
+
+        st.markdown("---")
+        st.subheader(f"Explore: {curve['display_name']}")
+
+        # Spend slider
+        min_spend = 0
+        max_spend = int(curve['max_spend'])
+        current = int(curve['current_spend'])
+
+        slider_spend = st.slider(
+            "Explore Spend Level",
+            min_value=min_spend,
+            max_value=max_spend,
+            value=current,
+            step=max(1, max_spend // 100),
+            format="$%d"
+        )
+
+        # Calculate metrics at slider position
+        slider_spend_scaled = slider_spend / spend_scale
+        slider_response_scaled = curve['beta'] * compute_logistic_saturation(slider_spend_scaled, curve['lam'])
+        slider_response = slider_response_scaled * revenue_scale
+
+        # Marginal ROI calculation
+        from mmm_platform.analysis.marginal_roi import logistic_saturation_derivative
+        marginal_scaled = logistic_saturation_derivative(slider_spend_scaled, curve['lam']) * curve['beta']
+        marginal_roi = marginal_scaled * revenue_scale / spend_scale
+
+        # Saturation percentage (response / max_response)
+        max_response = curve['beta'] * revenue_scale  # Asymptotic max
+        saturation_pct = (slider_response / max_response) * 100 if max_response > 0 else 0
+
+        # Display metrics
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Spend", f"${slider_spend:,.0f}")
+        col2.metric("Predicted Response", f"${slider_response:,.0f}")
+        col3.metric("Marginal ROI", f"${marginal_roi:.2f}")
+        col4.metric("Saturation Level", f"{saturation_pct:.0f}%")
+
+        # Zone indicator
+        if marginal_roi > 1.5:
+            st.success("**Efficient Zone** - High marginal returns, room to increase spend")
+        elif marginal_roi > 1.0:
+            st.info("**Optimal Zone** - Good returns, near optimal spend level")
+        else:
+            st.warning("**Diminishing Returns Zone** - Low marginal ROI, consider reducing spend")
+
+        # Scenario comparison
+        st.markdown("---")
+        st.subheader("Scenario Comparison")
+
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            if st.button("Add Scenario", use_container_width=True):
+                if ch not in st.session_state.curve_scenarios:
+                    st.session_state.curve_scenarios[ch] = []
+                st.session_state.curve_scenarios[ch].append({
+                    'spend': slider_spend,
+                    'response': slider_response,
+                    'marginal_roi': marginal_roi,
+                    'saturation': saturation_pct,
+                })
+                st.rerun()
+
+        with col2:
+            if ch in st.session_state.curve_scenarios and st.session_state.curve_scenarios[ch]:
+                if st.button("Clear Scenarios"):
+                    st.session_state.curve_scenarios[ch] = []
+                    st.rerun()
+
+        # Display scenarios
+        if ch in st.session_state.curve_scenarios and st.session_state.curve_scenarios[ch]:
+            scenarios = st.session_state.curve_scenarios[ch]
+            scenario_data = []
+            for i, s in enumerate(scenarios):
+                scenario_data.append({
+                    "Scenario": f"#{i+1}",
+                    "Spend": f"${s['spend']:,.0f}",
+                    "Response": f"${s['response']:,.0f}",
+                    "Marginal ROI": f"${s['marginal_roi']:.2f}",
+                    "Saturation": f"{s['saturation']:.0f}%"
+                })
+
+            st.dataframe(pd.DataFrame(scenario_data), use_container_width=True, hide_index=True)
+
+
+def _show_adstock_curves(wrapper, config, channel_cols, display_names, selected_channel):
+    """Show adstock decay curves."""
+    import plotly.graph_objects as go
+
+    posterior = wrapper.idata.posterior
+
+    if "adstock_alpha" not in posterior:
+        st.warning("Adstock parameters not found in model")
+        return
+
+    # Determine which channels to show
+    if selected_channel == "All Channels":
+        channels_to_show = list(range(len(channel_cols)))
+    else:
+        channel_display_names = [display_names.get(ch, ch) for ch in channel_cols]
+        idx = channel_display_names.index(selected_channel)
+        channels_to_show = [idx]
+
+    # Generate adstock data
+    l_max = 12  # Number of periods to show
+    periods = np.arange(l_max)
+
+    curves_data = []
+    for i in channels_to_show:
+        ch = channel_cols[i]
+        display_name = display_names.get(ch, ch)
+
+        alpha = float(posterior['adstock_alpha'].mean(dim=['chain', 'draw']).values[i])
+
+        # Generate decay weights
+        weights = np.array([alpha ** p for p in periods])
+        weights_normalized = weights / weights.sum()
+
+        # Calculate half-life
+        half_life = np.log(0.5) / np.log(alpha) if alpha > 0 and alpha < 1 else float('inf')
+
+        curves_data.append({
+            'channel': ch,
+            'display_name': display_name,
+            'alpha': alpha,
+            'weights': weights,
+            'weights_normalized': weights_normalized,
+            'half_life': half_life,
+        })
+
+    # Create figure
+    fig = go.Figure()
+
+    colors = px.colors.qualitative.Set2
+
+    for idx, curve in enumerate(curves_data):
+        color = colors[idx % len(colors)]
+
+        fig.add_trace(go.Bar(
+            x=periods,
+            y=curve['weights_normalized'] * 100,
+            name=f"{curve['display_name']} (α={curve['alpha']:.2f})",
+            marker_color=color,
+            opacity=0.7,
+            hovertemplate=f"<b>{curve['display_name']}</b><br>" +
+                         "Period: %{x}<br>Weight: %{y:.1f}%<extra></extra>"
+        ))
+
+    fig.update_layout(
+        title="Adstock Decay - Carryover Effect by Period",
+        xaxis_title="Periods After Spend",
+        yaxis_title="Effect Weight (%)",
+        barmode='group',
+        height=400,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Summary table
+    st.markdown("---")
+    st.subheader("Adstock Parameters")
+
+    summary_data = []
+    for curve in curves_data:
+        summary_data.append({
+            "Channel": curve['display_name'],
+            "Alpha (Decay Rate)": f"{curve['alpha']:.2f}",
+            "Half-Life (periods)": f"{curve['half_life']:.1f}" if curve['half_life'] < 100 else "N/A",
+            "Immediate Effect": f"{curve['weights_normalized'][0]*100:.1f}%",
+            "Carryover (period 1)": f"{curve['weights_normalized'][1]*100:.1f}%" if len(curve['weights_normalized']) > 1 else "N/A",
+        })
+
+    st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+
+    # Interpretation
+    st.markdown("---")
+    st.markdown("""
+    **Interpretation:**
+    - **Alpha (α)**: Decay rate. Higher α = more carryover effect
+    - **Half-Life**: Number of periods for effect to decay by 50%
+    - **Immediate Effect**: % of total effect in the spend period
+    - Channels with high α have longer-lasting advertising effects
+    """)
+
 
 def show_ec2_results():
     """Show results page for EC2 mode with results from the API."""
@@ -1625,13 +1983,13 @@ def show_ec2_results():
         col1, col2, col3, col4 = st.columns(4)
         with col1:
             r2 = diagnostics.get("r2") or fit_stats.get("r2", "N/A")
-            st.metric("R²", f"{r2:.3f}" if isinstance(r2, (int, float)) else r2)
+            st.metric("R²", f"{r2:.2f}" if isinstance(r2, (int, float)) else r2)
         with col2:
             mape = diagnostics.get("mape") or fit_stats.get("mape", "N/A")
-            st.metric("MAPE", f"{mape:.1f}%" if isinstance(mape, (int, float)) else mape)
+            st.metric("MAPE", f"{mape:.2f}%" if isinstance(mape, (int, float)) else mape)
         with col3:
             rmse = diagnostics.get("rmse") or fit_stats.get("rmse", "N/A")
-            st.metric("RMSE", f"{rmse:.1f}" if isinstance(rmse, (int, float)) else rmse)
+            st.metric("RMSE", f"{rmse:.2f}" if isinstance(rmse, (int, float)) else rmse)
         with col4:
             n_obs = diagnostics.get("n_observations") or fit_stats.get("n_observations", "N/A")
             st.metric("Observations", n_obs)
@@ -1775,8 +2133,8 @@ def show_demo_results():
         breakdown = demo._get_contribution_breakdown()
         fig = px.pie(
             values=[breakdown['baseline'], breakdown['channels']],
-            names=['Baseline', 'All Channels'],
-            title="Baseline vs Channels"
+            names=['Base', 'All Channels'],
+            title="Base vs Channels"
         )
         st.plotly_chart(fig, use_container_width=True)
 
@@ -2041,7 +2399,7 @@ def show_demo_results():
         viz_option = st.selectbox(
             "Select Visualization",
             [
-                "Baseline vs Channels (Donut)",
+                "Base vs Channels (Donut)",
                 "Contribution Rank Over Time",
                 "ROI vs Effectiveness (Bubble)",
                 "Response Curves",
@@ -2055,7 +2413,7 @@ def show_demo_results():
         # Generate selected visualization
         fig = None
 
-        if viz_option == "Baseline vs Channels (Donut)":
+        if viz_option == "Base vs Channels (Donut)":
             breakdown = demo._get_contribution_breakdown()
             fig = create_baseline_channels_donut(
                 breakdown['baseline'], breakdown['channels']
@@ -2096,7 +2454,7 @@ def show_demo_results():
 
         elif viz_option == "Contribution Waterfall":
             contrib_dict = {ch: float(demo.contribs[ch].sum()) for ch in demo.channel_cols}
-            contrib_dict['Baseline'] = float(demo.contribs['intercept'].sum())
+            contrib_dict['Base'] = float(demo.contribs['intercept'].sum())
             fig = create_contribution_waterfall_chart(contrib_dict)
 
         if fig is not None:

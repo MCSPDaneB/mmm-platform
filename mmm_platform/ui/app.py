@@ -63,25 +63,13 @@ def main():
             "⚙️ Configure Model",
             "🚀 Run Model",
             "📈 Results",
+            "📊 Combined Analysis",
+            "🔍 Compare Models",
             "💾 Saved Configs & Models",
         ],
     )
 
     st.sidebar.markdown("---")
-
-    # Demo mode indicator and exit button
-    if st.session_state.get("demo_mode", False):
-        st.sidebar.warning("**Demo Mode Active**")
-        if st.sidebar.button("Exit Demo Mode", type="secondary", use_container_width=True):
-            # Clear demo state
-            st.session_state.demo_mode = False
-            st.session_state.demo = None
-            st.session_state.current_data = None
-            st.session_state.current_config = None
-            st.session_state.current_model = None
-            st.session_state.model_fitted = False
-            st.rerun()
-        st.sidebar.markdown("---")
 
     # Status indicators
     st.sidebar.subheader("Status")
@@ -108,71 +96,20 @@ def main():
     elif page == "📈 Results":
         from mmm_platform.ui.pages import results
         results.show()
+    elif page == "📊 Combined Analysis":
+        from mmm_platform.ui.pages import combined_analysis
+        combined_analysis.show()
+    elif page == "🔍 Compare Models":
+        from mmm_platform.ui.pages import compare_models
+        compare_models.show()
     elif page == "💾 Saved Configs & Models":
         from mmm_platform.ui.pages import saved_models
         saved_models.show()
 
 
-def load_demo_data():
-    """Load demo data into session state."""
-    from mmm_platform.analysis.demo import create_demo_scenario
-
-    with st.spinner("Loading demo scenario..."):
-        demo = create_demo_scenario()
-
-        # Store demo in session state
-        st.session_state.demo_mode = True
-        st.session_state.demo = demo
-        st.session_state.current_data = demo.df_scaled.reset_index()
-        st.session_state.model_fitted = True
-
-        # Create a mock config for display purposes
-        st.session_state.current_config = type('MockConfig', (), {
-            'name': 'Demo Model',
-            'channels': [type('Ch', (), {
-                'name': ch,
-                'roi_prior_low': 0.5,
-                'roi_prior_mid': 1.5,
-                'roi_prior_high': 3.0,
-                'adstock_type': 'geometric',
-            })() for ch in demo.channel_cols],
-            'controls': [],
-            'data': type('Data', (), {
-                'target_column': demo.target_col,
-                'date_column': 'date',
-                'revenue_scale': demo.revenue_scale,
-                'spend_scale': demo.spend_scale,
-            })(),
-            'sampling': type('Sampling', (), {
-                'draws': 1000,
-                'tune': 500,
-                'chains': 4,
-                'target_accept': 0.9,
-            })(),
-            'get_channel_columns': lambda: demo.channel_cols,
-        })()
-
-    st.success("Demo loaded! Go to **Results** to explore all features.")
-    st.rerun()
-
-
 def show_home():
     """Show the home page."""
     st.title("Marketing Mix Modeling Platform")
-
-    # Demo Mode Button - Prominent at the top
-    st.markdown("---")
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown("### Quick Start: Try the Demo")
-        st.markdown("Load a demo scenario with mock data to explore all features without running a model.")
-        if st.button("Load Demo Data", type="primary", use_container_width=True):
-            load_demo_data()
-
-        if st.session_state.get("demo_mode"):
-            st.success("Demo mode active! Navigate to **Results** to explore.")
-
-    st.markdown("---")
 
     st.markdown("""
     Welcome to the **MMM Platform** - a comprehensive tool for building and analyzing
@@ -195,7 +132,8 @@ def show_home():
     - **Comprehensive Diagnostics**: Convergence checks, residual analysis
     - **Executive Summary**: Investment recommendations (INCREASE/HOLD/REDUCE)
     - **Marginal ROI Analysis**: Breakeven spend and headroom calculations
-    - **Combined Model Analysis**: Multi-outcome optimization (Online + Offline)
+    - **Combined Model Analysis**: Multi-outcome optimization across models
+    - **Model Comparison**: Side-by-side comparison of fitted models
     - **Export Results**: CSV, JSON, and HTML reports
     """)
 

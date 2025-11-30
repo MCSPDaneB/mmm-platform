@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 # Category color mapping for visualizations
 CATEGORY_COLORS = {
+    "BASE": "#808080",
+    "Base": "#808080",
     "BASELINE": "#808080",
     "Baseline": "#808080",
     "SEASONALITY": "#9370DB",
@@ -63,6 +65,7 @@ class ContributionAnalyzer:
         date_col: str,
         revenue_scale: float = 1000.0,
         spend_scale: float = 1000.0,
+        display_names: Optional[Dict[str, str]] = None,
     ):
         """
         Initialize ContributionAnalyzer.
@@ -85,6 +88,8 @@ class ContributionAnalyzer:
             Scale factor for revenue.
         spend_scale : float
             Scale factor for spend.
+        display_names : dict, optional
+            Mapping from column names to display names.
         """
         self.contribs = contribs
         self.df_scaled = df_scaled
@@ -94,6 +99,14 @@ class ContributionAnalyzer:
         self.date_col = date_col
         self.revenue_scale = revenue_scale
         self.spend_scale = spend_scale
+        self.display_names = display_names or {}
+
+    def get_display_name(self, col_name: str) -> str:
+        """Get display name for a column, or formatted fallback."""
+        if col_name in self.display_names:
+            return self.display_names[col_name]
+        # Fallback formatting
+        return col_name.replace("PaidMedia_", "").replace("_spend", "").replace("_", " ").title()
 
     def get_channel_roi(self) -> pd.DataFrame:
         """
@@ -120,6 +133,7 @@ class ContributionAnalyzer:
 
             results.append({
                 "channel": ch,
+                "display_name": self.get_display_name(ch),
                 "contribution_scaled": float(contrib),
                 "spend_scaled": float(spend),
                 "roi": float(roi),
@@ -213,6 +227,7 @@ class ContributionAnalyzer:
 
             results.append({
                 "control": ctrl,
+                "display_name": self.get_display_name(ctrl),
                 "contribution_scaled": float(contrib),
                 "contribution_real": float(contrib * self.revenue_scale),
                 "expected_sign": expected_sign,
@@ -249,10 +264,10 @@ class ContributionAnalyzer:
         groups: Dict[str, list] = {}
         assigned = set()
 
-        # 1. Baseline/intercept (always hardcoded - model structure)
+        # 1. Base/intercept (always hardcoded - model structure)
         intercept_cols = [c for c in component_cols if "intercept" in c.lower()]
         if intercept_cols:
-            groups["Baseline"] = intercept_cols
+            groups["Base"] = intercept_cols
             assigned.update(intercept_cols)
 
         # 2. Seasonality (always hardcoded - model structure)
@@ -423,6 +438,13 @@ class ContributionAnalyzer:
         ContributionAnalyzer
             Analyzer instance.
         """
+        # Build display names dict from config
+        display_names = {}
+        for ch_config in mmm_wrapper.config.channels:
+            display_names[ch_config.name] = ch_config.get_display_name()
+        for ctrl_config in mmm_wrapper.config.controls:
+            display_names[ctrl_config.name] = ctrl_config.get_display_name()
+
         return cls(
             contribs=mmm_wrapper.get_contributions(),
             df_scaled=mmm_wrapper.df_scaled,
@@ -432,4 +454,5 @@ class ContributionAnalyzer:
             date_col=mmm_wrapper.config.data.date_column,
             revenue_scale=mmm_wrapper.config.data.revenue_scale,
             spend_scale=mmm_wrapper.config.data.spend_scale,
+            display_names=display_names,
         )

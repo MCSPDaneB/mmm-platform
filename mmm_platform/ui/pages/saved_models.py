@@ -140,6 +140,10 @@ def _show_models_section():
     st.subheader("Fitted Models")
     st.caption("Models that have been trained and saved")
 
+    # Initialize comparison selection state
+    if "models_to_compare" not in st.session_state:
+        st.session_state.models_to_compare = []
+
     # Get models directory
     models_dir = get_models_dir()
 
@@ -152,6 +156,27 @@ def _show_models_section():
         )
         return
 
+    # Show compare button if 2 models selected
+    n_selected = len(st.session_state.models_to_compare)
+    if n_selected == 2:
+        st.success(f"2 models selected for comparison")
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            if st.button("🔍 Compare Models", type="primary", use_container_width=True):
+                st.session_state.active_comparison = st.session_state.models_to_compare.copy()
+                st.rerun()
+        with col2:
+            if st.button("Clear Selection", use_container_width=True):
+                st.session_state.models_to_compare = []
+                st.rerun()
+    elif n_selected == 1:
+        st.info("Select one more model to compare (2 required)")
+    elif n_selected > 2:
+        st.warning(f"{n_selected} models selected. Please select exactly 2 for comparison.")
+        if st.button("Clear Selection"):
+            st.session_state.models_to_compare = []
+            st.rerun()
+
     st.write(f"Found **{len(models)}** fitted model(s)")
 
     # Display models
@@ -160,49 +185,71 @@ def _show_models_section():
         model_name = model.get("config_name", "Unknown")
         created_at = model.get("created_at", "Unknown")[:16].replace("T", " ")
 
-        with st.expander(f"📦 {model_name} - {created_at}"):
-            col1, col2 = st.columns(2)
+        # Check if this model is selected for comparison
+        is_selected = model_path in st.session_state.models_to_compare
 
-            with col1:
-                st.write(f"**Created:** {created_at}")
-                fitted_at = model.get("fitted_at")
-                if fitted_at:
-                    st.write(f"**Fitted:** {fitted_at[:16].replace('T', ' ')}")
-                st.write(f"**Channels:** {model.get('n_channels', 'N/A')}")
-                st.write(f"**Controls:** {model.get('n_controls', 'N/A')}")
+        # Header with checkbox
+        header_col1, header_col2 = st.columns([0.05, 0.95])
+        with header_col1:
+            # Checkbox for comparison selection
+            selected = st.checkbox(
+                "",
+                value=is_selected,
+                key=f"compare_check_{model_path}",
+                help="Select for comparison"
+            )
+            # Update selection state
+            if selected and model_path not in st.session_state.models_to_compare:
+                st.session_state.models_to_compare.append(model_path)
+                st.rerun()
+            elif not selected and model_path in st.session_state.models_to_compare:
+                st.session_state.models_to_compare.remove(model_path)
+                st.rerun()
 
-            with col2:
-                # Fit statistics
-                r2 = model.get("r2")
-                mape = model.get("mape")
-                rmse = model.get("rmse")
-                duration = model.get("fit_duration_seconds", 0)
+        with header_col2:
+            with st.expander(f"📦 {model_name} - {created_at}" + (" ✓" if is_selected else "")):
+                col1, col2 = st.columns(2)
 
-                if r2 is not None:
-                    st.write(f"**R²:** {r2:.3f}")
-                if mape is not None:
-                    st.write(f"**MAPE:** {mape:.1f}%")
-                if rmse is not None:
-                    st.write(f"**RMSE:** {rmse:.1f}")
-                if duration:
-                    st.write(f"**Fit Time:** {duration:.0f}s")
+                with col1:
+                    st.write(f"**Created:** {created_at}")
+                    fitted_at = model.get("fitted_at")
+                    if fitted_at:
+                        st.write(f"**Fitted:** {fitted_at[:16].replace('T', ' ')}")
+                    st.write(f"**Channels:** {model.get('n_channels', 'N/A')}")
+                    st.write(f"**Controls:** {model.get('n_controls', 'N/A')}")
 
-            # Actions
-            col1, col2, col3 = st.columns(3)
+                with col2:
+                    # Fit statistics
+                    r2 = model.get("r2")
+                    mape = model.get("mape")
+                    rmse = model.get("rmse")
+                    duration = model.get("fit_duration_seconds", 0)
 
-            with col1:
-                if st.button(
-                    "📂 Load Model", key=f"load_model_{model_path}", type="primary"
-                ):
-                    _load_model(model_path)
+                    if r2 is not None:
+                        st.write(f"**R²:** {r2:.2f}")
+                    if mape is not None:
+                        st.write(f"**MAPE:** {mape:.2f}%")
+                    if rmse is not None:
+                        st.write(f"**RMSE:** {rmse:.2f}")
+                    if duration:
+                        st.write(f"**Fit Time:** {duration:.0f}s")
 
-            with col2:
-                if st.button("📊 View Results", key=f"view_model_{model_path}"):
-                    _load_model(model_path, navigate_to_results=True)
+                # Actions
+                col1, col2, col3 = st.columns(3)
 
-            with col3:
-                if st.button("🗑️ Delete", key=f"delete_model_{model_path}"):
-                    _delete_path(model_path, "Model")
+                with col1:
+                    if st.button(
+                        "📂 Load Model", key=f"load_model_{model_path}", type="primary"
+                    ):
+                        _load_model(model_path)
+
+                with col2:
+                    if st.button("📊 View Results", key=f"view_model_{model_path}"):
+                        _load_model(model_path, navigate_to_results=True)
+
+                with col3:
+                    if st.button("🗑️ Delete", key=f"delete_model_{model_path}"):
+                        _delete_path(model_path, "Model")
 
 
 def _save_current_config(name: str):
