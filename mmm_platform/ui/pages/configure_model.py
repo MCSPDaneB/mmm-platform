@@ -751,44 +751,48 @@ def show():
                 hide_index=True,
                 use_container_width=True,
                 num_rows="fixed",
+                key="controls_data_editor",
             )
 
-            # Convert edited table to controls config and dummy variables config
-            controls_config = []
-            dummy_variables_config = []
+            # Save button to apply changes (prevents constant refreshing)
+            if st.button("💾 Save Control Settings", key="save_controls_btn"):
+                # Convert edited table to controls config and dummy variables config
+                controls_config = []
+                dummy_variables_config = []
 
-            for i, row in edited_controls.iterrows():
-                # Build categories dict from dynamic columns
-                categories = {}
-                for cat_col in category_cols:
-                    if cat_col["name"] in row and row[cat_col["name"]]:
-                        categories[cat_col["name"]] = row[cat_col["name"]]
+                for i, row in edited_controls.iterrows():
+                    # Build categories dict from dynamic columns
+                    categories = {}
+                    for cat_col in category_cols:
+                        if cat_col["name"] in row and row[cat_col["name"]]:
+                            categories[cat_col["name"]] = row[cat_col["name"]]
 
-                # Check if this is a dummy variable (from Results page)
-                original_row = control_table_data[i] if i < len(control_table_data) else {}
-                is_from_dummy = original_row.get("Source") == "dummy"
+                    # Check if this is a dummy variable (from Results page)
+                    original_row = control_table_data[i] if i < len(control_table_data) else {}
+                    is_from_dummy = original_row.get("Source") == "dummy"
 
-                if is_from_dummy:
-                    # Keep as dummy variable config
-                    dummy_variables_config.append({
-                        "name": row["Control"],
-                        "start_date": original_row.get("start_date"),
-                        "end_date": original_row.get("end_date"),
-                        "categories": categories,
-                        "sign_constraint": row["Sign Constraint"],
-                    })
-                else:
-                    # Regular control
-                    controls_config.append({
-                        "name": row["Control"],
-                        "categories": categories,
-                        "sign_constraint": row["Sign Constraint"],
-                        "is_dummy": row["Is Dummy"],
-                        "scale": row["Scale"],
-                    })
+                    if is_from_dummy:
+                        # Keep as dummy variable config
+                        dummy_variables_config.append({
+                            "name": row["Control"],
+                            "start_date": original_row.get("start_date"),
+                            "end_date": original_row.get("end_date"),
+                            "categories": categories,
+                            "sign_constraint": row["Sign Constraint"],
+                        })
+                    else:
+                        # Regular control
+                        controls_config.append({
+                            "name": row["Control"],
+                            "categories": categories,
+                            "sign_constraint": row["Sign Constraint"],
+                            "is_dummy": row["Is Dummy"],
+                            "scale": row["Scale"],
+                        })
 
-            st.session_state.config_state["controls"] = controls_config
-            st.session_state.config_state["dummy_variables"] = dummy_variables_config
+                st.session_state.config_state["controls"] = controls_config
+                st.session_state.config_state["dummy_variables"] = dummy_variables_config
+                st.success("Control settings saved!")
 
             # Show summary stats
             st.markdown("---")
