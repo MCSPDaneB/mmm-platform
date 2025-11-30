@@ -244,17 +244,31 @@ def show():
                 )
 
             with col_template:
-                # Generate template CSV
+                # Generate template CSV - include category columns with current values
+                category_cols_for_template = st.session_state.get("category_columns", [])
+
+                # Get current channel config from session state if available
+                current_channels_config = st.session_state.get("config_state", {}).get("channels", [])
+                channels_config_dict = {ch["name"]: ch for ch in current_channels_config}
+
                 template_data = []
                 for ch in selected_channels:
-                    template_data.append({
+                    # Get existing config for this channel if available
+                    existing = channels_config_dict.get(ch, {})
+
+                    row = {
                         "channel": ch,
-                        "display_name": ch.replace("PaidMedia_", "").replace("_spend", "").replace("_", " ").title(),
-                        "roi_low": 0.5,
-                        "roi_mid": 2.0,
-                        "roi_high": 5.0,
-                        "adstock_type": "medium"
-                    })
+                        "display_name": existing.get("display_name", ch.replace("PaidMedia_", "").replace("_spend", "").replace("_", " ").title()),
+                        "roi_low": existing.get("roi_prior_low", 0.5),
+                        "roi_mid": existing.get("roi_prior_mid", 2.0),
+                        "roi_high": existing.get("roi_prior_high", 5.0),
+                        "adstock_type": existing.get("adstock_type", "medium")
+                    }
+                    # Add category columns with current values
+                    existing_categories = existing.get("categories", {})
+                    for cat_col in category_cols_for_template:
+                        row[cat_col["name"]] = existing_categories.get(cat_col["name"], "")
+                    template_data.append(row)
                 template_df = pd.DataFrame(template_data)
 
                 st.download_button(
@@ -271,12 +285,26 @@ def show():
                     uploaded_priors = pd.read_csv(priors_file)
                     st.success(f"Loaded priors for {len(uploaded_priors)} channels")
 
+                    # Get category columns for reading from CSV
+                    category_cols_for_upload = st.session_state.get("category_columns", [])
+
                     # Merge with selected channels
                     priors_dict = {}
                     for _, row in uploaded_priors.iterrows():
+                        # Read category values from CSV
+                        categories = {}
+                        for cat_col in category_cols_for_upload:
+                            if cat_col["name"] in row and pd.notna(row[cat_col["name"]]) and row[cat_col["name"]]:
+                                cat_value = str(row[cat_col["name"]]).strip()
+                                if cat_value:
+                                    categories[cat_col["name"]] = cat_value
+                                    # Auto-add new values to category options
+                                    if cat_value not in cat_col["options"]:
+                                        cat_col["options"].append(cat_value)
+
                         priors_dict[row["channel"]] = {
                             "display_name": row.get("display_name", row["channel"]),
-                            "categories": {},  # Categories are now set via the UI category columns
+                            "categories": categories,
                             "roi_low": row.get("roi_low", 0.5),
                             "roi_mid": row.get("roi_mid", 2.0),
                             "roi_high": row.get("roi_high", 5.0),
@@ -485,16 +513,31 @@ def show():
                 )
 
             with col_template:
-                # Generate template CSV
+                # Generate template CSV - include category columns with current values
+                category_cols_for_ctrl_template = st.session_state.get("category_columns", [])
+
+                # Get current control config from session state if available
+                current_controls_config = st.session_state.get("config_state", {}).get("controls", [])
+                controls_config_dict = {ctrl["name"]: ctrl for ctrl in current_controls_config}
+
                 template_data = []
                 for ctrl in selected_controls:
-                    is_dummy = df[ctrl].isin([0, 1]).all() if ctrl in df.columns else False
-                    template_data.append({
+                    is_dummy_default = df[ctrl].isin([0, 1]).all() if ctrl in df.columns else False
+
+                    # Get existing config for this control if available
+                    existing = controls_config_dict.get(ctrl, {})
+
+                    row = {
                         "control": ctrl,
-                        "sign_constraint": "positive",
-                        "is_dummy": is_dummy,
-                        "scale": not is_dummy,
-                    })
+                        "sign_constraint": existing.get("sign_constraint", "positive"),
+                        "is_dummy": existing.get("is_dummy", is_dummy_default),
+                        "scale": existing.get("scale", not is_dummy_default),
+                    }
+                    # Add category columns with current values
+                    existing_categories = existing.get("categories", {})
+                    for cat_col in category_cols_for_ctrl_template:
+                        row[cat_col["name"]] = existing_categories.get(cat_col["name"], "")
+                    template_data.append(row)
                 template_df = pd.DataFrame(template_data)
 
                 st.download_button(
@@ -511,11 +554,25 @@ def show():
                     uploaded_controls = pd.read_csv(controls_file)
                     st.success(f"Loaded settings for {len(uploaded_controls)} controls")
 
+                    # Get category columns for reading from CSV
+                    category_cols_for_ctrl_upload = st.session_state.get("category_columns", [])
+
                     # Merge with selected controls
                     controls_dict = {}
                     for _, row in uploaded_controls.iterrows():
+                        # Read category values from CSV
+                        categories = {}
+                        for cat_col in category_cols_for_ctrl_upload:
+                            if cat_col["name"] in row and pd.notna(row[cat_col["name"]]) and row[cat_col["name"]]:
+                                cat_value = str(row[cat_col["name"]]).strip()
+                                if cat_value:
+                                    categories[cat_col["name"]] = cat_value
+                                    # Auto-add new values to category options
+                                    if cat_value not in cat_col["options"]:
+                                        cat_col["options"].append(cat_value)
+
                         controls_dict[row["control"]] = {
-                            "categories": row.get("categories", {}),
+                            "categories": categories,
                             "sign_constraint": row.get("sign_constraint", "positive"),
                             "is_dummy": bool(row.get("is_dummy", False)),
                             "scale": bool(row.get("scale", True)),
