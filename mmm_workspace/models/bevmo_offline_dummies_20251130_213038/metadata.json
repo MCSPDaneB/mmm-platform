@@ -1,0 +1,10 @@
+{
+  "version": "1.0",
+  "created_at": "2025-11-30T21:30:38.596470",
+  "fitted_at": "2025-11-30T21:30:38.168963",
+  "fit_duration_seconds": 62.459521532058716,
+  "config_name": "bevmo_offline_dummies",
+  "n_channels": 12,
+  "n_controls": 30,
+  "include_data": true
+}

@@ -601,13 +601,6 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
             with col4:
                 st.metric("Location", "EC2")
 
-            # Show channel ROI preview
-            if results.channel_roi:
-                st.markdown("---")
-                st.subheader("Channel ROI Preview")
-                roi_df = pd.DataFrame(results.channel_roi)
-                st.dataframe(roi_df, use_container_width=True, hide_index=True)
-
             # Save model if requested
             if save_model:
                 from mmm_platform.model.persistence import ModelPersistence, get_models_dir
