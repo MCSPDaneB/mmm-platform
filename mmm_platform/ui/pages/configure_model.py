@@ -9,7 +9,8 @@ from typing import Optional, List
 from mmm_platform.config.schema import (
     ModelConfig, ChannelConfig, ControlConfig, DataConfig,
     SamplingConfig, AdstockConfig, SaturationConfig, SeasonalityConfig,
-    AdstockType, SignConstraint, PriorConfig, CategoryColumnConfig
+    AdstockType, SignConstraint, PriorConfig, CategoryColumnConfig,
+    DummyVariableConfig
 )
 from mmm_platform.config.loader import ConfigLoader
 
@@ -507,8 +508,14 @@ def show():
             # Get category columns from session state (same as channels)
             category_cols = st.session_state.get("category_columns", [])
 
+            # Get configured dummy variables from config state
+            config_dummies = st.session_state.get("config_state", {}).get("dummy_variables", [])
+            dummy_names = [d["name"] for d in config_dummies]
+
             # Prepare data for editable table
             control_table_data = []
+
+            # First add regular controls from data columns
             for ctrl in selected_controls:
                 is_dummy_default = df[ctrl].isin([0, 1]).all() if ctrl in df.columns else False
 
@@ -519,6 +526,7 @@ def show():
                     "Scale": not is_dummy_default,
                     "Mean": df[ctrl].mean() if ctrl in df.columns else 0,
                     "Std": df[ctrl].std() if ctrl in df.columns else 0,
+                    "Source": "data",  # Track source for later
                 }
 
                 # Override with settings if available
@@ -539,9 +547,32 @@ def show():
 
                 control_table_data.append(row_data)
 
+            # Then add configured dummy variables (from Results page)
+            for dummy in config_dummies:
+                row_data = {
+                    "Control": dummy["name"],
+                    "Sign Constraint": dummy.get("sign_constraint", "positive"),
+                    "Is Dummy": True,
+                    "Scale": False,
+                    "Mean": 0.0,  # Will be created dynamically
+                    "Std": 0.0,
+                    "Source": "dummy",  # Track source
+                    "start_date": dummy.get("start_date"),  # Keep date info
+                    "end_date": dummy.get("end_date"),
+                }
+                # Add empty category values for dummies
+                for cat_col in category_cols:
+                    row_data[cat_col["name"]] = ""
+
+                control_table_data.append(row_data)
+
             control_df = pd.DataFrame(control_table_data)
 
-            # Build column config dynamically
+            # Build column config dynamically - hide internal columns
+            display_columns = ["Control", "Sign Constraint", "Is Dummy", "Scale", "Mean", "Std"]
+            for cat_col in category_cols:
+                display_columns.append(cat_col["name"])
+
             control_column_config = {
                 "Control": st.column_config.TextColumn("Control", disabled=True),
                 "Sign Constraint": st.column_config.SelectboxColumn(
@@ -569,45 +600,145 @@ def show():
                     help=f"Select {cat_col['name']} for grouping in results"
                 )
 
+            # Only show display columns (hide Source, start_date, end_date)
+            display_df = control_df[display_columns] if len(control_df) > 0 else control_df
+
             # Editable data table
             edited_controls = st.data_editor(
-                control_df,
+                display_df,
                 column_config=control_column_config,
                 hide_index=True,
                 use_container_width=True,
                 num_rows="fixed",
             )
 
-            # Convert edited table to controls config
+            # Convert edited table to controls config and dummy variables config
             controls_config = []
-            for _, row in edited_controls.iterrows():
+            dummy_variables_config = []
+
+            for i, row in edited_controls.iterrows():
                 # Build categories dict from dynamic columns
                 categories = {}
                 for cat_col in category_cols:
                     if cat_col["name"] in row and row[cat_col["name"]]:
                         categories[cat_col["name"]] = row[cat_col["name"]]
 
-                controls_config.append({
-                    "name": row["Control"],
-                    "categories": categories,
-                    "sign_constraint": row["Sign Constraint"],
-                    "is_dummy": row["Is Dummy"],
-                    "scale": row["Scale"],
-                })
+                # Check if this is a dummy variable (from Results page)
+                original_row = control_table_data[i] if i < len(control_table_data) else {}
+                is_from_dummy = original_row.get("Source") == "dummy"
+
+                if is_from_dummy:
+                    # Keep as dummy variable config
+                    dummy_variables_config.append({
+                        "name": row["Control"],
+                        "start_date": original_row.get("start_date"),
+                        "end_date": original_row.get("end_date"),
+                        "sign_constraint": row["Sign Constraint"],
+                    })
+                else:
+                    # Regular control
+                    controls_config.append({
+                        "name": row["Control"],
+                        "categories": categories,
+                        "sign_constraint": row["Sign Constraint"],
+                        "is_dummy": row["Is Dummy"],
+                        "scale": row["Scale"],
+                    })
 
             st.session_state.config_state["controls"] = controls_config
+            st.session_state.config_state["dummy_variables"] = dummy_variables_config
 
             # Show summary stats
             st.markdown("---")
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Controls Selected", len(selected_controls))
+                st.metric("Data Controls", len(selected_controls))
             with col2:
+                st.metric("Dummy Variables", len(config_dummies))
+            with col3:
                 n_positive = sum(1 for _, r in edited_controls.iterrows() if r["Sign Constraint"] == "positive")
                 st.metric("Positive Constraints", n_positive)
-            with col3:
-                n_dummy = sum(1 for _, r in edited_controls.iterrows() if r["Is Dummy"])
-                st.metric("Dummy Variables", n_dummy)
+            with col4:
+                st.metric("Total Controls", len(edited_controls))
+
+            # Allow removing dummy variables
+            if config_dummies:
+                st.caption("To remove a dummy variable, click the button below:")
+                cols = st.columns(min(len(config_dummies), 4))
+                for i, dummy in enumerate(config_dummies):
+                    with cols[i % 4]:
+                        if st.button(f"Remove {dummy['name']}", key=f"remove_dummy_{i}"):
+                            st.session_state.config_state["dummy_variables"].pop(i)
+                            st.rerun()
+
+        # =====================================================================
+        # Pending Dummy Variables (from Results page)
+        # =====================================================================
+        if st.session_state.get("pending_dummies"):
+            st.markdown("---")
+            st.subheader("Pending Dummy Variables")
+            st.caption("These were created from the Results page residual analysis. Add them to include in the controls table above.")
+
+            pending_dummies = st.session_state.pending_dummies
+
+            # Display pending dummies in a compact table-like format
+            for i, dummy in enumerate(pending_dummies):
+                col1, col2, col3, col4, col5 = st.columns([3, 2, 2, 2, 1])
+                with col1:
+                    st.write(f"**{dummy.name}**")
+                with col2:
+                    st.write(f"{dummy.start_date}")
+                with col3:
+                    st.write(f"{dummy.end_date}")
+                with col4:
+                    sign_label = dummy.sign_constraint.value
+                    if sign_label == "positive":
+                        st.success(sign_label)
+                    elif sign_label == "negative":
+                        st.error(sign_label)
+                    else:
+                        st.info(sign_label)
+                with col5:
+                    if st.button("✕", key=f"remove_pending_dummy_{i}", help="Remove"):
+                        st.session_state.pending_dummies.pop(i)
+                        st.rerun()
+
+            # Add to model button
+            st.markdown("")
+            col1, col2 = st.columns([2, 3])
+            with col1:
+                if st.button("Add to Controls Table", type="primary", key="add_pending_dummies"):
+                    # Add pending dummies to config state
+                    if "config_state" not in st.session_state:
+                        st.session_state.config_state = {}
+
+                    # Initialize dummy_variables in config state if needed
+                    if "dummy_variables" not in st.session_state.config_state:
+                        st.session_state.config_state["dummy_variables"] = []
+
+                    # Add each pending dummy (avoid duplicates)
+                    existing_names = [d["name"] for d in st.session_state.config_state["dummy_variables"]]
+                    added_count = 0
+                    for dummy in pending_dummies:
+                        if dummy.name not in existing_names:
+                            dummy_dict = {
+                                "name": dummy.name,
+                                "start_date": dummy.start_date,
+                                "end_date": dummy.end_date,
+                                "sign_constraint": dummy.sign_constraint.value
+                            }
+                            st.session_state.config_state["dummy_variables"].append(dummy_dict)
+                            added_count += 1
+
+                    # Clear pending dummies
+                    st.session_state.pending_dummies = []
+                    st.success(f"Added {added_count} dummy variable(s) to controls table!")
+                    st.rerun()
+
+            with col2:
+                if st.button("Clear All Pending", key="clear_pending_dummies"):
+                    st.session_state.pending_dummies = []
+                    st.rerun()
 
     # =========================================================================
     # Tab 4: Transform Settings
@@ -827,6 +958,17 @@ def build_config_from_state() -> ModelConfig:
         for ctrl in state.get("controls", [])
     ]
 
+    # Build dummy variable configs from session state
+    dummy_variables = [
+        DummyVariableConfig(
+            name=dv["name"],
+            start_date=dv["start_date"],
+            end_date=dv["end_date"],
+            sign_constraint=SignConstraint(dv.get("sign_constraint", "unconstrained")),
+        )
+        for dv in state.get("dummy_variables", [])
+    ]
+
     # Build full config
     config = ModelConfig(
         name=state.get("name", "my_mmm_model"),
@@ -841,6 +983,7 @@ def build_config_from_state() -> ModelConfig:
         channels=channels,
         controls=controls,
         category_columns=category_columns,
+        dummy_variables=dummy_variables,
         adstock=AdstockConfig(
             l_max=state.get("l_max", 8),
             short_decay=state.get("short_decay", 0.15),

@@ -5,6 +5,7 @@ Results page for MMM Platform.
 import streamlit as st
 import pandas as pd
 import numpy as np
+import datetime
 import plotly.express as px
 import plotly.graph_objects as go
 
@@ -15,6 +16,155 @@ from mmm_platform.analysis.bayesian_significance import (
     BayesianSignificanceAnalyzer,
     get_interpretation_guide,
 )
+from mmm_platform.config.schema import DummyVariableConfig, SignConstraint
+
+
+def get_contiguous_periods(df: pd.DataFrame, mask: pd.Series, date_col: str) -> list[tuple]:
+    """Find contiguous date periods where mask is True.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing the dates
+    mask : pd.Series
+        Boolean mask indicating which rows are in the period
+    date_col : str
+        Name of the date column
+
+    Returns
+    -------
+    list[tuple]
+        List of (start_date, end_date) tuples for each contiguous period
+    """
+    periods = []
+    in_period = False
+    start_date = None
+
+    dates = df[date_col].values if date_col in df.columns else df.index
+
+    for i, (is_active, date) in enumerate(zip(mask.values, dates)):
+        if is_active and not in_period:
+            # Start new period
+            in_period = True
+            start_date = date
+        elif not is_active and in_period:
+            # End current period
+            periods.append((start_date, dates[i - 1]))
+            in_period = False
+            start_date = None
+
+    # Close any open period at the end
+    if in_period and start_date is not None:
+        periods.append((start_date, dates[-1]))
+
+    return periods
+
+
+def add_residual_highlights(fig: go.Figure, time_df: pd.DataFrame, threshold_std: float = 1.5) -> go.Figure:
+    """Add shaded regions to highlight periods with large residuals.
+
+    Parameters
+    ----------
+    fig : go.Figure
+        Plotly figure to add highlights to
+    time_df : pd.DataFrame
+        DataFrame with 'Date' and 'Residual' columns
+    threshold_std : float
+        Number of standard deviations for threshold
+
+    Returns
+    -------
+    go.Figure
+        Updated figure with highlights
+    """
+    residuals = time_df["Residual"]
+    std_resid = residuals.std()
+
+    # Find large positive residuals (underfitting)
+    large_positive = residuals > threshold_std * std_resid
+    # Find large negative residuals (overfitting)
+    large_negative = residuals < -threshold_std * std_resid
+
+    # Add highlights for underfitting periods (coral/salmon - visible on dark)
+    for start, end in get_contiguous_periods(time_df, large_positive, "Date"):
+        fig.add_vrect(
+            x0=start, x1=end,
+            fillcolor="rgba(255, 100, 100, 0.25)",
+            layer="below",
+            line_width=0,
+        )
+
+    # Add highlights for overfitting periods (cyan - visible on dark)
+    for start, end in get_contiguous_periods(time_df, large_negative, "Date"):
+        fig.add_vrect(
+            x0=start, x1=end,
+            fillcolor="rgba(100, 200, 255, 0.25)",
+            layer="below",
+            line_width=0,
+        )
+
+    return fig
+
+
+def detect_suggested_dummies(
+    time_df: pd.DataFrame,
+    threshold_std: float
+) -> list[dict]:
+    """Detect outlier periods that could benefit from dummy variables.
+
+    Parameters
+    ----------
+    time_df : pd.DataFrame
+        DataFrame with 'Date' and 'Residual' columns
+    threshold_std : float
+        Number of standard deviations for threshold
+
+    Returns
+    -------
+    list[dict]
+        List of suggested dummies with start_date, end_date, avg_residual,
+        num_weeks, suggested_sign, suggested_name
+    """
+    std_resid = time_df["Residual"].std()
+    suggestions = []
+
+    # Detect underfitting periods (positive residuals)
+    underfit_mask = time_df["Residual"] > threshold_std * std_resid
+    underfit_periods = get_contiguous_periods(time_df, underfit_mask, "Date")
+
+    for start, end in underfit_periods:
+        mask = (time_df["Date"] >= start) & (time_df["Date"] <= end)
+        avg_res = time_df.loc[mask, "Residual"].mean()
+        num_weeks = mask.sum()
+        suggestions.append({
+            "start_date": pd.to_datetime(start),
+            "end_date": pd.to_datetime(end),
+            "avg_residual": avg_res,
+            "num_weeks": num_weeks,
+            "suggested_sign": "positive",
+            "suggested_name": f"dummy_{pd.to_datetime(start).strftime('%Y%m%d')}"
+        })
+
+    # Detect overfitting periods (negative residuals)
+    overfit_mask = time_df["Residual"] < -threshold_std * std_resid
+    overfit_periods = get_contiguous_periods(time_df, overfit_mask, "Date")
+
+    for start, end in overfit_periods:
+        mask = (time_df["Date"] >= start) & (time_df["Date"] <= end)
+        avg_res = time_df.loc[mask, "Residual"].mean()
+        num_weeks = mask.sum()
+        suggestions.append({
+            "start_date": pd.to_datetime(start),
+            "end_date": pd.to_datetime(end),
+            "avg_residual": avg_res,
+            "num_weeks": num_weeks,
+            "suggested_sign": "negative",
+            "suggested_name": f"dummy_{pd.to_datetime(start).strftime('%Y%m%d')}"
+        })
+
+    # Sort by absolute residual magnitude (largest first)
+    suggestions.sort(key=lambda x: abs(x["avg_residual"]), reverse=True)
+    return suggestions
 
 
 def show():
@@ -615,7 +765,7 @@ def show():
             x=time_df["Date"],
             y=time_df["Actual"],
             name="Actual",
-            line=dict(color="black", width=2)
+            line=dict(color="white", width=2)
         ))
         fig.add_trace(go.Scatter(
             x=time_df["Date"],
@@ -627,6 +777,7 @@ def show():
             title="Actual vs Fitted",
             xaxis_title="Date",
             yaxis_title="Revenue ($)",
+            template="plotly_dark",
         )
         st.plotly_chart(fig, use_container_width=True)
 
@@ -635,20 +786,269 @@ def show():
 
         time_df["Residual"] = time_df["Actual"] - time_df["Fitted"]
 
+        # Add threshold slider for highlighting
+        highlight_threshold = st.slider(
+            "Highlight threshold (std deviations)",
+            min_value=0.5,
+            max_value=3.0,
+            value=1.5,
+            step=0.25,
+            help="Periods with residuals exceeding this many standard deviations will be highlighted",
+            key="residual_highlight_threshold"
+        )
+
         fig2 = go.Figure()
         fig2.add_trace(go.Scatter(
             x=time_df["Date"],
             y=time_df["Residual"],
-            mode="lines",
-            name="Residual"
+            mode="lines+markers",  # Add markers for selection
+            name="Residual",
+            line=dict(color="steelblue"),
+            marker=dict(size=6, color="steelblue")
         ))
-        fig2.add_hline(y=0, line_dash="dash", line_color="gray")
+        fig2.add_hline(y=0, line_dash="dash", line_color="lightgray")
+
+        # Add threshold lines (using lighter colors for dark background)
+        std_resid = time_df["Residual"].std()
+        fig2.add_hline(
+            y=highlight_threshold * std_resid,
+            line_dash="dot",
+            line_color="salmon",
+            annotation_text="Underfitting threshold",
+            annotation=dict(font_color="salmon")
+        )
+        fig2.add_hline(
+            y=-highlight_threshold * std_resid,
+            line_dash="dot",
+            line_color="cyan",
+            annotation_text="Overfitting threshold",
+            annotation=dict(font_color="cyan")
+        )
+
+        # Add shaded regions for large residuals
+        fig2 = add_residual_highlights(fig2, time_df, highlight_threshold)
+
         fig2.update_layout(
-            title="Residuals Over Time",
+            title="Residuals Over Time (Salmon = Underfitting, Cyan = Overfitting)",
             xaxis_title="Date",
             yaxis_title="Residual ($)",
+            template="plotly_dark",
         )
         st.plotly_chart(fig2, use_container_width=True)
+
+        # =====================================================================
+        # Suggested Dummy Variables Section
+        # =====================================================================
+        st.markdown("---")
+        st.subheader("Suggested Dummy Variables")
+
+        # Initialize pending_dummies if not exists
+        if "pending_dummies" not in st.session_state:
+            st.session_state.pending_dummies = []
+
+        suggestions = detect_suggested_dummies(time_df, highlight_threshold)
+
+        if not suggestions:
+            st.info(f"No outlier periods detected at current threshold (±{highlight_threshold}σ).")
+        else:
+            # Sort options
+            col_sort1, col_sort2 = st.columns([2, 3])
+            with col_sort1:
+                sort_by = st.selectbox(
+                    "Sort by",
+                    options=["Magnitude (largest first)", "Date (earliest first)", "Date (latest first)"],
+                    key="dummy_sort_by"
+                )
+
+            # Apply sorting
+            if sort_by == "Magnitude (largest first)":
+                suggestions.sort(key=lambda x: abs(x["avg_residual"]), reverse=True)
+            elif sort_by == "Date (earliest first)":
+                suggestions.sort(key=lambda x: x["start_date"])
+            else:  # Date (latest first)
+                suggestions.sort(key=lambda x: x["start_date"], reverse=True)
+
+            st.write(f"Found **{len(suggestions)}** period(s) exceeding ±{highlight_threshold}σ threshold:")
+
+            # Initialize selection state
+            if "dummy_selections" not in st.session_state:
+                st.session_state.dummy_selections = {}
+
+            # Display checkbox list
+            for i, sug in enumerate(suggestions):
+                key = f"sug_{sug['start_date'].strftime('%Y%m%d')}_{sug['end_date'].strftime('%Y%m%d')}"
+
+                # Format display text
+                sign_emoji = "📈" if sug["suggested_sign"] == "positive" else "📉"
+                duration = f"{sug['num_weeks']} week{'s' if sug['num_weeks'] > 1 else ''}"
+                residual_fmt = f"${sug['avg_residual']:,.0f}"
+
+                label = f"{sign_emoji} {sug['start_date'].strftime('%Y-%m-%d')} to {sug['end_date'].strftime('%Y-%m-%d')} ({duration}, avg residual: {residual_fmt})"
+
+                st.session_state.dummy_selections[key] = st.checkbox(
+                    label,
+                    value=st.session_state.dummy_selections.get(key, False),
+                    key=f"checkbox_{key}"
+                )
+
+            # Add Selected button
+            if st.button("Add Selected to Pending", key="add_suggested_dummies"):
+                added_count = 0
+                for sug in suggestions:
+                    key = f"sug_{sug['start_date'].strftime('%Y%m%d')}_{sug['end_date'].strftime('%Y%m%d')}"
+                    if st.session_state.dummy_selections.get(key, False):
+                        # Check not already in pending
+                        existing_names = [d.name for d in st.session_state.pending_dummies]
+                        if sug["suggested_name"] not in existing_names:
+                            dummy_config = DummyVariableConfig(
+                                name=sug["suggested_name"],
+                                start_date=sug["start_date"].strftime("%Y-%m-%d"),
+                                end_date=sug["end_date"].strftime("%Y-%m-%d"),
+                                sign_constraint=SignConstraint(sug["suggested_sign"])
+                            )
+                            st.session_state.pending_dummies.append(dummy_config)
+                            added_count += 1
+                            # Clear checkbox
+                            st.session_state.dummy_selections[key] = False
+
+                if added_count > 0:
+                    st.success(f"Added {added_count} dummy variable(s) to pending list")
+                    st.rerun()
+                else:
+                    st.warning("No suggestions selected, or all selected items already exist in pending list.")
+
+        # =====================================================================
+        # Create Custom Dummy Variable Section
+        # =====================================================================
+        st.markdown("---")
+        st.subheader("Create Custom Dummy Variable")
+        st.caption("Manually select a date range to create a dummy variable.")
+
+        min_date = pd.to_datetime(time_df["Date"].min()).date()
+        max_date = pd.to_datetime(time_df["Date"].max()).date()
+
+        col1, col2 = st.columns(2)
+        with col1:
+            start_date = st.date_input(
+                "Start Date",
+                value=min_date,
+                min_value=min_date,
+                max_value=max_date,
+                key="dummy_start_date"
+            )
+        with col2:
+            num_weeks = st.number_input(
+                "Duration (weeks)",
+                min_value=1,
+                max_value=52,
+                value=1,
+                key="dummy_num_weeks",
+                help="Number of weeks for this dummy variable (1 = single week)"
+            )
+
+        # Calculate end date based on start date and number of weeks
+        end_date = start_date + datetime.timedelta(days=(num_weeks - 1) * 7)
+
+        # Show the date range
+        if num_weeks == 1:
+            st.caption(f"Dummy covers: **{start_date}** (single week)")
+        else:
+            st.caption(f"Dummy covers: **{start_date}** to **{end_date}** ({num_weeks} weeks)")
+
+        # Calculate stats from date picker selection
+        start_dt = pd.to_datetime(start_date)
+        end_dt = pd.to_datetime(end_date)
+        mask = (pd.to_datetime(time_df["Date"]) >= start_dt) & (pd.to_datetime(time_df["Date"]) <= end_dt)
+        selected_residuals = time_df.loc[mask, "Residual"]
+
+        if len(selected_residuals) > 0:
+            avg_residual = selected_residuals.mean()
+            n_periods = len(selected_residuals)
+        else:
+            avg_residual = 0
+            n_periods = 0
+
+        # Show stats and creation form if we have a valid selection
+        if n_periods > 0:
+            # Determine suggested sign constraint
+            if avg_residual > 0:
+                suggested_sign = "positive"
+                sign_explanation = "underfitting (model predicting below actual)"
+            else:
+                suggested_sign = "negative"
+                sign_explanation = "overfitting (model predicting above actual)"
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Periods Selected", n_periods)
+            with col2:
+                st.metric("Avg Residual", f"${avg_residual:,.0f}")
+            with col3:
+                st.metric("Pattern", sign_explanation.split("(")[0].strip())
+
+            st.info(f"**Suggested sign constraint: {suggested_sign.upper()}** - The model is {sign_explanation}")
+
+            # Dummy creation form - use dynamic key so default updates when dates change
+            default_name = f"dummy_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}"
+            dummy_name = st.text_input(
+                "Dummy Variable Name",
+                value=default_name,
+                key=f"dummy_name_{start_date}_{end_date}",
+                help="Name for the dummy variable (will be added as a control)"
+            )
+
+            sign_override = st.selectbox(
+                "Sign Constraint",
+                options=["positive", "negative", "unconstrained"],
+                index=0 if suggested_sign == "positive" else 1,
+                key=f"dummy_sign_{start_date}_{end_date}",
+                help="Expected direction of the coefficient"
+            )
+
+            if st.button("Create Dummy Variable", type="primary", key="create_dummy_btn"):
+                if not dummy_name or dummy_name.strip() == "":
+                    st.error("Please enter a name for the dummy variable.")
+                elif start_date > end_date:
+                    st.error("Start date must be before or equal to end date.")
+                else:
+                    dummy_config = DummyVariableConfig(
+                        name=dummy_name.strip(),
+                        start_date=start_date.strftime("%Y-%m-%d"),
+                        end_date=end_date.strftime("%Y-%m-%d"),
+                        sign_constraint=SignConstraint(sign_override)
+                    )
+
+                    if "pending_dummies" not in st.session_state:
+                        st.session_state.pending_dummies = []
+
+                    existing_names = [d.name for d in st.session_state.pending_dummies]
+                    if dummy_name.strip() in existing_names:
+                        st.warning(f"A dummy variable named '{dummy_name}' already exists in pending list.")
+                    else:
+                        st.session_state.pending_dummies.append(dummy_config)
+                        st.success(f"Created dummy variable '{dummy_name}' ({start_date} to {end_date}, {sign_override})")
+                        st.info("Go to **Configure Model** page to add this dummy to your model configuration.")
+        else:
+            st.warning("No data points in selected date range.")
+
+        # Show pending dummies
+        if st.session_state.get("pending_dummies"):
+            st.markdown("---")
+            st.markdown("**Pending Dummy Variables**")
+            st.caption("These will be available in Configure Model page")
+
+            for i, dummy in enumerate(st.session_state.pending_dummies):
+                col1, col2, col3, col4 = st.columns([3, 2, 2, 1])
+                with col1:
+                    st.write(f"**{dummy.name}**")
+                with col2:
+                    st.write(f"{dummy.start_date} to {dummy.end_date}")
+                with col3:
+                    st.write(f"Sign: {dummy.sign_constraint.value}")
+                with col4:
+                    if st.button("Remove", key=f"remove_dummy_{i}"):
+                        st.session_state.pending_dummies.pop(i)
+                        st.rerun()
 
         # Channel contributions over time
         st.subheader("Channel Contributions Over Time")
@@ -670,6 +1070,7 @@ def show():
             title="Stacked Channel Contributions",
             xaxis_title="Date",
             yaxis_title="Contribution ($)",
+            template="plotly_dark",
         )
         st.plotly_chart(fig3, use_container_width=True)
 

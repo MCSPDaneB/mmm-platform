@@ -148,13 +148,12 @@ def _show_ec2_config() -> bool:
     """Show EC2 configuration UI. Returns True if ready to run."""
     st.markdown("#### EC2 API Configuration")
 
-    # Try to get URL from env/file
-    ec2_url = _get_ec2_url()
+    # Get configured URL (from env/file) as default
+    default_url = _get_ec2_url()
 
-    if not ec2_url:
-        st.warning("EC2 API URL not configured.")
-
-        with st.expander("How to set up EC2 API"):
+    # Show help if no URL configured
+    if not default_url:
+        with st.expander("How to set up EC2 API", expanded=True):
             st.markdown("""
             1. Start the EC2 instance with the MMM API running
             2. Get the public IP address
@@ -163,35 +162,66 @@ def _show_ec2_config() -> bool:
             **Or** set the `EC2_API_URL` environment variable.
             """)
 
-        ec2_url = st.text_input(
-            "EC2 API URL",
-            placeholder="http://your-ec2-ip:8000",
-            help="The URL of the FastAPI server running on EC2"
-        )
+    # Always show editable text input (pre-filled with default if available)
+    ec2_url = st.text_input(
+        "EC2 API URL",
+        value=default_url,
+        placeholder="http://your-ec2-ip:8000",
+        help="The URL of the FastAPI server running on EC2"
+    )
 
-        if ec2_url:
-            st.session_state.ec2_api_url = ec2_url
-        else:
-            return False
-    else:
-        st.session_state.ec2_api_url = ec2_url
-        st.success(f"EC2 API: `{ec2_url}`")
+    if not ec2_url:
+        st.warning("Enter the EC2 API URL to continue")
+        return False
 
-    # Test connection button
-    if st.button("Test EC2 Connection"):
+    st.session_state.ec2_api_url = ec2_url
+
+    # Show option to save if URL differs from saved config
+    if default_url and ec2_url != default_url:
+        st.info("URL differs from saved configuration")
+        if st.button("Save as Default", key="save_ec2_url"):
+            config_file = Path("deploy/ec2_api_url.txt")
+            config_file.parent.mkdir(parents=True, exist_ok=True)
+            config_file.write_text(ec2_url)
+            st.success("URL saved to deploy/ec2_api_url.txt")
+            st.rerun()
+    elif not default_url and ec2_url:
+        # No saved URL yet, offer to save
+        if st.button("Save URL for Future Use", key="save_ec2_url_new"):
+            config_file = Path("deploy/ec2_api_url.txt")
+            config_file.parent.mkdir(parents=True, exist_ok=True)
+            config_file.write_text(ec2_url)
+            st.success("URL saved to deploy/ec2_api_url.txt")
+            st.rerun()
+
+    # Connection test button
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        test_clicked = st.button("Test Connection", type="primary", key="test_ec2_conn")
+
+    if test_clicked:
         with st.spinner("Testing connection..."):
             try:
-                client = EC2ModelClient(st.session_state.ec2_api_url)
+                client = EC2ModelClient(ec2_url)
                 if client.health_check():
+                    st.session_state.ec2_connected = True
+                    st.session_state.ec2_connected_url = ec2_url
                     st.success("Connected to EC2 API!")
                 else:
-                    st.error("EC2 API health check failed")
-                    return False
+                    st.session_state.ec2_connected = False
+                    st.error("EC2 API health check failed - is the server running?")
             except Exception as e:
+                st.session_state.ec2_connected = False
                 st.error(f"Connection failed: {e}")
-                return False
 
-    return True
+    # Check if already connected to this URL
+    if (st.session_state.get("ec2_connected") and
+        st.session_state.get("ec2_connected_url") == ec2_url):
+        st.success("EC2 connection verified")
+        return True
+    else:
+        st.warning("Test connection before running model")
+        return False
 
 
 def run_model_ec2(config, df, draws, tune, chains, save_model):
