@@ -139,42 +139,56 @@ def show():
     with tab1:
         st.subheader("Data Settings")
 
+        # Get saved values from config_state
+        saved_data = st.session_state.config_state
+
         col1, col2 = st.columns(2)
 
         with col1:
             model_name = st.text_input(
                 "Model Name",
-                value=st.session_state.config_state.get("name", "my_mmm_model"),
+                value=saved_data.get("name", "my_mmm_model"),
                 help="A unique name for this model configuration"
             )
 
+            # Date column - try to find saved value in columns
+            date_options = df.columns.tolist()
+            saved_date = st.session_state.get("date_column") or saved_data.get("date_col")
+            date_index = date_options.index(saved_date) if saved_date and saved_date in date_options else 0
             date_col = st.selectbox(
                 "Date Column",
-                options=df.columns.tolist(),
-                index=df.columns.tolist().index(st.session_state.get("date_column", df.columns[0])),
+                options=date_options,
+                index=date_index,
             )
 
+            # Target column - try to find saved value in numeric columns
+            target_options = df.select_dtypes(include=["number"]).columns.tolist()
+            saved_target = st.session_state.get("target_column") or saved_data.get("target_col")
+            target_index = target_options.index(saved_target) if saved_target and saved_target in target_options else 0
             target_col = st.selectbox(
                 "Target Column",
-                options=df.select_dtypes(include=["number"]).columns.tolist(),
-                index=0,
+                options=target_options,
+                index=target_index,
             )
 
         with col2:
             description = st.text_area(
                 "Description (optional)",
-                value="",
+                value=saved_data.get("description", ""),
                 height=100,
             )
 
             revenue_scale = st.number_input(
                 "Revenue/Spend Scale Factor",
-                value=1000.0,
+                value=saved_data.get("revenue_scale", 1000.0),
                 min_value=1.0,
                 help="Divide values by this factor for numerical stability"
             )
 
-            dayfirst = st.checkbox("Dates are day-first", value=True)
+            dayfirst = st.checkbox(
+                "Dates are day-first",
+                value=st.session_state.get("dayfirst", saved_data.get("dayfirst", True))
+            )
 
         st.session_state.config_state.update({
             "name": model_name,
@@ -206,8 +220,19 @@ def show():
         ]
 
         # Initialize session state for channels if needed
+        # If channel_multiselect exists (e.g. from loaded config), filter to valid columns
         if "channel_multiselect" not in st.session_state:
-            st.session_state.channel_multiselect = potential_channels if potential_channels else []
+            # Check if we have saved channels in config_state to restore
+            saved_channels = st.session_state.get("config_state", {}).get("channels", [])
+            if saved_channels:
+                # Use saved channel names that exist in numeric_cols
+                saved_channel_names = [c["name"] for c in saved_channels]
+                st.session_state.channel_multiselect = [c for c in saved_channel_names if c in numeric_cols]
+            else:
+                st.session_state.channel_multiselect = potential_channels if potential_channels else []
+        else:
+            # Filter existing selection to only valid columns
+            st.session_state.channel_multiselect = [c for c in st.session_state.channel_multiselect if c in numeric_cols]
 
         # Select All / Clear buttons
         col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 4])
@@ -279,7 +304,7 @@ def show():
                     help="Download a template CSV with all selected channels"
                 )
 
-            # Load priors from uploaded file or use defaults
+            # Load priors from uploaded file, session state, or use defaults
             if priors_file is not None:
                 try:
                     uploaded_priors = pd.read_csv(priors_file)
@@ -314,7 +339,19 @@ def show():
                     st.error(f"Error loading priors CSV: {e}")
                     priors_dict = {}
             else:
+                # Initialize priors_dict from saved config_state if available
                 priors_dict = {}
+                saved_channels = st.session_state.get("config_state", {}).get("channels", [])
+                for ch_config in saved_channels:
+                    priors_dict[ch_config["name"]] = {
+                        "display_name": ch_config.get("display_name", ch_config["name"]),
+                        "categories": ch_config.get("categories", {}),
+                        "roi_low": ch_config.get("roi_prior_low", 0.5),
+                        "roi_mid": ch_config.get("roi_prior_mid", 2.0),
+                        "roi_high": ch_config.get("roi_prior_high", 5.0),
+                        "adstock_type": ch_config.get("adstock_type", "medium"),
+                        "curve_sharpness_override": ch_config.get("curve_sharpness_override"),
+                    }
 
             # Build channel config table
             st.markdown("---")
@@ -469,8 +506,19 @@ def show():
         available_controls = [c for c in df.columns if c not in excluded_cols]
 
         # Initialize session state for controls if needed
+        # If control_multiselect exists (e.g. from loaded config), filter to valid columns
         if "control_multiselect" not in st.session_state:
-            st.session_state.control_multiselect = []
+            # Check if we have saved controls in config_state to restore
+            saved_controls = st.session_state.get("config_state", {}).get("controls", [])
+            if saved_controls:
+                # Use saved control names that exist in available_controls
+                saved_control_names = [c["name"] for c in saved_controls]
+                st.session_state.control_multiselect = [c for c in saved_control_names if c in available_controls]
+            else:
+                st.session_state.control_multiselect = []
+        else:
+            # Filter existing selection to only valid columns
+            st.session_state.control_multiselect = [c for c in st.session_state.control_multiselect if c in available_controls]
 
         # Select All / Clear buttons
         col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 4])
@@ -581,7 +629,16 @@ def show():
                     st.error(f"Error loading controls CSV: {e}")
                     controls_dict = {}
             else:
+                # Initialize controls_dict from saved config_state if available
                 controls_dict = {}
+                saved_controls = st.session_state.get("config_state", {}).get("controls", [])
+                for ctrl_config in saved_controls:
+                    controls_dict[ctrl_config["name"]] = {
+                        "categories": ctrl_config.get("categories", {}),
+                        "sign_constraint": ctrl_config.get("sign_constraint", "positive"),
+                        "is_dummy": ctrl_config.get("is_dummy", False),
+                        "scale": ctrl_config.get("scale", True),
+                    }
 
             # Build control config table
             st.markdown("---")
@@ -829,6 +886,9 @@ def show():
     with tab4:
         st.subheader("Transform Settings")
 
+        # Get saved values from config_state
+        saved_config = st.session_state.config_state
+
         col1, col2 = st.columns(2)
 
         with col1:
@@ -837,7 +897,7 @@ def show():
                 "Maximum Lag (weeks)",
                 min_value=1,
                 max_value=52,
-                value=8,
+                value=saved_config.get("l_max", 8),
                 help="Maximum carryover period"
             )
 
@@ -845,19 +905,19 @@ def show():
                 "Short Decay Rate",
                 min_value=0.0,
                 max_value=1.0,
-                value=0.15,
+                value=saved_config.get("short_decay", 0.15),
             )
             medium_decay = st.slider(
                 "Medium Decay Rate",
                 min_value=0.0,
                 max_value=1.0,
-                value=0.40,
+                value=saved_config.get("medium_decay", 0.40),
             )
             long_decay = st.slider(
                 "Long Decay Rate",
                 min_value=0.0,
                 max_value=1.0,
-                value=0.70,
+                value=saved_config.get("long_decay", 0.70),
             )
 
         with col2:
@@ -868,7 +928,7 @@ def show():
                 "Curve Sharpness",
                 min_value=0,
                 max_value=100,
-                value=50,
+                value=saved_config.get("curve_sharpness", 50),
                 help="0 = Very gradual (slow saturation), 100 = Very sharp (quick saturation)",
                 key="curve_sharpness_slider"
             )
@@ -892,7 +952,7 @@ def show():
                 "Fourier Terms",
                 min_value=0,
                 max_value=10,
-                value=2,
+                value=saved_config.get("yearly_seasonality", 2),
                 help="Number of Fourier terms for yearly seasonality"
             )
 
@@ -911,6 +971,9 @@ def show():
     with tab5:
         st.subheader("MCMC Sampling Settings")
 
+        # Get saved values from config_state
+        saved_sampling = st.session_state.config_state
+
         col1, col2 = st.columns(2)
 
         with col1:
@@ -918,7 +981,7 @@ def show():
                 "Posterior Draws",
                 min_value=100,
                 max_value=10000,
-                value=1500,
+                value=saved_sampling.get("draws", 1500),
                 step=100,
             )
 
@@ -926,7 +989,7 @@ def show():
                 "Tuning Steps",
                 min_value=100,
                 max_value=10000,
-                value=1500,
+                value=saved_sampling.get("tune", 1500),
                 step=100,
             )
 
@@ -935,20 +998,20 @@ def show():
                 "Number of Chains",
                 min_value=1,
                 max_value=8,
-                value=4,
+                value=saved_sampling.get("chains", 4),
             )
 
             target_accept = st.slider(
                 "Target Acceptance Rate",
                 min_value=0.5,
                 max_value=0.99,
-                value=0.9,
+                value=saved_sampling.get("target_accept", 0.9),
             )
 
         random_seed = st.number_input(
             "Random Seed",
             min_value=0,
-            value=42,
+            value=saved_sampling.get("random_seed", 42),
             help="For reproducibility"
         )
 
@@ -966,42 +1029,48 @@ def show():
     st.markdown("---")
     st.subheader("Build Configuration")
 
-    col1, col2, col3 = st.columns(3)
+    if st.button("🔨 Build Configuration", type="primary", use_container_width=True):
+        try:
+            # Build the config
+            config = build_config_from_state()
+            st.session_state.current_config = config
 
-    with col1:
-        if st.button("🔨 Build Configuration", type="primary"):
-            try:
-                config = build_config_from_state()
-                st.session_state.current_config = config
-                st.success(f"Configuration '{config.name}' built successfully!")
+            # Auto-save to workspace
+            from mmm_platform.model.persistence import ConfigPersistence
 
-                # Show summary
-                st.json({
-                    "name": config.name,
-                    "channels": len(config.channels),
-                    "controls": len(config.controls),
-                    "target": config.data.target_column,
-                })
+            session_state = {
+                "category_columns": st.session_state.get("category_columns", []),
+                "config_state": st.session_state.get("config_state", {}),
+                "date_column": st.session_state.get("date_column"),
+                "target_column": st.session_state.get("target_column"),
+                "detected_channels": st.session_state.get("detected_channels", []),
+                "dayfirst": st.session_state.get("dayfirst", False),
+            }
 
-            except Exception as e:
-                st.error(f"Error building configuration: {e}")
+            path = ConfigPersistence.save(
+                name=config.name,
+                config=config,
+                data=st.session_state.current_data,
+                session_state=session_state,
+            )
 
-    with col2:
-        if st.button("💾 Export to YAML"):
-            if st.session_state.get("current_config"):
-                config = st.session_state.current_config
-                yaml_content = ConfigLoader.get_template()  # Would need to implement proper export
-                st.download_button(
-                    "Download YAML",
-                    data=str(yaml_content),
-                    file_name=f"{config.name}.yaml",
-                    mime="text/yaml"
-                )
+            st.success(f"Configuration '{config.name}' built and saved!")
 
-    with col3:
-        if st.button("📂 Load from YAML"):
-            st.info("Upload a YAML configuration file")
-            # Would add file uploader here
+            # Show summary
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Channels", len(config.channels))
+            with col2:
+                st.metric("Controls", len(config.controls))
+            with col3:
+                st.metric("Target", config.data.target_column)
+            with col4:
+                st.metric("Status", "Ready")
+
+            st.caption(f"Saved to: `{path}`")
+
+        except Exception as e:
+            st.error(f"Error building configuration: {e}")
 
 
 def build_config_from_state() -> ModelConfig:

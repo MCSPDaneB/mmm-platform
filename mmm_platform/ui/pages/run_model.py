@@ -438,11 +438,26 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
 
             # Save model if requested
             if save_model:
-                from mmm_platform.model.persistence import ModelPersistence
+                from mmm_platform.model.persistence import ModelPersistence, get_models_dir
+                import json
 
-                save_dir = Path("saved_models") / f"{config.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                models_dir = get_models_dir()
+                save_dir = models_dir / f"{config.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
                 try:
                     ModelPersistence.save(wrapper, save_dir, include_data=True)
+
+                    # Also save session state for config restoration
+                    session_state = {
+                        "category_columns": st.session_state.get("category_columns", []),
+                        "config_state": st.session_state.get("config_state", {}),
+                        "date_column": st.session_state.get("date_column"),
+                        "target_column": st.session_state.get("target_column"),
+                        "detected_channels": st.session_state.get("detected_channels", []),
+                        "dayfirst": st.session_state.get("dayfirst", False),
+                    }
+                    with open(save_dir / "session_state.json", "w") as f:
+                        json.dump(session_state, f, indent=2)
+
                     st.info(f"Model saved to: {save_dir}")
                 except Exception as e:
                     st.warning(f"Could not save model: {e}")
@@ -546,10 +561,25 @@ def run_model_local(config, df, draws, tune, chains, save_model):
                     st.write(f"- {warn}")
 
             if save_model:
-                from mmm_platform.model.persistence import ModelPersistence
+                from mmm_platform.model.persistence import ModelPersistence, get_models_dir
+                import json
 
-                save_dir = Path("saved_models") / f"{config.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                models_dir = get_models_dir()
+                save_dir = models_dir / f"{config.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
                 ModelPersistence.save(wrapper, save_dir, include_data=True)
+
+                # Also save session state for config restoration
+                session_state = {
+                    "category_columns": st.session_state.get("category_columns", []),
+                    "config_state": st.session_state.get("config_state", {}),
+                    "date_column": st.session_state.get("date_column"),
+                    "target_column": st.session_state.get("target_column"),
+                    "detected_channels": st.session_state.get("detected_channels", []),
+                    "dayfirst": st.session_state.get("dayfirst", False),
+                }
+                with open(save_dir / "session_state.json", "w") as f:
+                    json.dump(session_state, f, indent=2)
+
                 st.info(f"Model saved to: {save_dir}")
 
             st.balloons()

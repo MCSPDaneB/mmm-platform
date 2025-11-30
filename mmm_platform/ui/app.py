@@ -93,11 +93,6 @@ def main():
     st.sidebar.write(f"{config_status} Model configured")
     st.sidebar.write(f"{model_status} Model fitted")
 
-    # Project save/load section
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Projects")
-    _show_project_controls()
-
     # Route to pages
     if page == "🏠 Home":
         show_home()
@@ -116,58 +111,6 @@ def main():
     elif page == "💾 Saved Models":
         from mmm_platform.ui.pages import saved_models
         saved_models.show()
-
-
-def _show_project_controls():
-    """Show project save/load controls in sidebar."""
-    from mmm_platform.core.project import ProjectManager, load_project_to_session
-
-    pm = ProjectManager()
-
-    # Save current project
-    if st.session_state.current_data is not None:
-        with st.sidebar.expander("💾 Save Project"):
-            project_name = st.text_input(
-                "Project name",
-                value=st.session_state.get("current_config").name if st.session_state.get("current_config") and hasattr(st.session_state.get("current_config"), 'name') else "My Project",
-                key="save_project_name"
-            )
-            if st.button("Save", key="save_project_btn", use_container_width=True):
-                try:
-                    path = pm.save_project(
-                        name=project_name,
-                        data=st.session_state.current_data,
-                        config=st.session_state.current_config,
-                        session_state=dict(st.session_state),
-                    )
-                    st.success(f"Saved!")
-                except Exception as e:
-                    st.error(f"Error: {e}")
-
-    # Load project
-    projects = pm.list_projects()
-    if projects:
-        with st.sidebar.expander("📂 Load Project"):
-            project_options = {p["name"]: p["path"] for p in projects}
-            selected = st.selectbox(
-                "Select project",
-                options=list(project_options.keys()),
-                key="load_project_select"
-            )
-            if st.button("Load", key="load_project_btn", use_container_width=True):
-                try:
-                    project_path = project_options[selected]
-                    session_update = load_project_to_session(project_path)
-
-                    # Update session state
-                    for key, value in session_update.items():
-                        if value is not None:
-                            st.session_state[key] = value
-
-                    st.success("Project loaded!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error: {e}")
 
 
 def load_demo_data():
