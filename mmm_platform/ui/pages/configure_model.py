@@ -442,33 +442,37 @@ def show():
                 hide_index=True,
                 use_container_width=True,
                 num_rows="fixed",
+                key="channels_data_editor",
             )
 
-            # Convert edited table to channels config
-            channels_config = []
-            for _, row in edited_channels.iterrows():
-                # Build categories dict from dynamic columns
-                categories = {}
-                for cat_col in category_cols:
-                    if cat_col["name"] in row and row[cat_col["name"]]:
-                        categories[cat_col["name"]] = row[cat_col["name"]]
+            # Save button to apply changes
+            if st.button("💾 Save Channel Settings", key="save_channels_btn"):
+                # Convert edited table to channels config
+                channels_config = []
+                for _, row in edited_channels.iterrows():
+                    # Build categories dict from dynamic columns
+                    categories = {}
+                    for cat_col in category_cols:
+                        if cat_col["name"] in row and row[cat_col["name"]]:
+                            categories[cat_col["name"]] = row[cat_col["name"]]
 
-                # Handle curve shape override (convert label to stored value)
-                curve_shape = row.get("Curve Shape", "Default")
-                curve_override = None if curve_shape == "Default" else curve_shape.lower()
+                    # Handle curve shape override (convert label to stored value)
+                    curve_shape = row.get("Curve Shape", "Default")
+                    curve_override = None if curve_shape == "Default" else curve_shape.lower()
 
-                channels_config.append({
-                    "name": row["Channel"],
-                    "display_name": row["Display Name"],
-                    "categories": categories,
-                    "adstock_type": row["Adstock"],
-                    "roi_prior_low": row["ROI Low"],
-                    "roi_prior_mid": row["ROI Mid"],
-                    "roi_prior_high": row["ROI High"],
-                    "curve_sharpness_override": curve_override,
-                })
+                    channels_config.append({
+                        "name": row["Channel"],
+                        "display_name": row["Display Name"],
+                        "categories": categories,
+                        "adstock_type": row["Adstock"],
+                        "roi_prior_low": row["ROI Low"],
+                        "roi_prior_mid": row["ROI Mid"],
+                        "roi_prior_high": row["ROI High"],
+                        "curve_sharpness_override": curve_override,
+                    })
 
-            st.session_state.config_state["channels"] = channels_config
+                st.session_state.config_state["channels"] = channels_config
+                st.success("Channel settings saved!")
 
             # Show summary stats
             st.markdown("---")
