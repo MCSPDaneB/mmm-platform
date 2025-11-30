@@ -40,10 +40,31 @@ def show():
     model_fitted = st.session_state.get("model_fitted", False)
     has_model = st.session_state.get("current_model") is not None
 
-    # If model is already fitted, show simple status and redirect to Results
+    # If model is already fitted, show summary stats and redirect to Results
     if model_fitted and has_model:
-        st.success("Model is fitted! Go to **Results** to view the analysis.")
+        wrapper = st.session_state.current_model
+        st.success("Model is fitted! Go to **Results** to view the full analysis.")
 
+        # Show quick summary stats
+        st.subheader("Fit Summary")
+        try:
+            fit_stats = wrapper.get_fit_statistics()
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("R²", f"{fit_stats['r2']:.3f}")
+            with col2:
+                st.metric("MAPE", f"{fit_stats['mape']:.1f}%")
+            with col3:
+                st.metric("RMSE", f"{fit_stats['rmse']:.1f}")
+            with col4:
+                if fit_stats.get('fit_duration_seconds'):
+                    st.metric("Fit Time", f"{fit_stats['fit_duration_seconds']:.0f}s")
+                else:
+                    st.metric("Fit Time", "N/A")
+        except Exception:
+            st.info("Fit statistics not available")
+
+        st.markdown("---")
         col1, col2 = st.columns(2)
         with col1:
             st.info("Navigate to **Results** in the sidebar to explore model output.")
