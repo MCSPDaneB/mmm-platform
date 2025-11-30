@@ -1062,14 +1062,16 @@ def show():
             st.success(f"Configuration '{config.name}' built and saved!")
 
             # Show summary
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2, col3, col4, col5 = st.columns(5)
             with col1:
                 st.metric("Channels", len(config.channels))
             with col2:
                 st.metric("Controls", len(config.controls))
             with col3:
-                st.metric("Target", config.data.target_column)
+                st.metric("Dummies", len(config.dummy_variables))
             with col4:
+                st.metric("Target", config.data.target_column)
+            with col5:
                 st.metric("Status", "Ready")
 
             st.caption(f"Saved to: `{path}`")
