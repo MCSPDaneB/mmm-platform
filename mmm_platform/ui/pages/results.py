@@ -1699,28 +1699,45 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
         lam = float(posterior['saturation_lam'].mean(dim=['chain', 'draw']).values[i])
         beta = float(posterior['saturation_beta'].mean(dim=['chain', 'draw']).values[i])
 
-        # Get current spend data
+        # Get spend data (in scaled units, e.g., thousands)
         spend_data = wrapper.df_scaled[ch].values
-        current_spend_scaled = spend_data.mean()
-        max_spend_scaled = spend_data.max() * 2.5
 
-        # Generate curve points
-        spend_range_scaled = np.linspace(0.001, max_spend_scaled, 200)
-        response_scaled = beta * _logistic_saturation(spend_range_scaled, lam)
+        # PyMC-Marketing normalizes by max internally, so lambda is calibrated for 0-1 range
+        x_max = spend_data.max()
+        if x_max == 0:
+            x_max = 1.0
+
+        # Current spend (weekly average) in real dollars
+        current_spend_real = spend_data.mean() * spend_scale
+
+        # Generate spend range in real dollars (0 to 2.5x max weekly spend)
+        max_spend_real = x_max * spend_scale * 2.5
+        spend_range_real = np.linspace(0.001, max_spend_real, 200)
+
+        # Convert to normalized space (0-1) for saturation calculation
+        # This matches how PyMC-Marketing applies the transform internally
+        spend_range_normalized = spend_range_real / (x_max * spend_scale)
+
+        # Apply saturation in normalized space, then scale by beta
+        response_normalized = _logistic_saturation(spend_range_normalized, lam)
+        response_real = beta * response_normalized * revenue_scale
 
         # Current position
-        current_response_scaled = beta * _logistic_saturation(current_spend_scaled, lam)
+        current_spend_normalized = (current_spend_real / spend_scale) / x_max
+        current_response_normalized = _logistic_saturation(current_spend_normalized, lam)
+        current_response_real = beta * current_response_normalized * revenue_scale
 
         curves_data.append({
             'channel': ch,
             'display_name': display_name,
-            'spend_range': spend_range_scaled * spend_scale,
-            'response': response_scaled * revenue_scale,
-            'current_spend': current_spend_scaled * spend_scale,
-            'current_response': current_response_scaled * revenue_scale,
+            'spend_range': spend_range_real,
+            'response': response_real,
+            'current_spend': current_spend_real,
+            'current_response': current_response_real,
             'lam': lam,
             'beta': beta,
-            'max_spend': max_spend_scaled * spend_scale,
+            'x_max': x_max,  # For slider calculations
+            'max_spend': max_spend_real,
         })
 
     # Create Plotly figure
@@ -1793,17 +1810,22 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
         )
 
         # Calculate metrics at slider position
-        slider_spend_scaled = slider_spend / spend_scale
-        slider_response_scaled = curve['beta'] * _logistic_saturation(slider_spend_scaled, curve['lam'])
-        slider_response = slider_response_scaled * revenue_scale
+        # Normalize spend the same way as the curve generation
+        x_max = curve['x_max']
+        slider_spend_normalized = slider_spend / (x_max * spend_scale)
+        slider_response_normalized = _logistic_saturation(slider_spend_normalized, curve['lam'])
+        slider_response = curve['beta'] * slider_response_normalized * revenue_scale
 
-        # Marginal ROI calculation
+        # Marginal ROI calculation (derivative in normalized space, then scale)
         from mmm_platform.analysis.marginal_roi import logistic_saturation_derivative
-        marginal_scaled = logistic_saturation_derivative(slider_spend_scaled, curve['lam']) * curve['beta']
-        marginal_roi = marginal_scaled * revenue_scale / spend_scale
+        # Derivative is d(response)/d(spend_normalized), need to convert to d(response)/d(spend_real)
+        marginal_normalized = logistic_saturation_derivative(slider_spend_normalized, curve['lam'])
+        # Chain rule: d(response_real)/d(spend_real) = beta * revenue_scale * d(sat)/d(normalized) * d(normalized)/d(real)
+        # d(normalized)/d(real) = 1 / (x_max * spend_scale)
+        marginal_roi = curve['beta'] * revenue_scale * marginal_normalized / (x_max * spend_scale)
 
         # Saturation percentage (response / max_response)
-        max_response = curve['beta'] * revenue_scale  # Asymptotic max
+        max_response = curve['beta'] * revenue_scale  # Asymptotic max (when saturation = 1)
         saturation_pct = (slider_response / max_response) * 100 if max_response > 0 else 0
 
         # Display metrics
