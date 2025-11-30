@@ -7,7 +7,7 @@ import pandas as pd
 from typing import Optional
 import logging
 
-from ..config.schema import ModelConfig, AdstockType
+from ..config.schema import ModelConfig, AdstockType, sharpness_to_percentile, sharpness_label_to_value
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +185,34 @@ class TransformEngine:
 
         return lam
 
+    def get_channel_percentile(self, channel: str) -> int:
+        """
+        Get the effective saturation percentile for a channel.
+
+        Uses per-channel override if set, otherwise uses global curve_sharpness.
+
+        Parameters
+        ----------
+        channel : str
+            Channel name.
+
+        Returns
+        -------
+        int
+            Effective percentile for half-saturation.
+        """
+        channel_config = self.config.get_channel_by_name(channel)
+
+        # Check for per-channel override
+        if channel_config and channel_config.curve_sharpness_override:
+            override_value = sharpness_label_to_value(channel_config.curve_sharpness_override)
+            if override_value is not None:
+                return sharpness_to_percentile(override_value)
+
+        # Use global curve_sharpness setting
+        global_sharpness = self.config.saturation.curve_sharpness
+        return sharpness_to_percentile(global_sharpness)
+
     def compute_all_channel_lams(
         self,
         df: pd.DataFrame,
@@ -193,25 +221,33 @@ class TransformEngine:
         """
         Compute lambda parameters for all channels.
 
+        Uses per-channel curve sharpness overrides if set, otherwise uses
+        the global curve_sharpness setting.
+
         Parameters
         ----------
         df : pd.DataFrame
             Dataframe with channel data.
         percentile : int, optional
-            Percentile for half-saturation. Defaults to config value.
+            Override percentile for all channels. If None, uses config settings.
 
         Returns
         -------
         np.ndarray
             Array of lambda parameters.
         """
-        if percentile is None:
-            percentile = self.config.saturation.saturation_percentile
+        lams = []
+        for ch in self.config.get_channel_columns():
+            if percentile is not None:
+                # Use explicit percentile override
+                ch_percentile = percentile
+            else:
+                # Use per-channel or global sharpness setting
+                ch_percentile = self.get_channel_percentile(ch)
 
-        return np.array([
-            self.compute_channel_lam(df, ch, percentile)
-            for ch in self.config.get_channel_columns()
-        ])
+            lams.append(self.compute_channel_lam(df, ch, ch_percentile))
+
+        return np.array(lams)
 
     def visualize_adstock_curve(
         self,

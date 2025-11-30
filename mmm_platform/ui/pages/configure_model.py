@@ -289,6 +289,7 @@ def show():
                     "ROI Mid": 2.0,
                     "ROI High": 5.0,
                     "Adstock": "medium",
+                    "Curve Shape": "Default",  # Per-channel curve sharpness override
                     "Total Spend": df[ch].sum(),
                 }
 
@@ -300,6 +301,12 @@ def show():
                     row_data["ROI Mid"] = prior.get("roi_mid", 2.0)
                     row_data["ROI High"] = prior.get("roi_high", 5.0)
                     row_data["Adstock"] = prior.get("adstock_type", "medium")
+                    # Get curve shape override (convert from stored value to label)
+                    curve_override = prior.get("curve_sharpness_override")
+                    if curve_override:
+                        row_data["Curve Shape"] = curve_override.title()
+                    else:
+                        row_data["Curve Shape"] = "Default"
 
                     # Add category values from priors (categories dict)
                     prior_categories = prior.get("categories", {})
@@ -324,6 +331,11 @@ def show():
                 "Adstock": st.column_config.SelectboxColumn(
                     "Adstock",
                     options=["short", "medium", "long"],
+                ),
+                "Curve Shape": st.column_config.SelectboxColumn(
+                    "Curve Shape",
+                    options=["Default", "Gradual", "Balanced", "Sharp"],
+                    help="Override curve sharpness for this channel (Default uses global setting)"
                 ),
                 "Total Spend": st.column_config.NumberColumn("Total Spend", disabled=True, format="%.2f"),
             }
@@ -354,6 +366,10 @@ def show():
                     if cat_col["name"] in row and row[cat_col["name"]]:
                         categories[cat_col["name"]] = row[cat_col["name"]]
 
+                # Handle curve shape override (convert label to stored value)
+                curve_shape = row.get("Curve Shape", "Default")
+                curve_override = None if curve_shape == "Default" else curve_shape.lower()
+
                 channels_config.append({
                     "name": row["Channel"],
                     "display_name": row["Display Name"],
@@ -362,6 +378,7 @@ def show():
                     "roi_prior_low": row["ROI Low"],
                     "roi_prior_mid": row["ROI Mid"],
                     "roi_prior_high": row["ROI High"],
+                    "curve_sharpness_override": curve_override,
                 })
 
             st.session_state.config_state["channels"] = channels_config
@@ -630,14 +647,31 @@ def show():
             )
 
         with col2:
-            st.markdown("**Saturation Settings**")
-            saturation_percentile = st.slider(
-                "Half-Saturation Percentile",
-                min_value=10,
-                max_value=90,
+            st.markdown("**Saturation Curve Shape**")
+            st.caption("Controls how quickly channels reach diminishing returns")
+
+            curve_sharpness = st.slider(
+                "Curve Sharpness",
+                min_value=0,
+                max_value=100,
                 value=50,
-                help="Percentile of spend at which half saturation occurs"
+                help="0 = Very gradual (slow saturation), 100 = Very sharp (quick saturation)",
+                key="curve_sharpness_slider"
             )
+
+            # Visual labels for the slider
+            label_col1, label_col2, label_col3 = st.columns(3)
+            with label_col1:
+                st.caption("← Gradual")
+            with label_col2:
+                st.caption("Balanced")
+            with label_col3:
+                st.caption("Sharp →")
+
+            # Show the effective percentile
+            from mmm_platform.config.schema import sharpness_to_percentile
+            effective_percentile = sharpness_to_percentile(curve_sharpness)
+            st.info(f"Half-saturation at {effective_percentile}th percentile of spend")
 
             st.markdown("**Seasonality**")
             yearly_seasonality = st.slider(
@@ -653,7 +687,7 @@ def show():
             "short_decay": short_decay,
             "medium_decay": medium_decay,
             "long_decay": long_decay,
-            "saturation_percentile": saturation_percentile,
+            "curve_sharpness": curve_sharpness,
             "yearly_seasonality": yearly_seasonality,
         })
 
@@ -776,6 +810,7 @@ def build_config_from_state() -> ModelConfig:
             roi_prior_low=ch.get("roi_prior_low", 0.5),
             roi_prior_mid=ch.get("roi_prior_mid", 2.0),
             roi_prior_high=ch.get("roi_prior_high", 5.0),
+            curve_sharpness_override=ch.get("curve_sharpness_override"),
         )
         for ch in state.get("channels", [])
     ]
@@ -813,7 +848,7 @@ def build_config_from_state() -> ModelConfig:
             long_decay=state.get("long_decay", 0.70),
         ),
         saturation=SaturationConfig(
-            saturation_percentile=state.get("saturation_percentile", 50),
+            curve_sharpness=state.get("curve_sharpness", 50),
         ),
         seasonality=SeasonalityConfig(
             yearly_seasonality=state.get("yearly_seasonality", 2),

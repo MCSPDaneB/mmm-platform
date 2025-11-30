@@ -10,6 +10,60 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from enum import Enum
 
 
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+def sharpness_to_percentile(sharpness: int) -> int:
+    """
+    Convert 0-100 sharpness slider value to saturation_percentile.
+
+    Maps:
+    - 0 (Very Gradual) → 20th percentile
+    - 50 (Balanced) → 50th percentile
+    - 100 (Very Sharp) → 80th percentile
+
+    Parameters
+    ----------
+    sharpness : int
+        Sharpness value from 0 (gradual) to 100 (sharp)
+
+    Returns
+    -------
+    int
+        Saturation percentile value (20-80)
+    """
+    # Linear mapping: 0→20, 50→50, 100→80
+    return 20 + int(sharpness * 0.6)
+
+
+def sharpness_label_to_value(label: str) -> int:
+    """
+    Convert sharpness label to numeric value.
+
+    Parameters
+    ----------
+    label : str
+        One of 'gradual', 'balanced', 'sharp', or 'default'
+
+    Returns
+    -------
+    int
+        Corresponding sharpness value (0-100)
+    """
+    mapping = {
+        "gradual": 25,
+        "balanced": 50,
+        "sharp": 75,
+        "default": None,  # Use global setting
+    }
+    return mapping.get(label.lower() if label else "default")
+
+
+# =============================================================================
+# Enums
+# =============================================================================
+
 class AdstockType(str, Enum):
     """Adstock decay rate categories."""
     SHORT = "short"
@@ -51,6 +105,8 @@ class ChannelConfig(BaseModel):
     roi_prior_low: float = Field(0.1, ge=0, description="Lower bound for ROI prior")
     roi_prior_mid: float = Field(1.0, ge=0, description="Central estimate for ROI prior")
     roi_prior_high: float = Field(5.0, ge=0, description="Upper bound for ROI prior")
+    curve_sharpness_override: Optional[str] = Field(None,
+        description="Per-channel curve sharpness override: 'gradual', 'balanced', 'sharp', or None for global default")
 
     @model_validator(mode="before")
     @classmethod
@@ -222,6 +278,8 @@ class SaturationConfig(BaseModel):
     """Configuration for saturation transformation."""
     saturation_percentile: int = Field(50, ge=1, le=99, description="Percentile for half-saturation")
     lam_sigma: float = Field(0.3, gt=0, description="Sigma for lambda prior")
+    curve_sharpness: int = Field(50, ge=0, le=100,
+        description="Curve sharpness: 0=very gradual, 50=balanced, 100=very sharp")
 
 
 class SeasonalityConfig(BaseModel):
