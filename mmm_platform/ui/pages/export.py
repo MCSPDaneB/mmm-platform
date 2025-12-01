@@ -8,15 +8,16 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-from mmm_platform.analysis.export import (
-    generate_decomps_stacked,
-    generate_media_results,
-    generate_actual_vs_fitted,
-)
-
 
 def show():
     """Show the export page."""
+    # Lazy import to avoid circular import deadlock
+    from mmm_platform.analysis.export import (
+        generate_decomps_stacked,
+        generate_media_results,
+        generate_actual_vs_fitted,
+    )
+
     st.title("Export Data")
     st.caption("Generate CSV files for upload to external visualization platforms")
 
