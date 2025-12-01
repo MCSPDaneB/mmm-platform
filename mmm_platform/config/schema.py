@@ -264,6 +264,7 @@ class DataConfig(BaseModel):
     dayfirst: bool = Field(True, description="Whether dates are day-first format")
     revenue_scale: float = Field(1000.0, gt=0, description="Scale factor for revenue")
     spend_scale: float = Field(1000.0, gt=0, description="Scale factor for spend")
+    brand: Optional[str] = Field(None, description="Brand name for exports")
 
 
 class AdstockConfig(BaseModel):
@@ -338,6 +339,13 @@ class ModelConfig(BaseModel):
         for ch in self.channels:
             if ch.name == name:
                 return ch
+        return None
+
+    def get_control_by_name(self, name: str) -> Optional[ControlConfig]:
+        """Get control config by column name."""
+        for ctrl in self.controls:
+            if ctrl.name == name:
+                return ctrl
         return None
 
     def get_roi_dicts(self) -> tuple[dict, dict, dict]:

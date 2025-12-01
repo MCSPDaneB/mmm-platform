@@ -63,6 +63,7 @@ def main():
             "⚙️ Configure Model",
             "🚀 Run Model",
             "📈 Results",
+            "📤 Export",
             "📊 Combined Analysis",
             "🔍 Compare Models",
             "💾 Saved Configs & Models",
@@ -96,6 +97,9 @@ def main():
     elif page == "📈 Results":
         from mmm_platform.ui.pages import results
         results.show()
+    elif page == "📤 Export":
+        from mmm_platform.ui.pages import export
+        export.show()
     elif page == "📊 Combined Analysis":
         from mmm_platform.ui.pages import combined_analysis
         combined_analysis.show()
