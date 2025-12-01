@@ -113,16 +113,23 @@ class PriorCalibrator:
             denom = x_sat.sum() + 1e-9
             total_spend = x.sum() + 1e-9
 
-            # Get ROI priors (with defaults)
-            # Owned media without include_roi=True won't be in roi_dicts
-            r_low = roi_low.get(ch, 0.2)
-            r_mid = roi_mid.get(ch, 1.0)
-            r_high = roi_high.get(ch, 5.0)
+            # Check if this channel has ROI priors configured
+            if ch in roi_mid:
+                # ROI-calibrated beta priors
+                r_low = roi_low[ch]
+                r_mid = roi_mid[ch]
+                r_high = roi_high[ch]
 
-            # Calculate beta values that produce expected ROI
-            beta_low_list.append(r_low * total_spend / (target_scale * denom))
-            beta_mid_list.append(r_mid * total_spend / (target_scale * denom))
-            beta_high_list.append(r_high * total_spend / (target_scale * denom))
+                # Calculate beta values that produce expected ROI
+                beta_low_list.append(r_low * total_spend / (target_scale * denom))
+                beta_mid_list.append(r_mid * total_spend / (target_scale * denom))
+                beta_high_list.append(r_high * total_spend / (target_scale * denom))
+            else:
+                # Uninformative priors for owned media without ROI
+                # Use generic LogNormal priors - let the data determine effect size
+                beta_low_list.append(0.01)
+                beta_mid_list.append(0.1)
+                beta_high_list.append(1.0)
 
         beta_low = np.array(beta_low_list)
         beta_mid = np.array(beta_mid_list)

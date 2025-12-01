@@ -729,7 +729,7 @@ def show():
         if selected_owned_media:
             st.markdown("---")
 
-            st.info("**Note:** Owned media always has adstock and saturation applied. ROI priors are optional - only set them if you have cost/spend data for these variables.")
+            st.info("**Note:** Owned media always has adstock and saturation applied. Enable 'Include ROI Priors' only for variables where you have cost/spend data.")
 
             # Category columns manager (same as paid media)
             render_category_columns_manager(key_prefix="owned_media_")
@@ -752,11 +752,15 @@ def show():
                 curve_override = existing.get("curve_sharpness_override")
                 curve_shape = curve_override.title() if curve_override else "Default"
 
+                # Determine if ROI priors are included
+                include_roi = existing.get("include_roi", False)
+
                 row_data = {
                     "Variable": om,
                     "Display Name": existing.get("display_name", om.replace("_", " ").title()),
                     "Adstock": existing.get("adstock_type", "medium"),
                     "Curve Shape": curve_shape,
+                    "Include ROI Priors": include_roi,
                     "ROI Low": existing.get("roi_prior_low") if existing.get("roi_prior_low") is not None else "",
                     "ROI Mid": existing.get("roi_prior_mid") if existing.get("roi_prior_mid") is not None else "",
                     "ROI High": existing.get("roi_prior_high") if existing.get("roi_prior_high") is not None else "",
@@ -785,9 +789,13 @@ def show():
                     options=["Default", "Gradual", "Balanced", "Sharp"],
                     help="Override curve sharpness for this variable (Default uses global setting)"
                 ),
-                "ROI Low": st.column_config.NumberColumn("ROI Low", min_value=0.0, format="%.2f", help="Optional - only if you have cost data"),
-                "ROI Mid": st.column_config.NumberColumn("ROI Mid", min_value=0.0, format="%.2f", help="Optional - only if you have cost data"),
-                "ROI High": st.column_config.NumberColumn("ROI High", min_value=0.0, format="%.2f", help="Optional - only if you have cost data"),
+                "Include ROI Priors": st.column_config.CheckboxColumn(
+                    "Include ROI Priors",
+                    help="Enable if you have cost/spend data for this variable"
+                ),
+                "ROI Low": st.column_config.NumberColumn("ROI Low", min_value=0.0, format="%.2f", help="Required when Include ROI Priors is checked"),
+                "ROI Mid": st.column_config.NumberColumn("ROI Mid", min_value=0.0, format="%.2f", help="Required when Include ROI Priors is checked"),
+                "ROI High": st.column_config.NumberColumn("ROI High", min_value=0.0, format="%.2f", help="Required when Include ROI Priors is checked"),
                 "Total": st.column_config.NumberColumn("Total", disabled=True, format="%.2f"),
             }
 
@@ -823,7 +831,10 @@ def show():
                     curve_shape = row.get("Curve Shape", "Default")
                     curve_override = None if curve_shape == "Default" else curve_shape.lower()
 
-                    # Handle optional ROI priors (convert empty string/"" to None)
+                    # Get include_roi checkbox value
+                    include_roi = bool(row.get("Include ROI Priors", False))
+
+                    # Handle ROI priors (convert empty string/"" to None)
                     roi_low = row["ROI Low"] if pd.notna(row["ROI Low"]) and row["ROI Low"] != "" else None
                     roi_mid = row["ROI Mid"] if pd.notna(row["ROI Mid"]) and row["ROI Mid"] != "" else None
                     roi_high = row["ROI High"] if pd.notna(row["ROI High"]) and row["ROI High"] != "" else None
@@ -834,6 +845,7 @@ def show():
                         "categories": categories,
                         "adstock_type": row["Adstock"],
                         "curve_sharpness_override": curve_override,
+                        "include_roi": include_roi,
                         "roi_prior_low": roi_low,
                         "roi_prior_mid": roi_mid,
                         "roi_prior_high": roi_high,
@@ -849,9 +861,9 @@ def show():
             with col2:
                 st.metric("With Adstock", len(selected_owned_media))  # All have adstock
             with col3:
-                # Count those with ROI priors set
+                # Count those with Include ROI Priors checked
                 n_with_roi = sum(1 for _, r in edited_owned_media.iterrows()
-                                 if pd.notna(r["ROI Mid"]) and r["ROI Mid"] != "")
+                                 if r.get("Include ROI Priors", False))
                 st.metric("With ROI Priors", n_with_roi)
 
     # =========================================================================
@@ -1654,7 +1666,10 @@ def _sync_data_editors_to_config_state():
                 curve_shape = row.get("Curve Shape", "Default")
                 curve_override = None if curve_shape == "Default" else curve_shape.lower()
 
-                # Handle optional ROI priors (convert empty string/"" to None)
+                # Get include_roi checkbox value
+                include_roi = bool(row.get("Include ROI Priors", False))
+
+                # Handle ROI priors (convert empty string/"" to None)
                 roi_low = row.get("ROI Low")
                 roi_mid = row.get("ROI Mid")
                 roi_high = row.get("ROI High")
@@ -1668,6 +1683,7 @@ def _sync_data_editors_to_config_state():
                     "categories": categories,
                     "adstock_type": row.get("Adstock", "medium"),
                     "curve_sharpness_override": curve_override,
+                    "include_roi": include_roi,
                     "roi_prior_low": roi_low,
                     "roi_prior_mid": roi_mid,
                     "roi_prior_high": roi_high,
@@ -1758,13 +1774,12 @@ def build_config_from_state() -> ModelConfig:
             name=om["name"],
             display_name=om.get("display_name"),
             categories=om.get("categories", {}),
-            apply_adstock=om.get("apply_adstock", True),
             adstock_type=AdstockType(om.get("adstock_type", "medium")),
-            apply_saturation=om.get("apply_saturation", True),
+            curve_sharpness_override=om.get("curve_sharpness_override"),
             include_roi=om.get("include_roi", False),
-            roi_prior_low=om.get("roi_prior_low", 0.1),
-            roi_prior_mid=om.get("roi_prior_mid", 1.0),
-            roi_prior_high=om.get("roi_prior_high", 5.0),
+            roi_prior_low=om.get("roi_prior_low"),
+            roi_prior_mid=om.get("roi_prior_mid"),
+            roi_prior_high=om.get("roi_prior_high"),
         )
         for om in state.get("owned_media", [])
     ]

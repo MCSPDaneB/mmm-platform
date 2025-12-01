@@ -180,21 +180,21 @@ class OwnedMediaConfig(BaseModel):
     curve_sharpness_override: Optional[str] = Field(None,
         description="Per-variable curve sharpness override: 'gradual', 'balanced', 'sharp', or None for global default")
 
-    # ROI priors - OPTIONAL. Only set if you have cost/spend data for this variable.
-    # If roi_prior_mid is None, variable won't appear in ROI calculations.
-    roi_prior_low: Optional[float] = Field(None, ge=0, description="Lower bound for ROI prior (optional)")
-    roi_prior_mid: Optional[float] = Field(None, ge=0, description="Central estimate for ROI prior (optional)")
-    roi_prior_high: Optional[float] = Field(None, ge=0, description="Upper bound for ROI prior (optional)")
+    # ROI configuration - checkbox controls whether ROI priors are used
+    # Only enable if you have cost/spend data for this variable
+    include_roi: bool = Field(False, description="Whether to include ROI priors for this variable")
+    roi_prior_low: Optional[float] = Field(None, ge=0, description="Lower bound for ROI prior (required if include_roi=True)")
+    roi_prior_mid: Optional[float] = Field(None, ge=0, description="Central estimate for ROI prior (required if include_roi=True)")
+    roi_prior_high: Optional[float] = Field(None, ge=0, description="Upper bound for ROI prior (required if include_roi=True)")
 
     # Backward compatibility - these fields are ignored but accepted for old configs
     apply_adstock: Optional[bool] = Field(None, description="DEPRECATED: adstock is always applied")
     apply_saturation: Optional[bool] = Field(None, description="DEPRECATED: saturation is always applied")
-    include_roi: Optional[bool] = Field(None, description="DEPRECATED: determined by roi_prior_mid being set")
 
     @property
     def has_roi_priors(self) -> bool:
         """Check if ROI priors are configured (for inclusion in ROI calculations)."""
-        return self.roi_prior_mid is not None
+        return self.include_roi and self.roi_prior_mid is not None
 
     @model_validator(mode="before")
     @classmethod
@@ -218,6 +218,20 @@ class OwnedMediaConfig(BaseModel):
         if isinstance(v, str):
             return {"Category": v}
         return v
+
+    @model_validator(mode="after")
+    def validate_roi_priors(self) -> "OwnedMediaConfig":
+        """Validate that ROI priors are set when include_roi is True."""
+        if self.include_roi:
+            if self.roi_prior_mid is None:
+                raise ValueError("ROI prior mid value is required when Include ROI Priors is enabled")
+            if self.roi_prior_low is None:
+                raise ValueError("ROI prior low value is required when Include ROI Priors is enabled")
+            if self.roi_prior_high is None:
+                raise ValueError("ROI prior high value is required when Include ROI Priors is enabled")
+            if self.roi_prior_high <= self.roi_prior_low:
+                raise ValueError("ROI prior high must be greater than ROI prior low")
+        return self
 
     def get_display_name(self) -> str:
         """Return display name or formatted column name."""
@@ -525,15 +539,14 @@ class ModelConfig(BaseModel):
         return roi_low, roi_mid, roi_high
 
     def get_adstock_type_dict(self) -> dict[str, str]:
-        """Get adstock type mapping for channels, owned media (if enabled), competitors, and controls (if enabled)."""
+        """Get adstock type mapping for channels, owned media, competitors, and controls (if enabled)."""
         result = {}
         # Channels always have adstock
         for ch in self.channels:
             result[ch.name] = ch.adstock_type.value
-        # Owned media if apply_adstock is True
+        # Owned media always has adstock
         for om in self.owned_media:
-            if om.apply_adstock:
-                result[om.name] = om.adstock_type.value
+            result[om.name] = om.adstock_type.value
         # Competitors always have adstock
         for comp in self.competitors:
             result[comp.name] = comp.adstock_type.value
