@@ -20,6 +20,11 @@ CATEGORY_COLORS = {
     "Seasonality": "#9370DB",
     "PAID MEDIA": "#4A90D9",
     "Paid Media": "#4A90D9",
+    "OWNED MEDIA": "#27AE60",
+    "Owned Media": "#27AE60",
+    "COMPETITORS": "#C0392B",
+    "Competitors": "#C0392B",
+    "Competitor Activity": "#C0392B",
     "Display": "#5DADE2",
     "Search": "#2ECC71",
     "Social": "#E74C3C",
@@ -106,9 +111,17 @@ class ContributionAnalyzer:
         # Fallback formatting
         return col_name.replace("PaidMedia_", "").replace("_spend", "").replace("_", " ").title()
 
-    def get_channel_roi(self) -> pd.DataFrame:
+    def get_channel_roi(self, roi_channels: Optional[list[str]] = None) -> pd.DataFrame:
         """
         Calculate ROI for each channel.
+
+        Parameters
+        ----------
+        roi_channels : list[str], optional
+            List of channels to include in ROI calculation.
+            If not provided, uses all channel_cols.
+            Use this to filter to only channels with ROI enabled
+            (e.g., paid media + owned media with include_roi=True).
 
         Returns
         -------
@@ -117,7 +130,9 @@ class ContributionAnalyzer:
         """
         results = []
 
-        for ch in self.channel_cols:
+        channels_to_process = roi_channels if roi_channels is not None else self.channel_cols
+
+        for ch in channels_to_process:
             if ch not in self.contribs.columns or ch not in self.df_scaled.columns:
                 continue
 
@@ -442,13 +457,25 @@ class ContributionAnalyzer:
         display_names = {}
         for ch_config in mmm_wrapper.config.channels:
             display_names[ch_config.name] = ch_config.get_display_name()
+
+        # Add owned media display names
+        for om_config in mmm_wrapper.config.owned_media:
+            display_names[om_config.name] = om_config.get_display_name()
+
+        # Add competitor display names
+        for comp_config in mmm_wrapper.config.competitors:
+            display_names[comp_config.name] = comp_config.get_display_name()
+
         for ctrl_config in mmm_wrapper.config.controls:
             display_names[ctrl_config.name] = ctrl_config.get_display_name()
+
+        # Get effective channel columns (includes owned media with adstock+saturation)
+        effective_channels = mmm_wrapper.transform_engine.get_effective_channel_columns()
 
         return cls(
             contribs=mmm_wrapper.get_contributions(),
             df_scaled=mmm_wrapper.df_scaled,
-            channel_cols=mmm_wrapper.config.get_channel_columns(),
+            channel_cols=effective_channels,
             control_cols=mmm_wrapper.control_cols,
             target_col=mmm_wrapper.config.data.target_column,
             date_col=mmm_wrapper.config.data.date_column,

@@ -10,7 +10,7 @@ from mmm_platform.config.schema import (
     ModelConfig, ChannelConfig, ControlConfig, DataConfig,
     SamplingConfig, AdstockConfig, SaturationConfig, SeasonalityConfig,
     AdstockType, SignConstraint, PriorConfig, CategoryColumnConfig,
-    DummyVariableConfig
+    DummyVariableConfig, OwnedMediaConfig, CompetitorConfig
 )
 from mmm_platform.config.loader import ConfigLoader
 from mmm_platform.model.persistence import list_clients, get_client_configs_dir
@@ -133,9 +133,11 @@ def show():
     df = st.session_state.current_data
 
     # Tabs for different configuration sections
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab_owned, tab_comp, tab3, tab4, tab5 = st.tabs([
         "📊 Data Settings",
-        "📺 Channels",
+        "📺 Paid Media",
+        "🏠 Owned Media",
+        "🏆 Competitors",
         "🎛️ Controls",
         "⚡ Transforms",
         "🎯 Sampling"
@@ -666,6 +668,261 @@ def show():
                 st.metric("Avg Expected ROI", f"{avg_roi:.2f}")
 
     # =========================================================================
+    # Tab: Owned Media
+    # =========================================================================
+    with tab_owned:
+        st.subheader("Owned Media")
+
+        st.markdown("""
+        Configure owned media variables like email sends, organic social, website content.
+        These have **optional** adstock and saturation - configure based on your understanding of each channel.
+
+        - **Apply Adstock**: Enable if the variable has carryover effects (e.g., email open rates persist)
+        - **Apply Saturation**: Enable if the variable has diminishing returns
+        - **Track ROI**: Enable if you have cost data and want ROI calculations
+        """)
+
+        # Available columns (excluding channels, target, date)
+        excluded_cols_om = selected_channels + [
+            st.session_state.config_state.get("date_col", ""),
+            st.session_state.config_state.get("target_col", ""),
+        ]
+        available_owned_media = [c for c in df.select_dtypes(include=["number"]).columns if c not in excluded_cols_om]
+
+        # Auto-detect owned media columns
+        auto_owned_media = [
+            col for col in available_owned_media
+            if any(pattern in col.lower() for pattern in ["email", "organic", "owned", "social", "newsletter", "crm"])
+        ]
+
+        # Initialize session state
+        if "owned_media_multiselect" not in st.session_state:
+            saved_owned_media = st.session_state.get("config_state", {}).get("owned_media", [])
+            if saved_owned_media:
+                saved_om_names = [om["name"] for om in saved_owned_media]
+                st.session_state.owned_media_multiselect = [c for c in saved_om_names if c in available_owned_media]
+            else:
+                st.session_state.owned_media_multiselect = auto_owned_media if auto_owned_media else []
+        else:
+            st.session_state.owned_media_multiselect = [c for c in st.session_state.owned_media_multiselect if c in available_owned_media]
+
+        # Selection buttons
+        col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 4])
+        with col_btn1:
+            if st.button("Select Suggested", key="select_suggested_owned"):
+                st.session_state.owned_media_multiselect = auto_owned_media
+                st.rerun()
+        with col_btn2:
+            if st.button("Clear", key="clear_owned_media"):
+                st.session_state.owned_media_multiselect = []
+                st.rerun()
+
+        selected_owned_media = st.multiselect(
+            "Select owned media variables",
+            options=available_owned_media,
+            key="owned_media_multiselect",
+            help="Select columns representing owned media (email, organic social, etc.)"
+        )
+
+        if selected_owned_media:
+            st.markdown("---")
+
+            # Get saved settings
+            saved_om_config = st.session_state.get("config_state", {}).get("owned_media", [])
+            om_config_dict = {om["name"]: om for om in saved_om_config}
+
+            # Build table data
+            om_table_data = []
+            for om in selected_owned_media:
+                existing = om_config_dict.get(om, {})
+                row_data = {
+                    "Variable": om,
+                    "Display Name": existing.get("display_name", om.replace("_", " ").title()),
+                    "Apply Adstock": existing.get("apply_adstock", True),
+                    "Adstock Type": existing.get("adstock_type", "medium"),
+                    "Apply Saturation": existing.get("apply_saturation", True),
+                    "Track ROI": existing.get("include_roi", False),
+                    "ROI Low": existing.get("roi_prior_low", 0.1),
+                    "ROI Mid": existing.get("roi_prior_mid", 1.0),
+                    "ROI High": existing.get("roi_prior_high", 5.0),
+                    "Total": df[om].sum() if om in df.columns else 0,
+                }
+                om_table_data.append(row_data)
+
+            om_df = pd.DataFrame(om_table_data)
+
+            om_column_config = {
+                "Variable": st.column_config.TextColumn("Variable", disabled=True),
+                "Display Name": st.column_config.TextColumn("Display Name"),
+                "Apply Adstock": st.column_config.CheckboxColumn("Adstock", help="Enable carryover/lag effects"),
+                "Adstock Type": st.column_config.SelectboxColumn("Adstock Type", options=["short", "medium", "long"]),
+                "Apply Saturation": st.column_config.CheckboxColumn("Saturation", help="Enable diminishing returns"),
+                "Track ROI": st.column_config.CheckboxColumn("Track ROI", help="Include in ROI calculations"),
+                "ROI Low": st.column_config.NumberColumn("ROI Low", min_value=0.0, format="%.2f"),
+                "ROI Mid": st.column_config.NumberColumn("ROI Mid", min_value=0.0, format="%.2f"),
+                "ROI High": st.column_config.NumberColumn("ROI High", min_value=0.0, format="%.2f"),
+                "Total": st.column_config.NumberColumn("Total", disabled=True, format="%.2f"),
+            }
+
+            edited_owned_media = st.data_editor(
+                om_df,
+                column_config=om_column_config,
+                hide_index=True,
+                width="stretch",
+                num_rows="fixed",
+                key="owned_media_data_editor",
+            )
+
+            if st.button("💾 Save Owned Media Settings", key="save_owned_media_btn"):
+                owned_media_config = []
+                for _, row in edited_owned_media.iterrows():
+                    owned_media_config.append({
+                        "name": row["Variable"],
+                        "display_name": row["Display Name"],
+                        "apply_adstock": row["Apply Adstock"],
+                        "adstock_type": row["Adstock Type"],
+                        "apply_saturation": row["Apply Saturation"],
+                        "include_roi": row["Track ROI"],
+                        "roi_prior_low": row["ROI Low"],
+                        "roi_prior_mid": row["ROI Mid"],
+                        "roi_prior_high": row["ROI High"],
+                    })
+                st.session_state.config_state["owned_media"] = owned_media_config
+                st.success("Owned media settings saved!")
+
+            # Summary
+            st.markdown("---")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Variables", len(selected_owned_media))
+            with col2:
+                n_with_adstock = sum(1 for _, r in edited_owned_media.iterrows() if r["Apply Adstock"])
+                st.metric("With Adstock", n_with_adstock)
+            with col3:
+                n_with_roi = sum(1 for _, r in edited_owned_media.iterrows() if r["Track ROI"])
+                st.metric("Tracking ROI", n_with_roi)
+
+    # =========================================================================
+    # Tab: Competitors
+    # =========================================================================
+    with tab_comp:
+        st.subheader("Competitor Activity")
+
+        st.markdown("""
+        Configure competitor activity variables. These have:
+        - **Adstock** applied (competitor impact carries over)
+        - **Negative coefficient** (competitor activity hurts your sales)
+        - **No ROI** calculation (you can't optimize competitor spend!)
+
+        Examples: Competitor GRPs, Share of Voice, Competitor promotions
+        """)
+
+        # Available columns (excluding channels, owned media, target, date)
+        excluded_cols_comp = selected_channels + selected_owned_media + [
+            st.session_state.config_state.get("date_col", ""),
+            st.session_state.config_state.get("target_col", ""),
+        ]
+        available_competitors = [c for c in df.select_dtypes(include=["number"]).columns if c not in excluded_cols_comp]
+
+        # Auto-detect competitor columns
+        auto_competitors = [
+            col for col in available_competitors
+            if any(pattern in col.lower() for pattern in ["competitor", "comp_", "sov", "share_of_voice", "rival"])
+        ]
+
+        # Initialize session state
+        if "competitor_multiselect" not in st.session_state:
+            saved_competitors = st.session_state.get("config_state", {}).get("competitors", [])
+            if saved_competitors:
+                saved_comp_names = [c["name"] for c in saved_competitors]
+                st.session_state.competitor_multiselect = [c for c in saved_comp_names if c in available_competitors]
+            else:
+                st.session_state.competitor_multiselect = auto_competitors if auto_competitors else []
+        else:
+            st.session_state.competitor_multiselect = [c for c in st.session_state.competitor_multiselect if c in available_competitors]
+
+        # Selection buttons
+        col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 4])
+        with col_btn1:
+            if st.button("Select Suggested", key="select_suggested_comp"):
+                st.session_state.competitor_multiselect = auto_competitors
+                st.rerun()
+        with col_btn2:
+            if st.button("Clear", key="clear_competitors"):
+                st.session_state.competitor_multiselect = []
+                st.rerun()
+
+        selected_competitors = st.multiselect(
+            "Select competitor activity variables",
+            options=available_competitors,
+            key="competitor_multiselect",
+            help="Select columns representing competitor activity"
+        )
+
+        if selected_competitors:
+            st.markdown("---")
+
+            st.info("💡 Competitor coefficients will be **constrained negative** - their activity hurts your sales.")
+
+            # Get saved settings
+            saved_comp_config = st.session_state.get("config_state", {}).get("competitors", [])
+            comp_config_dict = {c["name"]: c for c in saved_comp_config}
+
+            # Build table data
+            comp_table_data = []
+            for comp in selected_competitors:
+                existing = comp_config_dict.get(comp, {})
+                row_data = {
+                    "Variable": comp,
+                    "Display Name": existing.get("display_name", comp.replace("_", " ").title()),
+                    "Adstock Type": existing.get("adstock_type", "short"),
+                    "Total": df[comp].sum() if comp in df.columns else 0,
+                }
+                comp_table_data.append(row_data)
+
+            comp_df = pd.DataFrame(comp_table_data)
+
+            comp_column_config = {
+                "Variable": st.column_config.TextColumn("Variable", disabled=True),
+                "Display Name": st.column_config.TextColumn("Display Name"),
+                "Adstock Type": st.column_config.SelectboxColumn(
+                    "Adstock Type",
+                    options=["short", "medium", "long"],
+                    help="How long competitor impact persists (short is typical)"
+                ),
+                "Total": st.column_config.NumberColumn("Total", disabled=True, format="%.2f"),
+            }
+
+            edited_competitors = st.data_editor(
+                comp_df,
+                column_config=comp_column_config,
+                hide_index=True,
+                width="stretch",
+                num_rows="fixed",
+                key="competitors_data_editor",
+            )
+
+            if st.button("💾 Save Competitor Settings", key="save_competitors_btn"):
+                competitors_config = []
+                for _, row in edited_competitors.iterrows():
+                    competitors_config.append({
+                        "name": row["Variable"],
+                        "display_name": row["Display Name"],
+                        "adstock_type": row["Adstock Type"],
+                    })
+                st.session_state.config_state["competitors"] = competitors_config
+                st.success("Competitor settings saved!")
+
+            # Summary
+            st.markdown("---")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Competitor Variables", len(selected_competitors))
+            with col2:
+                n_short = sum(1 for _, r in edited_competitors.iterrows() if r["Adstock Type"] == "short")
+                st.metric("Short Adstock", n_short)
+
+    # =========================================================================
     # Tab 3: Control Variables
     # =========================================================================
     with tab3:
@@ -681,8 +938,8 @@ def show():
         - **unconstrained**: Effect direction is unknown
         """)
 
-        # Available columns (excluding channels and target)
-        excluded_cols = selected_channels + [
+        # Available columns (excluding channels, owned media, competitors, and target)
+        excluded_cols = selected_channels + selected_owned_media + selected_competitors + [
             st.session_state.config_state.get("date_col", ""),
             st.session_state.config_state.get("target_col", ""),
         ]
@@ -1262,16 +1519,18 @@ def show():
             st.success(f"Configuration '{config.name}' built and saved!")
 
             # Show summary
-            col1, col2, col3, col4, col5 = st.columns(5)
+            col1, col2, col3, col4, col5, col6 = st.columns(6)
             with col1:
-                st.metric("Channels", len(config.channels))
+                st.metric("Paid Media", len(config.channels))
             with col2:
-                st.metric("Controls", len(config.controls))
+                st.metric("Owned Media", len(config.owned_media))
             with col3:
-                st.metric("Dummies", len(config.dummy_variables))
+                st.metric("Competitors", len(config.competitors))
             with col4:
-                st.metric("Target", config.data.target_column)
+                st.metric("Controls", len(config.controls))
             with col5:
+                st.metric("Dummies", len(config.dummy_variables))
+            with col6:
                 st.metric("Status", "Ready")
 
             st.caption(f"Saved to: `{path}`")
@@ -1317,6 +1576,34 @@ def build_config_from_state() -> ModelConfig:
         for ctrl in state.get("controls", [])
     ]
 
+    # Build owned media configs
+    owned_media = [
+        OwnedMediaConfig(
+            name=om["name"],
+            display_name=om.get("display_name"),
+            categories=om.get("categories", {}),
+            apply_adstock=om.get("apply_adstock", True),
+            adstock_type=AdstockType(om.get("adstock_type", "medium")),
+            apply_saturation=om.get("apply_saturation", True),
+            include_roi=om.get("include_roi", False),
+            roi_prior_low=om.get("roi_prior_low", 0.1),
+            roi_prior_mid=om.get("roi_prior_mid", 1.0),
+            roi_prior_high=om.get("roi_prior_high", 5.0),
+        )
+        for om in state.get("owned_media", [])
+    ]
+
+    # Build competitor configs
+    competitors = [
+        CompetitorConfig(
+            name=comp["name"],
+            display_name=comp.get("display_name"),
+            categories=comp.get("categories", {}),
+            adstock_type=AdstockType(comp.get("adstock_type", "short")),
+        )
+        for comp in state.get("competitors", [])
+    ]
+
     # Build dummy variable configs from session state
     dummy_variables = [
         DummyVariableConfig(
@@ -1345,6 +1632,8 @@ def build_config_from_state() -> ModelConfig:
             include_trend=state.get("include_trend", True),
         ),
         channels=channels,
+        owned_media=owned_media,
+        competitors=competitors,
         controls=controls,
         category_columns=category_columns,
         dummy_variables=dummy_variables,

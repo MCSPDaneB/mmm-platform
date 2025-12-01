@@ -101,6 +101,7 @@ class MMMWrapper:
         - Creating dummy variables
         - Applying sign adjustments
         - Scaling data
+        - Applying adstock to competitors and controls with adstock
         """
         if self.df_raw is None:
             raise ValueError("No data loaded. Call load_data() first.")
@@ -109,10 +110,11 @@ class MMMWrapper:
         self.df_raw, self.df_scaled, _, self.control_cols = \
             self.data_loader.prepare_model_data(self.df_raw, self.config)
 
-        # Compute transform parameters
-        self.lam_vec = self.transform_engine.compute_all_channel_lams(self.df_scaled)
+        # Compute transform parameters for all effective channels
+        # (paid media + owned media with adstock+saturation)
+        self.lam_vec = self.transform_engine.compute_all_effective_channel_lams(self.df_scaled)
 
-        # Calibrate priors
+        # Calibrate priors for effective channels
         self.beta_mu, self.beta_sigma = self.prior_calibrator.calibrate_beta_priors(
             self.df_scaled, self.lam_vec
         )
@@ -151,12 +153,15 @@ class MMMWrapper:
         model_config = self._build_model_config()
         sampler_config = {"target_accept": self.config.sampling.target_accept}
 
+        # Get effective channel columns (paid media + owned media with adstock+saturation)
+        effective_channels = self.transform_engine.get_effective_channel_columns()
+
         # Create model
         self.mmm = MMM(
             model_config=model_config,
             sampler_config=sampler_config,
             date_column=self.config.data.date_column,
-            channel_columns=self.config.get_channel_columns(),
+            channel_columns=effective_channels,
             control_columns=self.control_cols,
             adstock=GeometricAdstock(l_max=self.config.adstock.l_max),
             saturation=LogisticSaturation(),
@@ -284,9 +289,11 @@ class MMMWrapper:
 
     def _get_feature_dataframe(self) -> pd.DataFrame:
         """Get the feature dataframe for model fitting."""
+        # Use effective channels (paid media + owned media with adstock+saturation)
+        effective_channels = self.transform_engine.get_effective_channel_columns()
         feature_cols = (
             [self.config.data.date_column] +
-            self.config.get_channel_columns() +
+            effective_channels +
             self.control_cols
         )
         # Filter to columns that exist

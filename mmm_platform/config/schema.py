@@ -163,8 +163,122 @@ class ChannelConfig(BaseModel):
         return "Paid Media"
 
 
+class OwnedMediaConfig(BaseModel):
+    """Configuration for owned media channels (email, organic social, etc.).
+
+    Owned media has optional adstock and saturation (unlike paid media which requires both).
+    ROI tracking is optional since owned media may not have direct costs.
+    """
+    name: str = Field(..., description="Column name in the data")
+    display_name: Optional[str] = Field(None, description="Human-readable name for display")
+    categories: dict[str, str] = Field(default_factory=dict, description="Category values keyed by column name")
+
+    # Adstock is optional (default on)
+    apply_adstock: bool = Field(True, description="Whether to apply adstock transformation")
+    adstock_type: AdstockType = Field(AdstockType.MEDIUM, description="Adstock decay category")
+
+    # Saturation is optional (default on)
+    apply_saturation: bool = Field(True, description="Whether to apply saturation transformation")
+    curve_sharpness_override: Optional[str] = Field(None,
+        description="Per-variable curve sharpness override: 'gradual', 'balanced', 'sharp', or None for global default")
+
+    # ROI is optional - only if tracking costs
+    include_roi: bool = Field(False, description="Whether to include in ROI calculations")
+    roi_prior_low: float = Field(0.1, ge=0, description="Lower bound for ROI prior")
+    roi_prior_mid: float = Field(1.0, ge=0, description="Central estimate for ROI prior")
+    roi_prior_high: float = Field(5.0, ge=0, description="Upper bound for ROI prior")
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_old_category_field(cls, data: Any) -> Any:
+        """Migrate old 'category' field name to 'categories' dict."""
+        if isinstance(data, dict):
+            if "category" in data and "categories" not in data:
+                old_category = data.pop("category")
+                if old_category:
+                    data["categories"] = {"Category": old_category}
+                else:
+                    data["categories"] = {}
+        return data
+
+    @field_validator("categories", mode="before")
+    @classmethod
+    def migrate_old_category(cls, v):
+        """Migrate old single category field to categories dict."""
+        if v is None:
+            return {}
+        if isinstance(v, str):
+            return {"Category": v}
+        return v
+
+    def get_display_name(self) -> str:
+        """Return display name or formatted column name."""
+        if self.display_name:
+            return self.display_name
+        return self.name.replace("_", " ").title()
+
+    def get_category(self, column_name: str = "Category") -> str:
+        """Return category value for a specific column."""
+        if column_name in self.categories and self.categories[column_name]:
+            return self.categories[column_name]
+        return "Owned Media"
+
+
+class CompetitorConfig(BaseModel):
+    """Configuration for competitor activity variables.
+
+    Competitor variables have adstock only (no saturation).
+    Coefficient is always constrained negative (competitor activity hurts your sales).
+    No ROI calculation (can't optimize competitor spend).
+    """
+    name: str = Field(..., description="Column name in the data")
+    display_name: Optional[str] = Field(None, description="Human-readable name for display")
+    categories: dict[str, str] = Field(default_factory=dict, description="Category values keyed by column name")
+
+    # Adstock with shorter default decay
+    adstock_type: AdstockType = Field(AdstockType.SHORT, description="Adstock decay category (default: short)")
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_old_category_field(cls, data: Any) -> Any:
+        """Migrate old 'category' field name to 'categories' dict."""
+        if isinstance(data, dict):
+            if "category" in data and "categories" not in data:
+                old_category = data.pop("category")
+                if old_category:
+                    data["categories"] = {"Category": old_category}
+                else:
+                    data["categories"] = {}
+        return data
+
+    @field_validator("categories", mode="before")
+    @classmethod
+    def migrate_old_category(cls, v):
+        """Migrate old single category field to categories dict."""
+        if v is None:
+            return {}
+        if isinstance(v, str):
+            return {"Category": v}
+        return v
+
+    def get_display_name(self) -> str:
+        """Return display name or formatted column name."""
+        if self.display_name:
+            return self.display_name
+        return self.name.replace("_", " ").title()
+
+    def get_category(self, column_name: str = "Category") -> str:
+        """Return category value for a specific column."""
+        if column_name in self.categories and self.categories[column_name]:
+            return self.categories[column_name]
+        return "Competitor"
+
+
 class ControlConfig(BaseModel):
-    """Configuration for a control variable."""
+    """Configuration for a control variable.
+
+    Controls have optional lag/carryover effect via adstock toggle.
+    """
     name: str = Field(..., description="Column name in the data")
     display_name: Optional[str] = Field(None, description="Human-readable name")
     categories: dict[str, str] = Field(default_factory=dict, description="Category values keyed by column name")
@@ -174,6 +288,10 @@ class ControlConfig(BaseModel):
     )
     is_dummy: bool = Field(False, description="Whether this is a 0/1 dummy variable")
     scale: bool = Field(False, description="Whether to scale this variable")
+
+    # Optional lag/carryover effect
+    apply_adstock: bool = Field(False, description="Whether to apply adstock transformation for lag/carryover")
+    adstock_type: AdstockType = Field(AdstockType.SHORT, description="Adstock decay category (only used if apply_adstock=True)")
 
     @model_validator(mode="before")
     @classmethod
@@ -301,10 +419,16 @@ class ModelConfig(BaseModel):
     # Data configuration
     data: DataConfig
 
-    # Channel configurations
+    # Channel configurations (paid media - required)
     channels: list[ChannelConfig] = Field(..., min_length=1)
 
-    # Control configurations
+    # Owned media configurations (optional)
+    owned_media: list[OwnedMediaConfig] = Field(default_factory=list)
+
+    # Competitor configurations (optional)
+    competitors: list[CompetitorConfig] = Field(default_factory=list)
+
+    # Control configurations (optional)
     controls: list[ControlConfig] = Field(default_factory=list)
 
     # Custom category columns for grouping (max 5)
@@ -352,20 +476,72 @@ class ModelConfig(BaseModel):
                 return ctrl
         return None
 
+    def get_owned_media_columns(self) -> list[str]:
+        """Get list of owned media column names."""
+        return [om.name for om in self.owned_media]
+
+    def get_competitor_columns(self) -> list[str]:
+        """Get list of competitor column names."""
+        return [comp.name for comp in self.competitors]
+
+    def get_owned_media_by_name(self, name: str) -> Optional[OwnedMediaConfig]:
+        """Get owned media config by column name."""
+        for om in self.owned_media:
+            if om.name == name:
+                return om
+        return None
+
+    def get_competitor_by_name(self, name: str) -> Optional[CompetitorConfig]:
+        """Get competitor config by column name."""
+        for comp in self.competitors:
+            if comp.name == name:
+                return comp
+        return None
+
     def get_roi_dicts(self) -> tuple[dict, dict, dict]:
-        """Get ROI prior dictionaries for all channels."""
+        """Get ROI prior dictionaries for all channels and owned media with ROI."""
         roi_low = {}
         roi_mid = {}
         roi_high = {}
+        # Channels (paid media) always have ROI
         for ch in self.channels:
             roi_low[ch.name] = ch.roi_prior_low
             roi_mid[ch.name] = ch.roi_prior_mid
             roi_high[ch.name] = ch.roi_prior_high
+        # Owned media only if include_roi is True
+        for om in self.owned_media:
+            if om.include_roi:
+                roi_low[om.name] = om.roi_prior_low
+                roi_mid[om.name] = om.roi_prior_mid
+                roi_high[om.name] = om.roi_prior_high
         return roi_low, roi_mid, roi_high
 
     def get_adstock_type_dict(self) -> dict[str, str]:
-        """Get adstock type mapping for all channels."""
-        return {ch.name: ch.adstock_type.value for ch in self.channels}
+        """Get adstock type mapping for channels, owned media (if enabled), competitors, and controls (if enabled)."""
+        result = {}
+        # Channels always have adstock
+        for ch in self.channels:
+            result[ch.name] = ch.adstock_type.value
+        # Owned media if apply_adstock is True
+        for om in self.owned_media:
+            if om.apply_adstock:
+                result[om.name] = om.adstock_type.value
+        # Competitors always have adstock
+        for comp in self.competitors:
+            result[comp.name] = comp.adstock_type.value
+        # Controls if apply_adstock is True
+        for ctrl in self.controls:
+            if ctrl.apply_adstock:
+                result[ctrl.name] = ctrl.adstock_type.value
+        return result
+
+    def get_owned_media_category_map(self, column_name: str = "Category") -> dict[str, str]:
+        """Get mapping of owned media names to category values for a specific column."""
+        return {om.name: om.get_category(column_name) for om in self.owned_media}
+
+    def get_competitor_category_map(self, column_name: str = "Category") -> dict[str, str]:
+        """Get mapping of competitor names to category values for a specific column."""
+        return {comp.name: comp.get_category(column_name) for comp in self.competitors}
 
     def get_category_column_names(self) -> list[str]:
         """Get list of category column names."""

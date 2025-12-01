@@ -9,6 +9,7 @@ from typing import Union, Optional, BinaryIO
 import logging
 
 from ..config.schema import ModelConfig, DataConfig
+from .transforms import TransformEngine
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +228,108 @@ class DataLoader:
 
         return df, final_control_cols
 
+    def apply_adstock_transforms(
+        self,
+        df: pd.DataFrame,
+        config: ModelConfig
+    ) -> tuple[pd.DataFrame, list[str], list[str]]:
+        """
+        Apply adstock transformations to variables that need preprocessing.
+
+        This handles:
+        - Competitors (always get adstock, negative sign)
+        - Controls with apply_adstock=True
+        - Owned media with adstock but not saturation (not treated as channels)
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Input dataframe.
+        config : ModelConfig
+            Model configuration.
+
+        Returns
+        -------
+        tuple[pd.DataFrame, list[str], list[str]]
+            - Modified dataframe with adstock-transformed columns
+            - List of competitor control column names (inverted for negative effect)
+            - List of adstocked control column names
+        """
+        df = df.copy()
+        transform_engine = TransformEngine(config)
+        l_max = config.adstock.l_max
+
+        competitor_cols = []
+        adstocked_control_cols = []
+
+        # Process competitors: apply adstock and invert for negative effect
+        for comp in config.competitors:
+            if comp.name not in df.columns:
+                logger.warning(f"Competitor column not found: {comp.name}")
+                continue
+
+            # Get adstock decay rate
+            alpha = transform_engine.get_competitor_adstock_decay(comp.name)
+
+            # Apply adstock transform
+            x = df[comp.name].values.astype(float)
+            x_adstocked = transform_engine.compute_geometric_adstock(x, alpha, l_max)
+
+            # Create inverted column (competitor effect is negative)
+            new_col = f"{comp.name}_adstock_inv"
+            df[new_col] = -1 * x_adstocked
+            competitor_cols.append(new_col)
+            logger.info(f"Applied adstock to competitor: {comp.name} -> {new_col} (inverted)")
+
+        # Process owned media that has adstock but NOT saturation
+        # (those with both are treated as channels in PyMC-Marketing)
+        for om in config.owned_media:
+            if om.name not in df.columns:
+                logger.warning(f"Owned media column not found: {om.name}")
+                continue
+
+            # Skip if it will be treated as a channel (has both adstock + saturation)
+            if om.apply_adstock and om.apply_saturation:
+                continue
+
+            # If only adstock enabled, apply it as preprocessing
+            if om.apply_adstock:
+                alpha = transform_engine.get_owned_media_adstock_decay(om.name)
+                if alpha is not None:
+                    x = df[om.name].values.astype(float)
+                    x_adstocked = transform_engine.compute_geometric_adstock(x, alpha, l_max)
+                    new_col = f"{om.name}_adstock"
+                    df[new_col] = x_adstocked
+                    adstocked_control_cols.append(new_col)
+                    logger.info(f"Applied adstock to owned media: {om.name} -> {new_col}")
+            else:
+                # No transforms, just add as-is
+                adstocked_control_cols.append(om.name)
+
+        # Process controls with apply_adstock=True
+        for ctrl in config.controls:
+            if ctrl.name not in df.columns:
+                continue
+
+            if ctrl.apply_adstock:
+                alpha = transform_engine.get_control_adstock_decay(ctrl.name)
+                if alpha is not None:
+                    x = df[ctrl.name].values.astype(float)
+                    x_adstocked = transform_engine.compute_geometric_adstock(x, alpha, l_max)
+
+                    # Handle sign constraint
+                    if ctrl.sign_constraint == "negative":
+                        new_col = f"{ctrl.name}_adstock_inv"
+                        df[new_col] = -1 * x_adstocked
+                    else:
+                        new_col = f"{ctrl.name}_adstock"
+                        df[new_col] = x_adstocked
+
+                    adstocked_control_cols.append(new_col)
+                    logger.info(f"Applied adstock to control: {ctrl.name} -> {new_col}")
+
+        return df, competitor_cols, adstocked_control_cols
+
     def scale_data(
         self,
         df: pd.DataFrame,
@@ -250,8 +353,14 @@ class DataLoader:
         df = df.copy()
         scale_factor = config.data.spend_scale
 
-        # Columns to scale: target + channels + scalable controls
+        # Columns to scale: target + channels + owned media + competitors + scalable controls
         scale_cols = [config.data.target_column] + config.get_channel_columns()
+
+        # Add owned media columns
+        scale_cols.extend(config.get_owned_media_columns())
+
+        # Add competitor columns
+        scale_cols.extend(config.get_competitor_columns())
 
         # Add scalable control columns
         for ctrl in config.controls:
@@ -288,7 +397,7 @@ class DataLoader:
             - Original dataframe with dummies added
             - Scaled dataframe ready for modeling
             - Target series (scaled)
-            - List of control column names (with sign adjustments)
+            - List of control column names (with sign adjustments and adstock transforms)
         """
         # Filter by date range if specified
         date_col = config.data.date_column
@@ -314,17 +423,48 @@ class DataLoader:
         # Create dummy variables
         df = self.create_dummy_variables(df, config)
 
-        # Apply sign adjustments
+        # Apply sign adjustments for regular controls
         df, control_cols = self.apply_sign_adjustments(df, config)
 
-        # Scale data
+        # Scale data before applying adstock transforms
         df_scaled = self.scale_data(df, config)
 
+        # Apply adstock transforms to competitors, owned media without saturation,
+        # and controls with apply_adstock=True
+        df_scaled, competitor_cols, adstocked_cols = self.apply_adstock_transforms(df_scaled, config)
+
+        # Build final control columns list
+        # Start with regular controls (but exclude those that had adstock applied - they're in adstocked_cols)
+        final_control_cols = []
+        for col in control_cols:
+            # Check if this control had adstock applied (would have _adstock suffix)
+            base_name = col.replace("_inv", "")
+            ctrl_config = config.get_control_by_name(base_name)
+            if ctrl_config and ctrl_config.apply_adstock:
+                # Skip - will be in adstocked_cols
+                continue
+            final_control_cols.append(col)
+
+        # Add competitor columns (adstocked and inverted)
+        final_control_cols.extend(competitor_cols)
+
+        # Add adstocked columns (owned media without saturation, controls with adstock)
+        final_control_cols.extend(adstocked_cols)
+
+        # Remove duplicates while preserving order
+        final_control_cols = list(dict.fromkeys(final_control_cols))
+
+        logger.info(f"Final control columns ({len(final_control_cols)}): {final_control_cols[:10]}...")
+
         # Prepare X and y
+        # Get effective channel columns (includes owned media with adstock+saturation)
+        transform_engine = TransformEngine(config)
+        effective_channels = transform_engine.get_effective_channel_columns()
+
         feature_cols = (
             [config.data.date_column] +
-            config.get_channel_columns() +
-            control_cols
+            effective_channels +
+            final_control_cols
         )
 
         # Remove any columns that don't exist
@@ -333,4 +473,4 @@ class DataLoader:
         X = df_scaled[feature_cols]
         y = df_scaled[config.data.target_column]
 
-        return df, df_scaled, y, control_cols
+        return df, df_scaled, y, final_control_cols

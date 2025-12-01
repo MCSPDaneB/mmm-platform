@@ -53,12 +53,16 @@ class PriorCalibrator:
 
         Solving: beta = ROI * sum(x) / (target_scale * sum(f(g(x_norm))))
 
+        This method handles all effective channels:
+        - Paid media channels (always have ROI)
+        - Owned media with adstock+saturation (ROI if include_roi=True)
+
         Parameters
         ----------
         df_scaled : pd.DataFrame
             Scaled dataframe.
         lam_vec : np.ndarray
-            Lambda values for each channel.
+            Lambda values for each effective channel.
         l_max : int, optional
             Maximum adstock lag.
 
@@ -74,14 +78,16 @@ class PriorCalibrator:
         target_scale = df_scaled[target_col].max()
 
         roi_low, roi_mid, roi_high = self.config.get_roi_dicts()
-        channel_cols = self.config.get_channel_columns()
-        adstock_means = self.transform_engine.get_adstock_means()
+
+        # Get effective channels and their adstock means
+        effective_channels = self.transform_engine.get_effective_channel_columns()
+        adstock_means = self.transform_engine.get_all_channel_adstock_means()
 
         beta_low_list = []
         beta_mid_list = []
         beta_high_list = []
 
-        for i, ch in enumerate(channel_cols):
+        for i, ch in enumerate(effective_channels):
             x = df_scaled[ch].values.astype(float)
             x_max = x.max()
 
@@ -108,6 +114,7 @@ class PriorCalibrator:
             total_spend = x.sum() + 1e-9
 
             # Get ROI priors (with defaults)
+            # Owned media without include_roi=True won't be in roi_dicts
             r_low = roi_low.get(ch, 0.2)
             r_mid = roi_mid.get(ch, 1.0)
             r_high = roi_high.get(ch, 5.0)
@@ -220,7 +227,8 @@ class PriorCalibrator:
             (alpha, beta) parameters for Beta distribution.
         """
         K = self.config.adstock.prior_concentration
-        adstock_means = self.transform_engine.get_adstock_means()
+        # Use effective channel adstock means (includes owned media with adstock+saturation)
+        adstock_means = self.transform_engine.get_all_channel_adstock_means()
 
         alpha_params = adstock_means * K
         beta_params = (1 - adstock_means) * K

@@ -65,28 +65,49 @@ def generate_decomps_stacked(
     rows = []
     for date_val in contribs.index:
         for col in contribs.columns:
-            # Determine if channel, control, or base component
+            # Determine if channel, owned media, competitor, control, or base component
             channel_cfg = config.get_channel_by_name(col)
+            owned_media_cfg = config.get_owned_media_by_name(col)
+            competitor_cfg = config.get_competitor_by_name(col)
             control_cfg = config.get_control_by_name(col)
 
             # Get display name and categories
             if channel_cfg:
                 display_name = channel_cfg.get_display_name()
                 categories = [channel_cfg.get_category(cat_name) for cat_name in cat_col_names]
+            elif owned_media_cfg:
+                display_name = owned_media_cfg.get_display_name()
+                categories = [owned_media_cfg.get_category(cat_name) for cat_name in cat_col_names]
+            elif competitor_cfg:
+                display_name = competitor_cfg.get_display_name()
+                categories = [competitor_cfg.get_category(cat_name) for cat_name in cat_col_names]
             elif control_cfg:
                 display_name = control_cfg.get_display_name()
                 categories = [control_cfg.get_category(cat_name) for cat_name in cat_col_names]
             else:
                 # Base component (intercept, trend, seasonality, etc.)
+                # Also handle adstock-transformed columns
+                base_col = col.replace("_adstock", "").replace("_inv", "")
                 display_name = col.replace("_", " ").title()
-                # Classify base components
-                if col in ['intercept', 'trend']:
-                    base_category = "Base"
-                elif 'season' in col.lower() or 'fourier' in col.lower():
-                    base_category = "Seasonality"
+
+                # Check if this is a transformed version of a known variable
+                if config.get_competitor_by_name(base_col):
+                    comp_cfg = config.get_competitor_by_name(base_col)
+                    display_name = comp_cfg.get_display_name()
+                    categories = [comp_cfg.get_category(cat_name) for cat_name in cat_col_names]
+                elif config.get_control_by_name(base_col):
+                    ctrl_cfg = config.get_control_by_name(base_col)
+                    display_name = ctrl_cfg.get_display_name()
+                    categories = [ctrl_cfg.get_category(cat_name) for cat_name in cat_col_names]
                 else:
-                    base_category = "Other"
-                categories = [base_category] * len(cat_col_names)
+                    # Classify base components
+                    if col in ['intercept', 'trend', 't']:
+                        base_category = "Base"
+                    elif 'season' in col.lower() or 'fourier' in col.lower():
+                        base_category = "Seasonality"
+                    else:
+                        base_category = "Other"
+                    categories = [base_category] * len(cat_col_names)
 
             # If no category columns defined, use display_name as default
             if not categories:
@@ -370,25 +391,49 @@ def generate_combined_decomps_stacked(
 
             for cfg in all_configs:
                 channel_cfg = cfg.get_channel_by_name(col)
+                owned_media_cfg = cfg.get_owned_media_by_name(col)
+                competitor_cfg = cfg.get_competitor_by_name(col)
                 control_cfg = cfg.get_control_by_name(col)
 
                 if channel_cfg:
                     display_name = channel_cfg.get_display_name()
                     categories = [channel_cfg.get_category(cat_name) for cat_name in cat_col_names]
                     break
+                elif owned_media_cfg:
+                    display_name = owned_media_cfg.get_display_name()
+                    categories = [owned_media_cfg.get_category(cat_name) for cat_name in cat_col_names]
+                    break
+                elif competitor_cfg:
+                    display_name = competitor_cfg.get_display_name()
+                    categories = [competitor_cfg.get_category(cat_name) for cat_name in cat_col_names]
+                    break
                 elif control_cfg:
                     display_name = control_cfg.get_display_name()
                     categories = [control_cfg.get_category(cat_name) for cat_name in cat_col_names]
                     break
                 else:
-                    # Base component
-                    if col in ['intercept', 'trend']:
-                        base_category = "Base"
-                    elif 'season' in col.lower() or 'fourier' in col.lower():
-                        base_category = "Seasonality"
+                    # Check for transformed versions of known variables
+                    base_col = col.replace("_adstock", "").replace("_inv", "")
+                    comp_cfg = cfg.get_competitor_by_name(base_col)
+                    ctrl_cfg = cfg.get_control_by_name(base_col)
+
+                    if comp_cfg:
+                        display_name = comp_cfg.get_display_name()
+                        categories = [comp_cfg.get_category(cat_name) for cat_name in cat_col_names]
+                        break
+                    elif ctrl_cfg:
+                        display_name = ctrl_cfg.get_display_name()
+                        categories = [ctrl_cfg.get_category(cat_name) for cat_name in cat_col_names]
+                        break
                     else:
-                        base_category = "Other"
-                    categories = [base_category] * len(cat_col_names)
+                        # Base component
+                        if col in ['intercept', 'trend', 't']:
+                            base_category = "Base"
+                        elif 'season' in col.lower() or 'fourier' in col.lower():
+                            base_category = "Seasonality"
+                        else:
+                            base_category = "Other"
+                        categories = [base_category] * len(cat_col_names)
 
             # If no category columns defined, use display_name
             if not categories:

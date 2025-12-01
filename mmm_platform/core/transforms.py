@@ -7,7 +7,10 @@ import pandas as pd
 from typing import Optional
 import logging
 
-from ..config.schema import ModelConfig, AdstockType, sharpness_to_percentile, sharpness_label_to_value
+from ..config.schema import (
+    ModelConfig, AdstockType, sharpness_to_percentile, sharpness_label_to_value,
+    OwnedMediaConfig, CompetitorConfig, ControlConfig
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,15 @@ class TransformEngine:
         self.config = config
         self._adstock_cache = {}
 
+    def _get_decay_from_type(self, adstock_type: AdstockType) -> float:
+        """Convert adstock type to decay rate."""
+        if adstock_type == AdstockType.SHORT or adstock_type == "short":
+            return self.config.adstock.short_decay
+        elif adstock_type == AdstockType.LONG or adstock_type == "long":
+            return self.config.adstock.long_decay
+        else:
+            return self.config.adstock.medium_decay
+
     def get_adstock_decay(self, channel: str) -> float:
         """
         Get the adstock decay rate for a channel.
@@ -54,14 +66,64 @@ class TransformEngine:
             # Default to medium
             return self.config.adstock.medium_decay
 
-        adstock_type = channel_config.adstock_type
+        return self._get_decay_from_type(channel_config.adstock_type)
 
-        if adstock_type == AdstockType.SHORT or adstock_type == "short":
+    def get_owned_media_adstock_decay(self, name: str) -> Optional[float]:
+        """
+        Get the adstock decay rate for an owned media variable.
+
+        Parameters
+        ----------
+        name : str
+            Owned media variable name.
+
+        Returns
+        -------
+        float or None
+            Decay rate if adstock is enabled, None otherwise.
+        """
+        config = self.config.get_owned_media_by_name(name)
+        if config is None or not config.apply_adstock:
+            return None
+        return self._get_decay_from_type(config.adstock_type)
+
+    def get_competitor_adstock_decay(self, name: str) -> float:
+        """
+        Get the adstock decay rate for a competitor variable.
+
+        Parameters
+        ----------
+        name : str
+            Competitor variable name.
+
+        Returns
+        -------
+        float
+            Decay rate (alpha parameter).
+        """
+        config = self.config.get_competitor_by_name(name)
+        if config is None:
             return self.config.adstock.short_decay
-        elif adstock_type == AdstockType.LONG or adstock_type == "long":
-            return self.config.adstock.long_decay
-        else:
-            return self.config.adstock.medium_decay
+        return self._get_decay_from_type(config.adstock_type)
+
+    def get_control_adstock_decay(self, name: str) -> Optional[float]:
+        """
+        Get the adstock decay rate for a control variable.
+
+        Parameters
+        ----------
+        name : str
+            Control variable name.
+
+        Returns
+        -------
+        float or None
+            Decay rate if adstock is enabled, None otherwise.
+        """
+        config = self.config.get_control_by_name(name)
+        if config is None or not config.apply_adstock:
+            return None
+        return self._get_decay_from_type(config.adstock_type)
 
     def get_adstock_means(self) -> np.ndarray:
         """
@@ -76,6 +138,46 @@ class TransformEngine:
             self.get_adstock_decay(ch)
             for ch in self.config.get_channel_columns()
         ])
+
+    def get_all_channel_adstock_means(self) -> np.ndarray:
+        """
+        Get adstock decay means for all effective channels.
+
+        This includes paid media channels plus owned media that have both
+        adstock and saturation enabled (which are treated as channels).
+
+        Returns
+        -------
+        np.ndarray
+            Array of decay rates for all effective channels.
+        """
+        decays = []
+        # Paid media channels
+        for ch in self.config.get_channel_columns():
+            decays.append(self.get_adstock_decay(ch))
+        # Owned media with adstock+saturation (treated as channels)
+        for om in self.config.owned_media:
+            if om.apply_adstock and om.apply_saturation:
+                decays.append(self._get_decay_from_type(om.adstock_type))
+        return np.array(decays)
+
+    def get_effective_channel_columns(self) -> list[str]:
+        """
+        Get columns that should be treated as channels (adstock + saturation).
+
+        This includes paid media and owned media with both transforms enabled.
+
+        Returns
+        -------
+        list[str]
+            List of column names to be treated as channels.
+        """
+        cols = list(self.config.get_channel_columns())
+        # Add owned media with both adstock and saturation
+        for om in self.config.owned_media:
+            if om.apply_adstock and om.apply_saturation:
+                cols.append(om.name)
+        return cols
 
     def compute_geometric_adstock(
         self,
@@ -213,6 +315,32 @@ class TransformEngine:
         global_sharpness = self.config.saturation.curve_sharpness
         return sharpness_to_percentile(global_sharpness)
 
+    def get_owned_media_percentile(self, name: str) -> int:
+        """
+        Get the effective saturation percentile for an owned media variable.
+
+        Parameters
+        ----------
+        name : str
+            Owned media variable name.
+
+        Returns
+        -------
+        int
+            Effective percentile for half-saturation.
+        """
+        config = self.config.get_owned_media_by_name(name)
+
+        # Check for per-variable override
+        if config and config.curve_sharpness_override:
+            override_value = sharpness_label_to_value(config.curve_sharpness_override)
+            if override_value is not None:
+                return sharpness_to_percentile(override_value)
+
+        # Use global curve_sharpness setting
+        global_sharpness = self.config.saturation.curve_sharpness
+        return sharpness_to_percentile(global_sharpness)
+
     def compute_all_channel_lams(
         self,
         df: pd.DataFrame,
@@ -246,6 +374,49 @@ class TransformEngine:
                 ch_percentile = self.get_channel_percentile(ch)
 
             lams.append(self.compute_channel_lam(df, ch, ch_percentile))
+
+        return np.array(lams)
+
+    def compute_all_effective_channel_lams(
+        self,
+        df: pd.DataFrame,
+        percentile: Optional[int] = None
+    ) -> np.ndarray:
+        """
+        Compute lambda parameters for all effective channels.
+
+        This includes paid media channels plus owned media that have both
+        adstock and saturation enabled.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Dataframe with channel data.
+        percentile : int, optional
+            Override percentile for all channels. If None, uses config settings.
+
+        Returns
+        -------
+        np.ndarray
+            Array of lambda parameters for all effective channels.
+        """
+        lams = []
+        # Paid media channels
+        for ch in self.config.get_channel_columns():
+            if percentile is not None:
+                ch_percentile = percentile
+            else:
+                ch_percentile = self.get_channel_percentile(ch)
+            lams.append(self.compute_channel_lam(df, ch, ch_percentile))
+
+        # Owned media with both adstock and saturation
+        for om in self.config.owned_media:
+            if om.apply_adstock and om.apply_saturation:
+                if percentile is not None:
+                    om_percentile = percentile
+                else:
+                    om_percentile = self.get_owned_media_percentile(om.name)
+                lams.append(self.compute_channel_lam(df, om.name, om_percentile))
 
         return np.array(lams)
 
