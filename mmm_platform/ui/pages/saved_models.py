@@ -366,6 +366,80 @@ def _load_config(path: str):
         st.error(f"Error loading configuration: {e}")
 
 
+def _build_config_state_from_model(config: ModelConfig) -> dict:
+    """Build config_state dictionary from a ModelConfig object.
+
+    This ensures the UI can display all settings from a loaded model,
+    even if no session_state.json file exists.
+    """
+    config_state = {
+        "name": config.name,
+        "client": config.client,
+        "description": config.description,
+    }
+
+    # Data settings
+    if config.data:
+        config_state["date_col"] = config.data.date_column
+        config_state["target_col"] = config.data.target_column
+        config_state["revenue_scale"] = config.data.revenue_scale
+        config_state["spend_scale"] = config.data.spend_scale
+        config_state["dayfirst"] = config.data.dayfirst
+        config_state["include_trend"] = config.data.include_trend
+        config_state["model_start_date"] = config.data.model_start_date
+        config_state["model_end_date"] = config.data.model_end_date
+        config_state["brand"] = config.data.brand
+
+    # Adstock settings - include all decay rates
+    if config.adstock:
+        config_state["l_max"] = config.adstock.l_max
+        config_state["short_decay"] = config.adstock.short_decay
+        config_state["medium_decay"] = config.adstock.medium_decay
+        config_state["long_decay"] = config.adstock.long_decay
+
+    # Saturation settings
+    if config.saturation:
+        config_state["curve_sharpness"] = config.saturation.curve_sharpness
+
+    # Sampling settings - include all fields
+    if config.sampling:
+        config_state["draws"] = config.sampling.draws
+        config_state["tune"] = config.sampling.tune
+        config_state["chains"] = config.sampling.chains
+        config_state["target_accept"] = config.sampling.target_accept
+        config_state["random_seed"] = config.sampling.random_seed
+
+    # Seasonality
+    if config.seasonality:
+        config_state["yearly_seasonality"] = config.seasonality.yearly_seasonality
+
+    # Control prior
+    if config.control_prior:
+        config_state["control_prior_sigma"] = config.control_prior.sigma
+
+    # Channels - include full config with ROI priors
+    # Use mode="json" to serialize enums as strings (e.g., adstock_type: "medium" not AdstockType.MEDIUM)
+    config_state["channels"] = [ch.model_dump(mode="json") for ch in config.channels]
+
+    # Owned media
+    config_state["owned_media"] = [om.model_dump(mode="json") for om in config.owned_media]
+
+    # Competitors
+    config_state["competitors"] = [comp.model_dump(mode="json") for comp in config.competitors]
+
+    # Controls
+    config_state["controls"] = [ctrl.model_dump(mode="json") for ctrl in config.controls]
+
+    # Dummy variables
+    config_state["dummy_variables"] = [dv.model_dump(mode="json") for dv in config.dummy_variables]
+
+    # Month dummies
+    if config.month_dummies:
+        config_state["month_dummies"] = config.month_dummies.model_dump(mode="json")
+
+    return config_state
+
+
 def _load_model(path: str, navigate_to_results: bool = False):
     """Load a saved model and restore config to session."""
     try:
@@ -388,6 +462,7 @@ def _load_model(path: str, navigate_to_results: bool = False):
         # Models saved with new system should have config.json alongside
         model_path = Path(path)
         config_file = model_path / "config.json"
+        session_loaded = False
 
         if config_file.exists():
             # Check if there's session state saved with the model
@@ -403,6 +478,7 @@ def _load_model(path: str, navigate_to_results: bool = False):
                     st.session_state.category_columns = session_state["category_columns"]
                 if "config_state" in session_state:
                     st.session_state.config_state = session_state["config_state"]
+                    session_loaded = True
                 if session_state.get("date_column"):
                     st.session_state.date_column = session_state["date_column"]
                 if session_state.get("target_column"):
@@ -411,6 +487,81 @@ def _load_model(path: str, navigate_to_results: bool = False):
                     st.session_state.detected_channels = session_state["detected_channels"]
                 if "dayfirst" in session_state:
                     st.session_state.dayfirst = session_state["dayfirst"]
+
+        # ALWAYS rebuild config_state from ModelConfig to ensure UI displays correctly
+        # This handles models saved before session_state.json existed
+        st.session_state.config_state = _build_config_state_from_model(wrapper.config)
+
+        # Also restore category_columns from config
+        st.session_state.category_columns = [
+            col.model_dump(mode="json") for col in wrapper.config.category_columns
+        ]
+
+        # Populate category column options from actual values in channels/controls
+        # The config stores category_columns with empty options, but the actual values
+        # are stored in each variable's categories dict. We need to collect these values
+        # to populate the SelectboxColumn options in the UI.
+        category_options: dict[str, set] = {}  # {column_name: set of values}
+
+        for ch in wrapper.config.channels:
+            for col_name, value in ch.categories.items():
+                if col_name not in category_options:
+                    category_options[col_name] = set()
+                if value:
+                    category_options[col_name].add(value)
+
+        for om in wrapper.config.owned_media:
+            for col_name, value in om.categories.items():
+                if col_name not in category_options:
+                    category_options[col_name] = set()
+                if value:
+                    category_options[col_name].add(value)
+
+        for comp in wrapper.config.competitors:
+            for col_name, value in comp.categories.items():
+                if col_name not in category_options:
+                    category_options[col_name] = set()
+                if value:
+                    category_options[col_name].add(value)
+
+        for ctrl in wrapper.config.controls:
+            for col_name, value in ctrl.categories.items():
+                if col_name not in category_options:
+                    category_options[col_name] = set()
+                if value:
+                    category_options[col_name].add(value)
+
+        # Update category_columns with collected options
+        for cat_col in st.session_state.category_columns:
+            col_name = cat_col["name"]
+            if col_name in category_options:
+                cat_col["options"] = sorted(list(category_options[col_name]))
+
+        # Set date/target columns from config
+        if wrapper.config.data:
+            st.session_state.date_column = wrapper.config.data.date_column
+            st.session_state.target_column = wrapper.config.data.target_column
+            st.session_state.dayfirst = wrapper.config.data.dayfirst
+
+        # Set detected_channels from config's channel list
+        if wrapper.config.channels:
+            st.session_state.detected_channels = [ch.name for ch in wrapper.config.channels]
+
+        # Clear widget keys that need to be re-initialized from config
+        # This forces configure_model.py to re-read from config_state instead of using stale widget values
+        widget_keys_to_clear = [
+            "channel_multiselect",
+            "owned_media_multiselect",
+            "competitor_multiselect",
+            "control_multiselect",
+            "channels_data_editor",
+            "owned_media_data_editor",
+            "competitor_data_editor",
+            "controls_data_editor",
+        ]
+        for key in widget_keys_to_clear:
+            if key in st.session_state:
+                del st.session_state[key]
 
         # Increment config version to force widget reset in configure_model page
         st.session_state["config_version"] = st.session_state.get("config_version", 0) + 1
