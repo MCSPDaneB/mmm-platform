@@ -265,6 +265,9 @@ class DataConfig(BaseModel):
     revenue_scale: float = Field(1000.0, gt=0, description="Scale factor for revenue")
     spend_scale: float = Field(1000.0, gt=0, description="Scale factor for spend")
     brand: Optional[str] = Field(None, description="Brand name for exports")
+    model_start_date: Optional[str] = Field(None, description="Start date for modeling (YYYY-MM-DD)")
+    model_end_date: Optional[str] = Field(None, description="End date for modeling (YYYY-MM-DD)")
+    include_trend: bool = Field(True, description="Include linear time trend as control variable")
 
 
 class AdstockConfig(BaseModel):

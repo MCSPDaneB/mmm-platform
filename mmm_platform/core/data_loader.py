@@ -290,6 +290,27 @@ class DataLoader:
             - Target series (scaled)
             - List of control column names (with sign adjustments)
         """
+        # Filter by date range if specified
+        date_col = config.data.date_column
+        original_len = len(df)
+
+        if config.data.model_start_date:
+            start_date = pd.to_datetime(config.data.model_start_date)
+            df = df[df[date_col] >= start_date]
+            logger.info(f"Filtered to start date: {config.data.model_start_date}")
+
+        if config.data.model_end_date:
+            end_date = pd.to_datetime(config.data.model_end_date)
+            df = df[df[date_col] <= end_date]
+            logger.info(f"Filtered to end date: {config.data.model_end_date}")
+
+        if len(df) != original_len:
+            logger.info(f"Date range filter: {original_len} -> {len(df)} rows")
+            # Reset index after filtering
+            df = df.reset_index(drop=True)
+            # Recreate time index after filtering
+            df["t"] = np.arange(1, len(df) + 1)
+
         # Create dummy variables
         df = self.create_dummy_variables(df, config)
 

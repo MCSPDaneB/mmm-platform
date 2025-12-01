@@ -237,10 +237,11 @@ def _show_models_section(client: str = "all"):
         with header_col1:
             # Checkbox for comparison selection
             selected = st.checkbox(
-                "",
+                "Compare",
                 value=is_selected,
                 key=f"compare_check_{model_path}",
-                help="Select for comparison"
+                help="Select for comparison",
+                label_visibility="collapsed"
             )
             # Update selection state
             if selected and model_path not in st.session_state.models_to_compare:

@@ -14,6 +14,7 @@ from mmm_platform.config.schema import (
 )
 from mmm_platform.config.loader import ConfigLoader
 from mmm_platform.model.persistence import list_clients, get_client_configs_dir
+from mmm_platform.core.trend_detection import detect_trend
 
 
 # Maximum number of custom category columns allowed
@@ -239,6 +240,121 @@ def show():
                 value=st.session_state.get("dayfirst", saved_data.get("dayfirst", True))
             )
 
+        # Trend Detection section
+        st.markdown("---")
+        st.markdown("**Time Trend Analysis**")
+
+        # Run trend detection on selected KPI
+        if target_col and target_col in df.columns:
+            trend_result = detect_trend(df[target_col])
+
+            # Show mini chart with trend line
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots(figsize=(6, 2.5))
+            ax.plot(df[target_col].values, alpha=0.7, linewidth=1, label='KPI')
+            ax.plot(trend_result['trend_line'], '--', color='red', linewidth=2, label='Trend')
+            ax.set_xlabel('Time Period', fontsize=9)
+            ax.set_ylabel(target_col, fontsize=9)
+            ax.tick_params(axis='both', labelsize=8)
+            ax.legend(fontsize=8)
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+
+            # Show test result
+            trend_col1, trend_col2 = st.columns([2, 1])
+            with trend_col1:
+                if trend_result['has_trend']:
+                    direction_emoji = "📈" if trend_result['direction'] == 'increasing' else "📉"
+                    st.success(f"{direction_emoji} Significant {trend_result['direction']} trend detected (p={trend_result['p_value']:.3f}, R²={trend_result['r_squared']:.2f})")
+                    trend_default = True
+                else:
+                    st.info(f"No significant trend detected (p={trend_result['p_value']:.3f})")
+                    trend_default = False
+
+            with trend_col2:
+                # Checkbox with data-driven default from trend detection
+                include_trend = st.checkbox(
+                    "Include Trend",
+                    value=trend_default,
+                    help="Add a linear time trend (t=1,2,3,...) as a control variable"
+                )
+        else:
+            include_trend = st.checkbox(
+                "Include Time Trend",
+                value=saved_data.get("include_trend", True),
+                help="Add a linear time trend (t=1,2,3,...) as a control variable"
+            )
+
+        # Model Date Range section
+        st.markdown("---")
+        st.markdown("**Model Date Range**")
+        st.caption("Optionally limit the date range used for modeling")
+
+        # Parse date column to get min/max dates
+        date_col_for_range = st.session_state.config_state.get("date_col") or date_col
+        try:
+            df_dates = pd.to_datetime(df[date_col_for_range], dayfirst=dayfirst)
+            data_min_date = df_dates.min().date()
+            data_max_date = df_dates.max().date()
+        except Exception:
+            data_min_date = None
+            data_max_date = None
+
+        date_range_col1, date_range_col2 = st.columns(2)
+
+        with date_range_col1:
+            # Get saved start date or use data min
+            saved_start = saved_data.get("model_start_date")
+            if saved_start:
+                try:
+                    default_start = pd.to_datetime(saved_start).date()
+                except Exception:
+                    default_start = data_min_date
+            else:
+                default_start = data_min_date
+
+            model_start_date = st.date_input(
+                "Model Start Date",
+                value=default_start,
+                min_value=data_min_date,
+                max_value=data_max_date,
+                help="Start date for modeling (leave at min to use all data)"
+            )
+
+        with date_range_col2:
+            # Get saved end date or use data max
+            saved_end = saved_data.get("model_end_date")
+            if saved_end:
+                try:
+                    default_end = pd.to_datetime(saved_end).date()
+                except Exception:
+                    default_end = data_max_date
+            else:
+                default_end = data_max_date
+
+            model_end_date = st.date_input(
+                "Model End Date",
+                value=default_end,
+                min_value=data_min_date,
+                max_value=data_max_date,
+                help="End date for modeling (leave at max to use all data)"
+            )
+
+        # Show row count for selected range
+        if data_min_date and data_max_date:
+            try:
+                mask = (df_dates >= pd.Timestamp(model_start_date)) & (df_dates <= pd.Timestamp(model_end_date))
+                rows_in_range = mask.sum()
+                total_rows = len(df)
+                st.info(f"📊 Selected range: **{rows_in_range}** of {total_rows} rows ({model_start_date} to {model_end_date})")
+            except Exception:
+                pass
+
+        # Convert to string for storage (None if using full range)
+        model_start_str = model_start_date.strftime("%Y-%m-%d") if model_start_date and model_start_date != data_min_date else None
+        model_end_str = model_end_date.strftime("%Y-%m-%d") if model_end_date and model_end_date != data_max_date else None
+
         st.session_state.config_state.update({
             "name": model_name,
             "client": client_value,
@@ -247,6 +363,9 @@ def show():
             "target_col": target_col,
             "revenue_scale": revenue_scale,
             "dayfirst": dayfirst,
+            "include_trend": include_trend,
+            "model_start_date": model_start_str,
+            "model_end_date": model_end_str,
         })
 
     # =========================================================================
@@ -1211,6 +1330,9 @@ def build_config_from_state() -> ModelConfig:
             dayfirst=state.get("dayfirst", True),
             revenue_scale=state.get("revenue_scale", 1000.0),
             spend_scale=state.get("revenue_scale", 1000.0),
+            model_start_date=state.get("model_start_date"),
+            model_end_date=state.get("model_end_date"),
+            include_trend=state.get("include_trend", True),
         ),
         channels=channels,
         controls=controls,

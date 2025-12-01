@@ -18,8 +18,6 @@ CATEGORY_COLORS = {
     "Baseline": "#808080",
     "SEASONALITY": "#9370DB",
     "Seasonality": "#9370DB",
-    "TREND": "#4B0082",
-    "Trend": "#4B0082",
     "PAID MEDIA": "#4A90D9",
     "Paid Media": "#4A90D9",
     "Display": "#5DADE2",
@@ -276,10 +274,12 @@ class ContributionAnalyzer:
             groups["Seasonality"] = seasonality_cols
             assigned.update(seasonality_cols)
 
-        # 3. Trend (always hardcoded - model structure)
+        # 3. Trend - assign to Base category
         trend_cols = [c for c in component_cols if c == "t"]
         if trend_cols:
-            groups["Trend"] = trend_cols
+            if "Base" not in groups:
+                groups["Base"] = []
+            groups["Base"].extend(trend_cols)
             assigned.update(trend_cols)
 
         # 4. Group channels by provided categories

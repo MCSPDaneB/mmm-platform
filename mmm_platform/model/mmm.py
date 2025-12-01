@@ -131,13 +131,21 @@ class MMMWrapper:
         if self.df_scaled is None:
             raise ValueError("Data not prepared. Call prepare_data() first.")
 
+        # Add time trend if configured
+        if self.config.data.include_trend:
+            if "t" not in self.df_scaled.columns:
+                self.df_scaled["t"] = np.arange(1, len(self.df_scaled) + 1)
+            if "t" not in self.control_cols:
+                self.control_cols.append("t")
+                logger.info("Added time trend 't' as control variable")
+
         # Ensure at least one control column (pymc-marketing 0.16+ requirement)
         if not self.control_cols:
-            # Add time trend as default control if no controls configured
+            # Add time trend as fallback if no controls configured
             if "t" not in self.df_scaled.columns:
                 self.df_scaled["t"] = np.arange(1, len(self.df_scaled) + 1)
             self.control_cols = ["t"]
-            logger.warning("No control columns configured. Using time trend 't' as default.")
+            logger.warning("No control columns configured. Using time trend 't' as fallback.")
 
         # Build priors
         model_config = self._build_model_config()
