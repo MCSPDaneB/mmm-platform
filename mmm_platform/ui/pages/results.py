@@ -1676,6 +1676,18 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
 
     posterior = wrapper.idata.posterior
 
+    # Time period selector
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        time_period = st.selectbox(
+            "Time Period",
+            ["Weekly", "Yearly"],
+            index=0,
+            help="Weekly shows response per week. Yearly multiplies by 52 weeks."
+        )
+    time_multiplier = 52 if time_period == "Yearly" else 1
+    period_label = "Yearly" if time_period == "Yearly" else "Weekly"
+
     # Initialize scenario state
     if 'curve_scenarios' not in st.session_state:
         st.session_state.curve_scenarios = {}
@@ -1734,24 +1746,26 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
         # Convert to normalized space (0-1) for saturation calculation
         spend_range_normalized = spend_range_real / (x_max * spend_scale)
 
-        # Apply saturation and calibration to get WEEKLY response
+        # Apply saturation and calibration to get WEEKLY response, then apply time multiplier
         response_normalized = _logistic_saturation(spend_range_normalized, lam)
-        response_real = calibration_factor * response_normalized
+        response_weekly = calibration_factor * response_normalized
+        response_real = response_weekly * time_multiplier
 
         curves_data.append({
             'channel': ch,
             'display_name': display_name,
-            'spend_range': spend_range_real,
+            'spend_range': spend_range_real * time_multiplier,  # Scale spend to match period
             'response': response_real,
-            'current_spend': avg_weekly_spend,
-            'current_response': avg_weekly_contrib,  # This is the actual avg weekly contribution
+            'current_spend': avg_weekly_spend * time_multiplier,
+            'current_response': avg_weekly_contrib * time_multiplier,
             'actual_contrib_total': actual_contrib_total,
             'actual_spend_total': actual_spend_total,
             'lam': lam,
             'calibration_factor': calibration_factor,
             'x_max': x_max,
-            'max_spend': max_spend_real,
+            'max_spend': max_spend_real * time_multiplier,
             'n_periods': n_periods,
+            'time_multiplier': time_multiplier,
         })
 
     # Create Plotly figure
@@ -1790,9 +1804,9 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
     fig.add_hline(y=0, line_dash="dot", line_color="gray", opacity=0.5)
 
     fig.update_layout(
-        title="Saturation Curves - Weekly Response vs Weekly Spend",
-        xaxis_title="Weekly Spend ($)",
-        yaxis_title="Weekly Response ($)",
+        title=f"Saturation Curves - {period_label} Response vs {period_label} Spend",
+        xaxis_title=f"{period_label} Spend ($)",
+        yaxis_title=f"{period_label} Response ($)",
         hovermode='closest',
         showlegend=True,
         height=500,
@@ -1802,7 +1816,10 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
     st.plotly_chart(fig, use_container_width=True)
 
     # Show comparison to actual contributions
-    st.caption("*Curve shows weekly response at each spend level. Calibrated so current position matches actual average weekly contribution.*")
+    if time_multiplier == 1:
+        st.caption("*Curve shows weekly response at each spend level. Calibrated so current position matches actual average weekly contribution.*")
+    else:
+        st.caption(f"*Curve shows yearly response (weekly × 52). Spend and response are annualized projections.*")
 
     # Show a comparison table for all channels in the view
     if len(channels_to_show) > 0:
@@ -1811,14 +1828,16 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
             for curve in curves_data:
                 comparison_data.append({
                     "Channel": curve['display_name'],
-                    "Avg Weekly Spend": f"${curve['current_spend']:,.0f}",
-                    "Avg Weekly Response": f"${curve['current_response']:,.0f}",
+                    f"Avg {period_label} Spend": f"${curve['current_spend']:,.0f}",
+                    f"Avg {period_label} Response": f"${curve['current_response']:,.0f}",
                     "Total Contribution": f"${curve['actual_contrib_total']:,.0f}",
                     "Total Spend": f"${curve['actual_spend_total']:,.0f}",
-                    f"Periods": curve['n_periods'],
                 })
             st.dataframe(pd.DataFrame(comparison_data), use_container_width=True, hide_index=True)
-            st.caption("*Avg Weekly Response = Total Contribution / Periods. For yearly projection, multiply weekly response by 52.*")
+            if time_multiplier == 1:
+                st.caption("*Avg Weekly Response = Total Contribution / Periods.*")
+            else:
+                st.caption("*Yearly values are weekly × 52.*")
 
     # Interactive exploration (only for single channel)
     if len(channels_to_show) == 1:
@@ -1832,9 +1851,10 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
         min_spend = 0
         max_spend = int(curve['max_spend'])
         current = int(curve['current_spend'])
+        time_mult = curve['time_multiplier']
 
         slider_spend = st.slider(
-            "Explore Weekly Spend Level",
+            f"Explore {period_label} Spend Level",
             min_value=min_spend,
             max_value=max_spend,
             value=current,
@@ -1843,21 +1863,21 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
         )
 
         # Calculate metrics at slider position
-        # Normalize spend the same way as the curve generation
+        # Convert slider spend back to weekly for saturation calculation
         x_max = curve['x_max']
         calibration_factor = curve['calibration_factor']
-        slider_spend_normalized = slider_spend / (x_max * spend_scale)
+        slider_spend_weekly = slider_spend / time_mult
+        slider_spend_normalized = slider_spend_weekly / (x_max * spend_scale)
         slider_response_normalized = _logistic_saturation(slider_spend_normalized, curve['lam'])
 
-        # Weekly response using the same calibration as the curve
-        slider_response = calibration_factor * slider_response_normalized
+        # Response using the same calibration as the curve, then apply time multiplier
+        slider_response_weekly = calibration_factor * slider_response_normalized
+        slider_response = slider_response_weekly * time_mult
 
         # Marginal ROI calculation (derivative in normalized space, then scale)
+        # Marginal ROI is per-dollar so it doesn't change with time period
         from mmm_platform.analysis.marginal_roi import logistic_saturation_derivative
-        # Derivative is d(response)/d(spend_normalized), need to convert to d(response)/d(spend_real)
         marginal_normalized = logistic_saturation_derivative(slider_spend_normalized, curve['lam'])
-        # Chain rule: d(response_real)/d(spend_real) = calibration_factor * d(sat)/d(normalized) * d(normalized)/d(real)
-        # d(normalized)/d(real) = 1 / (x_max * spend_scale)
         marginal_roi = calibration_factor * marginal_normalized / (x_max * spend_scale)
 
         # Saturation percentage (how close to the asymptotic max)
@@ -1865,8 +1885,8 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
 
         # Display metrics
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Weekly Spend", f"${slider_spend:,.0f}")
-        col2.metric("Weekly Response", f"${slider_response:,.0f}")
+        col1.metric(f"{period_label} Spend", f"${slider_spend:,.0f}")
+        col2.metric(f"{period_label} Response", f"${slider_response:,.0f}")
         col3.metric("Marginal ROI", f"${marginal_roi:.2f}")
         col4.metric("Saturation Level", f"{saturation_pct:.0f}%")
 
