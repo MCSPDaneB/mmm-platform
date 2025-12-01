@@ -74,6 +74,13 @@ class OwnedMediaConfig(BaseModel):
     roi_prior_high: Optional[float] = None
 
 
+class CompetitorConfig(BaseModel):
+    name: str
+    display_name: Optional[str] = None
+    categories: Dict[str, str] = {}
+    adstock_type: str = "short"
+
+
 class DataConfig(BaseModel):
     target_column: str
     date_column: str
@@ -95,6 +102,7 @@ class ModelRunRequest(BaseModel):
     data: List[Dict[str, Any]] = Field(..., description="Data as list of row dicts")
     channels: List[ChannelConfig]
     owned_media: List[OwnedMediaConfig] = []
+    competitors: List[CompetitorConfig] = []
     controls: List[ControlConfig] = []
     dummy_variables: List[DummyVariableConfig] = []
     data_config: DataConfig
@@ -208,7 +216,8 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
             ControlConfig as SchemaControlConfig, DataConfig as SchemaDataConfig,
             SamplingConfig as SchemaSamplingConfig,
             DummyVariableConfig as SchemaDummyVariableConfig,
-            OwnedMediaConfig as SchemaOwnedMediaConfig
+            OwnedMediaConfig as SchemaOwnedMediaConfig,
+            CompetitorConfig as SchemaCompetitorConfig
         )
 
         logger.info(f"Job {job_id}: Loading data...")
@@ -279,10 +288,24 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
 
         logger.info(f"Job {job_id}: Configured {len(owned_media)} owned media: {[om.name for om in owned_media]}")
 
+        # Build competitors
+        competitors = [
+            SchemaCompetitorConfig(
+                name=comp.name,
+                display_name=comp.display_name,
+                categories=comp.categories,
+                adstock_type=comp.adstock_type,
+            )
+            for comp in request.competitors
+        ]
+
+        logger.info(f"Job {job_id}: Configured {len(competitors)} competitors: {[comp.name for comp in competitors]}")
+
         config = ModelConfig(
             name=request.model_name,
             channels=channels,
             owned_media=owned_media,
+            competitors=competitors,
             controls=controls,
             dummy_variables=dummy_variables,
             data=SchemaDataConfig(

@@ -328,6 +328,16 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
                     "roi_prior_high": om.roi_prior_high,
                 })
 
+            # Build competitor configs
+            competitors = []
+            for comp in config.competitors:
+                competitors.append({
+                    "name": comp.name,
+                    "display_name": comp.display_name,
+                    "categories": comp.categories,
+                    "adstock_type": comp.adstock_type.value if hasattr(comp.adstock_type, 'value') else str(comp.adstock_type),
+                })
+
             # Build control configs
             controls = []
             for ctrl in config.controls:
@@ -373,6 +383,7 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
                 data=df,
                 channels=channels,
                 owned_media=owned_media,
+                competitors=competitors,
                 controls=controls,
                 dummy_variables=dummy_variables,
                 data_config=data_config,
