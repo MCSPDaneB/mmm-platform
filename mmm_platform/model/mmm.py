@@ -155,6 +155,9 @@ class MMMWrapper:
 
         # Get effective channel columns (paid media + owned media with adstock+saturation)
         effective_channels = self.transform_engine.get_effective_channel_columns()
+        logger.info(f"Building model with {len(effective_channels)} effective channels: {effective_channels}")
+        logger.info(f"Paid media channels: {self.config.get_channel_columns()}")
+        logger.info(f"Owned media: {[om.name for om in self.config.owned_media]}")
 
         # Create model
         self.mmm = MMM(
