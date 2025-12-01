@@ -318,7 +318,7 @@ def show():
     with tab2:
         st.subheader("Channel ROI Analysis")
 
-        roi_df = contributions.get_channel_roi()
+        roi_df = contributions.get_channel_roi(roi_channels=config.get_channel_columns())
 
         if len(roi_df) > 0:
             # Category column selector for ROI grouping
