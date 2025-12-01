@@ -1493,6 +1493,10 @@ def show():
 
     if st.button("🔨 Build Configuration", type="primary", width="stretch"):
         try:
+            # Auto-sync data editor values to config_state before building
+            # This ensures edits are saved even without clicking individual "Save" buttons
+            _sync_data_editors_to_config_state()
+
             # Build the config
             config = build_config_from_state()
             st.session_state.current_config = config
@@ -1537,6 +1541,109 @@ def show():
 
         except Exception as e:
             st.error(f"Error building configuration: {e}")
+
+
+def _sync_data_editors_to_config_state():
+    """
+    Sync all data editor widget values to config_state before building config.
+
+    This ensures that edits made in the data editors are saved even if the user
+    doesn't click the individual "Save" buttons before clicking "Build Configuration".
+    """
+    category_cols = st.session_state.get("category_columns", [])
+
+    # Sync channels data editor
+    if "channels_data_editor" in st.session_state:
+        edited_df = st.session_state.channels_data_editor
+        if isinstance(edited_df, pd.DataFrame) and len(edited_df) > 0:
+            channels_config = []
+            for _, row in edited_df.iterrows():
+                # Build categories dict from dynamic columns
+                categories = {}
+                for cat_col in category_cols:
+                    if cat_col["name"] in row and pd.notna(row[cat_col["name"]]) and row[cat_col["name"]]:
+                        categories[cat_col["name"]] = str(row[cat_col["name"]])
+
+                # Handle curve shape override
+                curve_shape = row.get("Curve Shape", "Default")
+                curve_override = None if curve_shape == "Default" else curve_shape.lower()
+
+                channels_config.append({
+                    "name": row["Channel"],
+                    "display_name": row["Display Name"],
+                    "categories": categories,
+                    "adstock_type": row["Adstock"],
+                    "roi_prior_low": row["ROI Low"],
+                    "roi_prior_mid": row["ROI Mid"],
+                    "roi_prior_high": row["ROI High"],
+                    "curve_sharpness_override": curve_override,
+                })
+            st.session_state.config_state["channels"] = channels_config
+
+    # Sync owned media data editor
+    if "owned_media_data_editor" in st.session_state:
+        edited_df = st.session_state.owned_media_data_editor
+        if isinstance(edited_df, pd.DataFrame) and len(edited_df) > 0:
+            owned_media_config = []
+            for _, row in edited_df.iterrows():
+                categories = {}
+                for cat_col in category_cols:
+                    if cat_col["name"] in row and pd.notna(row[cat_col["name"]]) and row[cat_col["name"]]:
+                        categories[cat_col["name"]] = str(row[cat_col["name"]])
+
+                owned_media_config.append({
+                    "name": row["Variable"],
+                    "display_name": row.get("Display Name", row["Variable"]),
+                    "categories": categories,
+                    "apply_adstock": row.get("Apply Adstock", True),
+                    "adstock_type": row.get("Adstock", "medium"),
+                    "apply_saturation": row.get("Apply Saturation", True),
+                    "include_roi": row.get("Track ROI", False),
+                    "roi_prior_low": row.get("ROI Low", 0.1),
+                    "roi_prior_mid": row.get("ROI Mid", 1.0),
+                    "roi_prior_high": row.get("ROI High", 5.0),
+                })
+            st.session_state.config_state["owned_media"] = owned_media_config
+
+    # Sync competitors data editor
+    if "competitor_data_editor" in st.session_state:
+        edited_df = st.session_state.competitor_data_editor
+        if isinstance(edited_df, pd.DataFrame) and len(edited_df) > 0:
+            competitors_config = []
+            for _, row in edited_df.iterrows():
+                categories = {}
+                for cat_col in category_cols:
+                    if cat_col["name"] in row and pd.notna(row[cat_col["name"]]) and row[cat_col["name"]]:
+                        categories[cat_col["name"]] = str(row[cat_col["name"]])
+
+                competitors_config.append({
+                    "name": row["Variable"],
+                    "display_name": row.get("Display Name", row["Variable"]),
+                    "categories": categories,
+                    "adstock_type": row.get("Adstock", "short"),
+                })
+            st.session_state.config_state["competitors"] = competitors_config
+
+    # Sync controls data editor
+    if "controls_data_editor" in st.session_state:
+        edited_df = st.session_state.controls_data_editor
+        if isinstance(edited_df, pd.DataFrame) and len(edited_df) > 0:
+            controls_config = []
+            for _, row in edited_df.iterrows():
+                categories = {}
+                for cat_col in category_cols:
+                    if cat_col["name"] in row and pd.notna(row[cat_col["name"]]) and row[cat_col["name"]]:
+                        categories[cat_col["name"]] = str(row[cat_col["name"]])
+
+                controls_config.append({
+                    "name": row["Control"],
+                    "display_name": row.get("Display Name", row["Control"]),
+                    "categories": categories,
+                    "sign_constraint": row.get("Sign", "unconstrained"),
+                    "is_dummy": row.get("Is Dummy", False),
+                    "scale": row.get("Scale", False),
+                })
+            st.session_state.config_state["controls"] = controls_config
 
 
 def build_config_from_state() -> ModelConfig:
