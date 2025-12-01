@@ -234,13 +234,9 @@ def merge_datasets(
         'common_dates': len(media_dates & other_dates),
     }
 
-    # Merge on date (outer join to keep all dates)
-    merged = pd.merge(media_df, other_df, on=date_col, how='outer')
+    # Merge on date (inner join to only keep common dates)
+    merged = pd.merge(media_df, other_df, on=date_col, how='inner')
     merged = merged.sort_values(date_col).reset_index(drop=True)
-
-    # Fill missing values with 0 for numeric columns
-    numeric_cols = merged.select_dtypes(include=[np.number]).columns
-    merged[numeric_cols] = merged[numeric_cols].fillna(0)
 
     return merged, stats
 

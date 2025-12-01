@@ -286,7 +286,8 @@ def _show_merge_preview(media_df: pd.DataFrame, level_cols: list[str],
                 st.metric("Other-only Dates", stats['other_only_dates'])
 
             if stats['media_only_dates'] > 0 or stats['other_only_dates'] > 0:
-                st.warning("Some dates exist in only one file. Missing values filled with 0.")
+                st.warning(f"Date range aligned: {stats['media_only_dates']} media-only dates "
+                           f"and {stats['other_only_dates']} other-only dates excluded.")
 
             # Show merged preview
             with st.expander("Merged Dataset Preview", expanded=True):
