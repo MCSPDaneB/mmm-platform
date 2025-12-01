@@ -714,6 +714,95 @@ def restore_config_to_session(config: Any, data: pd.DataFrame, session_state: di
             config_state["model_start_date"] = config.data.model_start_date
             config_state["model_end_date"] = config.data.model_end_date
 
+        # CRITICAL: Populate config_state with channels, owned_media, controls from loaded config
+        # Without this, build_config_from_state() will have empty lists when user clicks "Build Configuration"
+        if config.channels:
+            config_state["channels"] = [
+                {
+                    "name": ch.name,
+                    "display_name": ch.display_name,
+                    "categories": ch.categories,
+                    "adstock_type": ch.adstock_type.value if hasattr(ch.adstock_type, 'value') else str(ch.adstock_type),
+                    "roi_prior_low": ch.roi_prior_low,
+                    "roi_prior_mid": ch.roi_prior_mid,
+                    "roi_prior_high": ch.roi_prior_high,
+                    "curve_sharpness_override": ch.curve_sharpness_override,
+                }
+                for ch in config.channels
+            ]
+
+        if config.owned_media:
+            config_state["owned_media"] = [
+                {
+                    "name": om.name,
+                    "display_name": om.display_name,
+                    "categories": om.categories,
+                    "adstock_type": om.adstock_type.value if hasattr(om.adstock_type, 'value') else str(om.adstock_type),
+                    "curve_sharpness_override": om.curve_sharpness_override,
+                    "include_roi": om.include_roi,
+                    "roi_prior_low": om.roi_prior_low,
+                    "roi_prior_mid": om.roi_prior_mid,
+                    "roi_prior_high": om.roi_prior_high,
+                }
+                for om in config.owned_media
+            ]
+
+        if config.controls:
+            config_state["controls"] = [
+                {
+                    "name": ctrl.name,
+                    "display_name": ctrl.display_name,
+                    "categories": ctrl.categories,
+                    "sign_constraint": ctrl.sign_constraint.value if hasattr(ctrl.sign_constraint, 'value') else str(ctrl.sign_constraint),
+                    "is_dummy": ctrl.is_dummy,
+                    "scale": ctrl.scale,
+                }
+                for ctrl in config.controls
+            ]
+
+        if config.competitors:
+            config_state["competitors"] = [
+                {
+                    "name": comp.name,
+                    "display_name": comp.display_name,
+                    "categories": comp.categories,
+                    "adstock_type": comp.adstock_type.value if hasattr(comp.adstock_type, 'value') else str(comp.adstock_type),
+                }
+                for comp in config.competitors
+            ]
+
+        if config.dummy_variables:
+            config_state["dummy_variables"] = [
+                {
+                    "name": dv.name,
+                    "start_date": dv.start_date,
+                    "end_date": dv.end_date,
+                    "categories": dv.categories,
+                    "sign_constraint": dv.sign_constraint.value if hasattr(dv.sign_constraint, 'value') else str(dv.sign_constraint),
+                }
+                for dv in config.dummy_variables
+            ]
+
+        # Also populate adstock/saturation/seasonality/sampling settings
+        if config.adstock:
+            config_state["l_max"] = config.adstock.l_max
+            config_state["short_decay"] = config.adstock.short_decay
+            config_state["medium_decay"] = config.adstock.medium_decay
+            config_state["long_decay"] = config.adstock.long_decay
+
+        if config.saturation:
+            config_state["curve_sharpness"] = config.saturation.curve_sharpness
+
+        if config.seasonality:
+            config_state["yearly_seasonality"] = config.seasonality.yearly_seasonality
+
+        if config.sampling:
+            config_state["draws"] = config.sampling.draws
+            config_state["tune"] = config.sampling.tune
+            config_state["chains"] = config.sampling.chains
+            config_state["target_accept"] = config.sampling.target_accept
+            config_state["random_seed"] = config.sampling.random_seed
+
     updates["config_state"] = config_state
 
     # Restore data settings - ALWAYS prefer config values (authoritative source)
@@ -734,10 +823,20 @@ def restore_config_to_session(config: Any, data: pd.DataFrame, session_state: di
     elif config is not None and config.data:
         updates["dayfirst"] = config.data.dayfirst
 
-    # Restore multiselect states for channels and controls
-    if session_state.get("channel_multiselect"):
+    # Restore multiselect states from loaded config (for Configure Model page widgets)
+    # Prefer config values (source of truth) over session_state values
+    if config is not None and config.channels:
+        updates["channel_multiselect"] = [ch.name for ch in config.channels]
+    elif session_state.get("channel_multiselect"):
         updates["channel_multiselect"] = session_state["channel_multiselect"]
-    if session_state.get("control_multiselect"):
+
+    if config is not None and config.owned_media:
+        updates["owned_media_multiselect"] = [om.name for om in config.owned_media]
+
+    if config is not None and config.controls:
+        # Include non-dummy controls only (dummies are auto-added from dummy_variables)
+        updates["control_multiselect"] = [ctrl.name for ctrl in config.controls if not ctrl.is_dummy]
+    elif session_state.get("control_multiselect"):
         updates["control_multiselect"] = session_state["control_multiselect"]
 
     return updates
