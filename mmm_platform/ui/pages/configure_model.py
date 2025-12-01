@@ -440,7 +440,7 @@ def show():
                 channel_df,
                 column_config=column_config,
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 num_rows="fixed",
                 key="channels_data_editor",
             )
@@ -762,7 +762,7 @@ def show():
                 display_df,
                 column_config=control_column_config,
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 num_rows="fixed",
                 key="controls_data_editor",
             )
@@ -1055,7 +1055,7 @@ def show():
     st.markdown("---")
     st.subheader("Build Configuration")
 
-    if st.button("🔨 Build Configuration", type="primary", use_container_width=True):
+    if st.button("🔨 Build Configuration", type="primary", width="stretch"):
         try:
             # Build the config
             config = build_config_from_state()

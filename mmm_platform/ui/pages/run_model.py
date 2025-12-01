@@ -69,7 +69,7 @@ def show():
         with col1:
             st.info("Navigate to **Results** in the sidebar to explore model output.")
         with col2:
-            if st.button("New Model", type="primary", use_container_width=True):
+            if st.button("New Model", type="primary", width="stretch"):
                 st.session_state.model_fitted = False
                 st.session_state.current_model = None
                 st.rerun()
@@ -175,7 +175,7 @@ def show():
     # Run button
     st.markdown("---")
 
-    if st.button("Run Model", type="primary", use_container_width=True):
+    if st.button("Run Model", type="primary", width="stretch"):
         if run_location == "ec2":
             run_model_ec2(config, df, draws, tune, chains, save_model)
         else:

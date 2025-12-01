@@ -115,7 +115,7 @@ def show():
             ),
         },
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         key="combined_config_editor",
     )
 
@@ -147,7 +147,7 @@ def show():
 
     col1, col2 = st.columns([1, 3])
     with col1:
-        run_button = st.button("Run Analysis", type="primary", use_container_width=True)
+        run_button = st.button("Run Analysis", type="primary", width="stretch")
 
     if run_button:
         _run_combined_analysis(edited_config)
@@ -253,7 +253,7 @@ def _show_combined_summary(analyzer: MultiModelAnalyzer, result: MultiModelResul
 
     st.dataframe(
         summary_df.style.format(format_dict),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -327,7 +327,7 @@ def _show_by_model(result: MultiModelResult):
                 "Current Spend": "${:,.0f}",
             })
 
-            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            st.dataframe(styled_df, width="stretch", hide_index=True)
 
 
 def _show_recommendations(result: MultiModelResult):
@@ -409,7 +409,7 @@ def _show_recommendations(result: MultiModelResult):
                 "Current Spend": "${:,.0f}",
             })
 
-            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            st.dataframe(styled_df, width="stretch", hide_index=True)
 
     # Comparison table across all views
     st.markdown("---")
@@ -447,7 +447,7 @@ def _show_recommendations(result: MultiModelResult):
         subset=[c for c in comparison_df.columns if c != "Channel"]
     )
 
-    st.dataframe(styled_comparison, use_container_width=True, hide_index=True)
+    st.dataframe(styled_comparison, width="stretch", hide_index=True)
 
 
 def _show_conflicts(result: MultiModelResult):
@@ -523,7 +523,7 @@ def _show_conflicts(result: MultiModelResult):
                     highlight_action, subset=["Action"]
                 ).format({"Marginal ROI": "${:.2f}"})
 
-                st.dataframe(styled_df, use_container_width=True, hide_index=True)
+                st.dataframe(styled_df, width="stretch", hide_index=True)
 
     st.markdown("---")
     st.info(

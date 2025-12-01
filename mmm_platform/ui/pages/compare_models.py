@@ -333,7 +333,7 @@ def _show_channel_roi_tab(data: Dict[str, Any]):
     # Show table
     st.dataframe(
         display_df[[name_col, "ROI (A)", "ROI (B)", "ROI Diff"]].rename(columns={name_col: "Channel"}),
-        use_container_width=True,
+        width="stretch",
         hide_index=True
     )
 
@@ -370,7 +370,7 @@ def _show_channel_roi_tab(data: Dict[str, Any]):
             title="ROI by Channel and Model"
         )
         fig.add_hline(y=1, line_dash="dash", line_color="red", annotation_text="Breakeven")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 
 def _show_contributions_tab(data: Dict[str, Any]):
@@ -397,14 +397,14 @@ def _show_contributions_tab(data: Dict[str, Any]):
                 color="group",
                 color_discrete_map={row["group"]: row["color"] for _, row in contrib_a.iterrows()}
             )
-            st.plotly_chart(fig_a, use_container_width=True)
+            st.plotly_chart(fig_a, width="stretch")
 
             # Table
             display_a = contrib_a[["group", "pct_of_total", "contribution_real"]].copy()
             display_a["pct_of_total"] = display_a["pct_of_total"].apply(lambda x: f"{x:.1f}%")
             display_a["contribution_real"] = display_a["contribution_real"].apply(lambda x: f"${x:,.0f}")
             display_a.columns = ["Category", "% of Total", "Contribution"]
-            st.dataframe(display_a, use_container_width=True, hide_index=True)
+            st.dataframe(display_a, width="stretch", hide_index=True)
 
     with col2:
         st.markdown(f"### {data['model_b']['name']}")
@@ -417,14 +417,14 @@ def _show_contributions_tab(data: Dict[str, Any]):
                 color="group",
                 color_discrete_map={row["group"]: row["color"] for _, row in contrib_b.iterrows()}
             )
-            st.plotly_chart(fig_b, use_container_width=True)
+            st.plotly_chart(fig_b, width="stretch")
 
             # Table
             display_b = contrib_b[["group", "pct_of_total", "contribution_real"]].copy()
             display_b["pct_of_total"] = display_b["pct_of_total"].apply(lambda x: f"{x:.1f}%")
             display_b["contribution_real"] = display_b["contribution_real"].apply(lambda x: f"${x:,.0f}")
             display_b.columns = ["Category", "% of Total", "Contribution"]
-            st.dataframe(display_b, use_container_width=True, hide_index=True)
+            st.dataframe(display_b, width="stretch", hide_index=True)
 
     # Side-by-side comparison chart
     st.markdown("---")
@@ -454,7 +454,7 @@ def _show_contributions_tab(data: Dict[str, Any]):
     display_merged["Value (A)"] = merged_contrib["Value (A)"].apply(lambda x: f"${x:,.0f}")
     display_merged["Value (B)"] = merged_contrib["Value (B)"].apply(lambda x: f"${x:,.0f}")
 
-    st.dataframe(display_merged, use_container_width=True, hide_index=True)
+    st.dataframe(display_merged, width="stretch", hide_index=True)
 
 
 def _show_coefficients_tab(data: Dict[str, Any]):
@@ -484,13 +484,13 @@ def _show_coefficients_tab(data: Dict[str, Any]):
             st.markdown(f"**{data['model_a']['name']}**")
             display_a = summary_a[["mean", "sd", "hdi_3%", "hdi_97%"]].copy()
             display_a.columns = ["Mean", "Std", "HDI 3%", "HDI 97%"]
-            st.dataframe(display_a, use_container_width=True)
+            st.dataframe(display_a, width="stretch")
 
         with col2:
             st.markdown(f"**{data['model_b']['name']}**")
             display_b = summary_b[["mean", "sd", "hdi_3%", "hdi_97%"]].copy()
             display_b.columns = ["Mean", "Std", "HDI 3%", "HDI 97%"]
-            st.dataframe(display_b, use_container_width=True)
+            st.dataframe(display_b, width="stretch")
 
         # Compare common channels
         st.markdown("---")
@@ -514,7 +514,7 @@ def _show_coefficients_tab(data: Dict[str, Any]):
                 })
 
             comparison_df = pd.DataFrame(comparison_data)
-            st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+            st.dataframe(comparison_df, width="stretch", hide_index=True)
         else:
             st.info("No common channels found between models")
 
@@ -530,11 +530,11 @@ def _show_coefficients_tab(data: Dict[str, Any]):
 
             with col1:
                 st.markdown(f"**{data['model_a']['name']} - Lambda (saturation)**")
-                st.dataframe(sat_a[["mean", "sd"]], use_container_width=True)
+                st.dataframe(sat_a[["mean", "sd"]], width="stretch")
 
             with col2:
                 st.markdown(f"**{data['model_b']['name']} - Lambda (saturation)**")
-                st.dataframe(sat_b[["mean", "sd"]], use_container_width=True)
+                st.dataframe(sat_b[["mean", "sd"]], width="stretch")
 
         except Exception:
             st.info("Saturation parameters not available")
@@ -551,11 +551,11 @@ def _show_coefficients_tab(data: Dict[str, Any]):
 
             with col1:
                 st.markdown(f"**{data['model_a']['name']} - Alpha (adstock)**")
-                st.dataframe(adstock_a[["mean", "sd"]], use_container_width=True)
+                st.dataframe(adstock_a[["mean", "sd"]], width="stretch")
 
             with col2:
                 st.markdown(f"**{data['model_b']['name']} - Alpha (adstock)**")
-                st.dataframe(adstock_b[["mean", "sd"]], use_container_width=True)
+                st.dataframe(adstock_b[["mean", "sd"]], width="stretch")
 
         except Exception:
             st.info("Adstock parameters not available")

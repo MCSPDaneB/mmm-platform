@@ -22,7 +22,7 @@ def show():
         demo = st.session_state.get("demo")
         if demo is not None:
             st.subheader("Demo Data Preview")
-            st.dataframe(demo.df_scaled.head(10), use_container_width=True)
+            st.dataframe(demo.df_scaled.head(10), width="stretch")
         st.stop()
 
     st.markdown("""
@@ -52,7 +52,7 @@ def show():
 
             # Show preview
             st.subheader("Data Preview")
-            st.dataframe(df.head(20), use_container_width=True)
+            st.dataframe(df.head(20), width="stretch")
 
             # Column info
             st.subheader("Column Information")
@@ -70,7 +70,7 @@ def show():
                     "Type": df.dtypes.astype(str).values,
                     "Non-Null": df.notna().sum().values,
                 })
-                st.dataframe(dtype_df, use_container_width=True, hide_index=True)
+                st.dataframe(dtype_df, width="stretch", hide_index=True)
 
             # Basic statistics
             st.subheader("Basic Statistics")
@@ -81,7 +81,7 @@ def show():
             if numeric_cols:
                 st.dataframe(
                     df[numeric_cols].describe().round(2),
-                    use_container_width=True
+                    width="stretch"
                 )
 
             # Date column detection

@@ -162,11 +162,11 @@ def _show_models_section():
         st.success(f"2 models selected for comparison")
         col1, col2 = st.columns([1, 3])
         with col1:
-            if st.button("🔍 Compare Models", type="primary", use_container_width=True):
+            if st.button("🔍 Compare Models", type="primary", width="stretch"):
                 st.session_state.active_comparison = st.session_state.models_to_compare.copy()
                 st.rerun()
         with col2:
-            if st.button("Clear Selection", use_container_width=True):
+            if st.button("Clear Selection", width="stretch"):
                 st.session_state.models_to_compare = []
                 st.rerun()
     elif n_selected == 1:

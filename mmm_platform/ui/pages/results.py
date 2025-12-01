@@ -255,7 +255,7 @@ def show():
             names="Category",
             title="Contribution by Category"
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         # Category column selector for grouping
         category_column_names = config.get_category_column_names()
@@ -296,7 +296,7 @@ def show():
                 color_discrete_map=CATEGORY_COLORS,
             )
             fig_grouped.update_layout(showlegend=False, xaxis_tickangle=-45)
-            st.plotly_chart(fig_grouped, use_container_width=True)
+            st.plotly_chart(fig_grouped, width="stretch")
 
         st.dataframe(
             grouped[["group", "contribution_real", "pct_of_total"]].rename(columns={
@@ -304,7 +304,7 @@ def show():
                 "contribution_real": "Contribution ($)",
                 "pct_of_total": "% of Total"
             }),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
 
@@ -367,7 +367,7 @@ def show():
                     color_discrete_map=CATEGORY_COLORS,
                 )
                 fig.update_layout(showlegend=False, xaxis_tickangle=-45)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
                 # Category table
                 display_df = category_roi[["category", "spend_real", "contribution_real", "roi"]].copy()
@@ -384,7 +384,7 @@ def show():
                     color_discrete_map=CATEGORY_COLORS,
                 )
                 fig.update_layout(xaxis_tickangle=-45)
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
                 # Channel table
                 display_df = roi_df[["display_name", "category", "spend_real", "contribution_real", "roi"]].copy()
@@ -396,7 +396,7 @@ def show():
             display_df["Contribution ($)"] = display_df["Contribution ($)"].apply(lambda x: f"${x:,.0f}")
             display_df["ROI"] = display_df["ROI"].apply(lambda x: f"{x:.2f}")
 
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            st.dataframe(display_df, width="stretch", hide_index=True)
 
             # Spend vs Contribution scatter
             st.subheader("Spend vs Contribution")
@@ -426,7 +426,7 @@ def show():
                 line=dict(dash="dash", color="gray")
             ))
 
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, width="stretch")
 
     # =========================================================================
     # Tab 3: Marginal ROI & Investment Priority
@@ -474,7 +474,7 @@ def show():
             styled_df.columns = ['Channel', 'Current Spend', 'Current ROI', 'Marginal ROI',
                                  'Priority', 'Breakeven Spend', 'Headroom', 'Action', 'Needs Test']
 
-            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            st.dataframe(styled_df, width="stretch", hide_index=True)
 
             st.markdown("""
             **Key Concepts:**
@@ -512,7 +512,7 @@ def show():
                 title="Current ROI vs Marginal ROI by Channel",
                 xaxis_tickangle=-45
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
         except Exception as e:
             st.error(f"Error running marginal ROI analysis: {str(e)}")
@@ -652,7 +652,7 @@ def show():
                     })
 
                 ci_df = pd.DataFrame(ci_data)
-                st.dataframe(ci_df, use_container_width=True, hide_index=True)
+                st.dataframe(ci_df, width="stretch", hide_index=True)
 
                 # Visualization
                 st.markdown("---")
@@ -683,7 +683,7 @@ def show():
                     yaxis_title="Channel",
                     height=max(400, len(channels) * 40)
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
             # -----------------------------------------------------------------
             # Probability of Direction
@@ -701,7 +701,7 @@ def show():
                     })
 
                 pd_df = pd.DataFrame(pd_data)
-                st.dataframe(pd_df, use_container_width=True, hide_index=True)
+                st.dataframe(pd_df, width="stretch", hide_index=True)
 
                 # Visualization
                 st.markdown("---")
@@ -725,7 +725,7 @@ def show():
                     xaxis=dict(range=[0.5, 1.0]),
                     height=max(400, len(channels) * 40)
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
             # -----------------------------------------------------------------
             # ROPE Analysis
@@ -745,7 +745,7 @@ def show():
                     })
 
                 rope_df = pd.DataFrame(rope_data)
-                st.dataframe(rope_df, use_container_width=True, hide_index=True)
+                st.dataframe(rope_df, width="stretch", hide_index=True)
 
             # -----------------------------------------------------------------
             # ROI Posteriors
@@ -766,7 +766,7 @@ def show():
                     })
 
                 roi_df = pd.DataFrame(roi_data)
-                st.dataframe(roi_df, use_container_width=True, hide_index=True)
+                st.dataframe(roi_df, width="stretch", hide_index=True)
 
                 # Visualization
                 st.markdown("---")
@@ -797,7 +797,7 @@ def show():
                     yaxis_title="Channel",
                     height=max(400, len(channels) * 40)
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
             # -----------------------------------------------------------------
             # Prior Sensitivity
@@ -817,7 +817,7 @@ def show():
                     })
 
                 sens_df = pd.DataFrame(sens_data)
-                st.dataframe(sens_df, use_container_width=True, hide_index=True)
+                st.dataframe(sens_df, width="stretch", hide_index=True)
 
                 # Visualization
                 st.markdown("---")
@@ -858,7 +858,7 @@ def show():
                     yaxis_title="Posterior ROI",
                     height=500
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
             # Interpretation Guide
             st.markdown("---")
@@ -902,7 +902,7 @@ def show():
 
         worst = diagnostics.get_worst_predictions(10)
         worst["date"] = worst["date"].dt.strftime("%Y-%m-%d")
-        st.dataframe(worst, use_container_width=True, hide_index=True)
+        st.dataframe(worst, width="stretch", hide_index=True)
 
         # Control variable analysis
         st.markdown("---")
@@ -921,7 +921,7 @@ def show():
             display_ctrl_df.columns = ["Control", "Contribution ($)", "Expected Sign", "Actual Sign", "Status"]
             st.dataframe(
                 display_ctrl_df,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
 
@@ -966,7 +966,7 @@ def show():
             yaxis_title="Revenue ($)",
             template="plotly_dark",
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         # Residuals
         st.subheader("Residuals")
@@ -1021,7 +1021,7 @@ def show():
             yaxis_title="Residual ($)",
             template="plotly_dark",
         )
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width="stretch")
 
         # =====================================================================
         # Suggested Dummy Variables Section
@@ -1259,7 +1259,7 @@ def show():
             yaxis_title="Contribution ($)",
             template="plotly_dark",
         )
-        st.plotly_chart(fig3, use_container_width=True)
+        st.plotly_chart(fig3, width="stretch")
 
     # =========================================================================
     # Tab 8: Export
@@ -1576,7 +1576,7 @@ def show():
         # Display the table
         if variables_data:
             df_vars = pd.DataFrame(variables_data)
-            st.dataframe(df_vars, use_container_width=True, hide_index=True)
+            st.dataframe(df_vars, width="stretch", hide_index=True)
 
             # Summary counts
             st.markdown("---")
@@ -1828,7 +1828,7 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Show comparison to actual contributions
     if time_multiplier == 1:
@@ -1848,7 +1848,7 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
                     "Total Contribution": f"${curve['actual_contrib_total']:,.0f}",
                     "Total Spend": f"${curve['actual_spend_total']:,.0f}",
                 })
-            st.dataframe(pd.DataFrame(comparison_data), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(comparison_data), width="stretch", hide_index=True)
             if time_multiplier == 1:
                 st.caption("*Avg Weekly Response = Total Contribution / Periods.*")
             else:
@@ -1888,7 +1888,7 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
                     "Difference": f"{pct_diff:+.1f}%",
                 })
 
-            st.dataframe(pd.DataFrame(validation_data), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(validation_data), width="stretch", hide_index=True)
 
             st.caption("*Differences are expected due to varying weekly spend and adstock effects. "
                       "The curve assumes constant weekly spend. Differences <15% are normal.*")
@@ -1958,7 +1958,7 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
 
         col1, col2 = st.columns([1, 3])
         with col1:
-            if st.button("Add Scenario", use_container_width=True):
+            if st.button("Add Scenario", width="stretch"):
                 if ch not in st.session_state.curve_scenarios:
                     st.session_state.curve_scenarios[ch] = []
                 st.session_state.curve_scenarios[ch].append({
@@ -1988,7 +1988,7 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
                     "Saturation": f"{s['saturation']:.0f}%"
                 })
 
-            st.dataframe(pd.DataFrame(scenario_data), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(scenario_data), width="stretch", hide_index=True)
 
 
 def _show_roi_curves(wrapper, config, channel_cols, display_names, selected_channel, spend_scale, revenue_scale):
@@ -2160,7 +2160,7 @@ def _show_roi_curves(wrapper, config, channel_cols, display_names, selected_chan
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Dynamic caption based on what's shown
     if show_avg_roi and show_marginal_roi:
@@ -2268,7 +2268,7 @@ def _show_adstock_curves(wrapper, config, channel_cols, display_names, selected_
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Summary table
     st.markdown("---")
@@ -2284,7 +2284,7 @@ def _show_adstock_curves(wrapper, config, channel_cols, display_names, selected_
             "Carryover (period 1)": f"{curve['weights_normalized'][1]*100:.1f}%" if len(curve['weights_normalized']) > 1 else "N/A",
         })
 
-    st.dataframe(pd.DataFrame(summary_data), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(summary_data), width="stretch", hide_index=True)
 
     # Interpretation
     st.markdown("---")
@@ -2347,7 +2347,7 @@ def show_ec2_results():
         channel_roi = results.get("channel_roi", [])
         if channel_roi:
             roi_df = pd.DataFrame(channel_roi)
-            st.dataframe(roi_df, use_container_width=True, hide_index=True)
+            st.dataframe(roi_df, width="stretch", hide_index=True)
 
             # ROI bar chart
             if "channel" in roi_df.columns and "roi" in roi_df.columns:
@@ -2360,7 +2360,7 @@ def show_ec2_results():
                     labels={"roi": "ROI", "channel": "Channel"}
                 )
                 fig.add_vline(x=1, line_dash="dash", line_color="red", annotation_text="Breakeven")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
         else:
             st.warning("No channel ROI data available")
 
@@ -2381,7 +2381,7 @@ def show_ec2_results():
                 for k, v in total_by_channel.items()
             ]).sort_values("Contribution", ascending=False)
 
-            st.dataframe(contrib_df, use_container_width=True, hide_index=True)
+            st.dataframe(contrib_df, width="stretch", hide_index=True)
 
             # Pie chart
             fig = px.pie(
@@ -2390,14 +2390,14 @@ def show_ec2_results():
                 names="Channel",
                 title="Contribution Breakdown"
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
         # Time series
         time_series = contributions.get("time_series", [])
         if time_series:
             st.markdown("#### Contribution Time Series")
             ts_df = pd.DataFrame(time_series)
-            st.dataframe(ts_df.head(20), use_container_width=True, hide_index=True)
+            st.dataframe(ts_df.head(20), width="stretch", hide_index=True)
             st.caption(f"Showing first 20 of {len(ts_df)} rows")
 
     # Reset button
@@ -2464,7 +2464,7 @@ def show_demo_results():
             "Total Spend": [f"${demo.df_scaled[ch].sum() * demo.spend_scale:,.0f}" for ch in demo.channel_cols],
             "Total Contribution": [f"${demo.contribs[ch].sum() * demo.revenue_scale:,.0f}" for ch in demo.channel_cols],
         })
-        st.dataframe(channel_df, use_container_width=True, hide_index=True)
+        st.dataframe(channel_df, width="stretch", hide_index=True)
 
         # Contribution breakdown
         st.markdown("---")
@@ -2476,7 +2476,7 @@ def show_demo_results():
             names=['Base', 'All Channels'],
             title="Base vs Channels"
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # =========================================================================
     # Tab 2: Marginal ROI & Investment Priority
@@ -2532,7 +2532,7 @@ def show_demo_results():
         styled_df.columns = ['Channel', 'Current Spend', 'Current ROI', 'Marginal ROI',
                              'Priority', 'Breakeven Spend', 'Headroom', 'Action', 'Needs Test']
 
-        st.dataframe(styled_df, use_container_width=True, hide_index=True)
+        st.dataframe(styled_df, width="stretch", hide_index=True)
 
         st.markdown("""
         **Key Concepts:**
@@ -2571,7 +2571,7 @@ def show_demo_results():
             title="Current ROI vs Marginal ROI by Channel",
             xaxis_tickangle=-45
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # =========================================================================
     # Tab 3: Executive Summary
@@ -2697,7 +2697,7 @@ def show_demo_results():
         display_df.columns = ['Channel', 'Spend', 'Online', 'Offline', 'Total', 'Profit',
                               'Act:Online', 'Act:Offline', 'Act:Total', 'Act:Profit']
 
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        st.dataframe(display_df, width="stretch", hide_index=True)
 
         # Conflicts
         st.markdown("---")
