@@ -114,6 +114,20 @@ def show():
         st.warning("Please upload data first!")
         st.stop()
 
+    # Check if priors need review due to KPI change
+    if st.session_state.get("priors_need_review"):
+        old_target = st.session_state.get("priors_set_for_target", "unknown")
+        new_target = st.session_state.get("target_column", "unknown")
+
+        st.warning(
+            f"⚠️ **Target KPI changed from '{old_target}' to '{new_target}'**. "
+            "ROI priors may need to be updated to reflect the new KPI scale."
+        )
+
+        if st.button("✅ I've reviewed the priors", key="dismiss_prior_warning"):
+            st.session_state.priors_need_review = False
+            st.rerun()
+
     df = st.session_state.current_data
 
     # Tabs for different configuration sections

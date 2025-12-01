@@ -172,6 +172,12 @@ def show():
             )
 
             if target_col:
+                # Check if target column changed - may need to review priors
+                old_target = st.session_state.get("target_column")
+                if old_target and old_target != target_col and st.session_state.get("current_config"):
+                    st.session_state.priors_need_review = True
+                    st.session_state.priors_set_for_target = old_target
+
                 st.session_state.target_column = target_col
 
                 # Show target stats
