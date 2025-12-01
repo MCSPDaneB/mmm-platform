@@ -617,7 +617,7 @@ def show():
             sig_analyzer = BayesianSignificanceAnalyzer(
                 idata=wrapper.idata,
                 df_scaled=wrapper.df_scaled,
-                channel_cols=config.get_channel_columns(),
+                channel_cols=wrapper.transform_engine.get_effective_channel_columns(),
                 target_col=config.data.target_column,
                 prior_rois=prior_rois,
             )
@@ -1240,8 +1240,8 @@ def show():
         # Channel contributions over time
         st.subheader("Channel Contributions Over Time")
 
-        channel_cols = config.get_channel_columns()
-        channel_contribs = contribs[channel_cols] * config.data.revenue_scale
+        channel_cols = wrapper.transform_engine.get_effective_channel_columns()
+        channel_contribs = contribs[[c for c in channel_cols if c in contribs.columns]] * config.data.revenue_scale
 
         fig3 = go.Figure()
         for ch in channel_cols:
@@ -1321,7 +1321,7 @@ def show():
             sig_analyzer_export = BayesianSignificanceAnalyzer(
                 idata=wrapper.idata,
                 df_scaled=wrapper.df_scaled,
-                channel_cols=config.get_channel_columns(),
+                channel_cols=wrapper.transform_engine.get_effective_channel_columns(),
                 target_col=config.data.target_column,
                 prior_rois=prior_rois_export,
             )
@@ -1370,7 +1370,7 @@ def show():
             if viz_option == "Contribution Waterfall":
                 # Get contributions by component
                 contribs_df = wrapper.get_contributions()
-                channel_cols = config.get_channel_columns()
+                channel_cols = wrapper.transform_engine.get_effective_channel_columns()
 
                 # Build contribution dict
                 contrib_dict = {}
@@ -1406,9 +1406,9 @@ def show():
 
             elif viz_option == "Stacked Contributions Over Time":
                 contribs_df = wrapper.get_contributions()
-                channel_cols = config.get_channel_columns()
+                channel_cols = wrapper.transform_engine.get_effective_channel_columns()
                 dates = contribs_df.index
-                channel_contribs = contribs_df[channel_cols] * config.data.revenue_scale
+                channel_contribs = contribs_df[[c for c in channel_cols if c in contribs_df.columns]] * config.data.revenue_scale
                 fig = create_stacked_contributions_area(dates, channel_contribs)
 
             elif viz_option == "ROI vs Spend (Bubble)":
@@ -1425,7 +1425,7 @@ def show():
 
             elif viz_option == "Response Curves":
                 # Get response curve data from the model
-                channel_cols = config.get_channel_columns()
+                channel_cols = wrapper.transform_engine.get_effective_channel_columns()
                 curves = []
 
                 # Try to extract saturation parameters from the model
@@ -1510,7 +1510,7 @@ def show():
             # Channels (saturation_beta)
             if "saturation_beta" in idata.posterior:
                 beta_summary = az.summary(idata, var_names=["saturation_beta"], hdi_prob=0.95)
-                channel_cols = config.get_channel_columns()
+                channel_cols = wrapper.transform_engine.get_effective_channel_columns()
                 for i, ch in enumerate(channel_cols):
                     try:
                         row = beta_summary.iloc[i]
@@ -1624,12 +1624,14 @@ def show():
                 st.warning("Saturation parameters not found in model posterior")
             else:
                 # Get channel info
-                channel_cols = config.get_channel_columns()
+                channel_cols = wrapper.transform_engine.get_effective_channel_columns()
 
                 # Build display names
                 display_names = {}
                 for ch_config in config.channels:
                     display_names[ch_config.name] = ch_config.get_display_name()
+                for om_config in config.owned_media:
+                    display_names[om_config.name] = om_config.get_display_name()
 
                 channel_display_names = [display_names.get(ch, ch) for ch in channel_cols]
 

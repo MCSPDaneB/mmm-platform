@@ -338,7 +338,7 @@ class MMMWrapper:
             ROI by channel.
         """
         contribs = self.get_contributions()
-        channel_cols = self.config.get_channel_columns()
+        channel_cols = self.transform_engine.get_effective_channel_columns()
 
         results = []
         for ch in channel_cols:

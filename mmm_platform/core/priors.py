@@ -281,12 +281,12 @@ class PriorCalibrator:
         dict
             Summary of all prior configurations.
         """
-        lam_vec = self.transform_engine.compute_all_channel_lams(df_scaled)
+        lam_vec = self.transform_engine.compute_all_effective_channel_lams(df_scaled)
         beta_mu, beta_sigma = self.calibrate_beta_priors(df_scaled, lam_vec)
         adstock_alpha, adstock_beta = self.get_adstock_prior_params()
         lam_mu, lam_sigma = self.get_saturation_prior_params(lam_vec)
 
-        channel_cols = self.config.get_channel_columns()
+        channel_cols = self.transform_engine.get_effective_channel_columns()
 
         summary = {
             "channels": {},

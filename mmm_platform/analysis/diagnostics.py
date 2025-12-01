@@ -382,7 +382,7 @@ class ModelDiagnostics:
             fitted=fitted,
             dates=contribs.index,
             contribs=contribs,
-            channel_cols=mmm_wrapper.config.get_channel_columns(),
+            channel_cols=mmm_wrapper.transform_engine.get_effective_channel_columns(),
             control_cols=mmm_wrapper.control_cols,
             target_col=target_col,
         )

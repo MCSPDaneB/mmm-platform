@@ -137,7 +137,7 @@ def _load_comparison_data(path_a: str, path_b: str) -> Dict[str, Any]:
             "fit_stats": wrapper_a.get_fit_statistics(),
             "channel_roi": contrib_a.get_channel_roi(),
             "contributions": contrib_a.get_grouped_contributions(),
-            "channel_cols": wrapper_a.config.get_channel_columns(),
+            "channel_cols": wrapper_a.transform_engine.get_effective_channel_columns(),
             "control_cols": wrapper_a.control_cols if hasattr(wrapper_a, 'control_cols') else [],
         },
         "model_b": {
@@ -147,7 +147,7 @@ def _load_comparison_data(path_a: str, path_b: str) -> Dict[str, Any]:
             "fit_stats": wrapper_b.get_fit_statistics(),
             "channel_roi": contrib_b.get_channel_roi(),
             "contributions": contrib_b.get_grouped_contributions(),
-            "channel_cols": wrapper_b.config.get_channel_columns(),
+            "channel_cols": wrapper_b.transform_engine.get_effective_channel_columns(),
             "control_cols": wrapper_b.control_cols if hasattr(wrapper_b, 'control_cols') else [],
         }
     }

@@ -525,12 +525,15 @@ class MarginalROIAnalyzer:
         display_names = {}
         for ch_config in mmm_wrapper.config.channels:
             display_names[ch_config.name] = ch_config.get_display_name()
+        # Include owned media display names
+        for om_config in mmm_wrapper.config.owned_media:
+            display_names[om_config.name] = om_config.get_display_name()
 
         return cls(
             idata=mmm_wrapper.idata,
             df_scaled=mmm_wrapper.df_scaled,
             contribs=mmm_wrapper.get_contributions(),
-            channel_cols=mmm_wrapper.config.get_channel_columns(),
+            channel_cols=mmm_wrapper.transform_engine.get_effective_channel_columns(),
             target_col=mmm_wrapper.config.data.target_column,
             spend_scale=mmm_wrapper.config.data.spend_scale,
             revenue_scale=mmm_wrapper.config.data.revenue_scale,
