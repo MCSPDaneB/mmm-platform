@@ -1637,11 +1637,10 @@ def show():
                 ctrl_col1, ctrl_col2 = st.columns([1, 2])
 
                 with ctrl_col1:
-                    view_type = st.radio(
-                        "View",
-                        ["Saturation Curves", "Adstock Decay"] if has_adstock else ["Saturation Curves"],
-                        horizontal=True
-                    )
+                    view_options = ["Saturation Curves", "ROI Curves"]
+                    if has_adstock:
+                        view_options.append("Adstock Decay")
+                    view_type = st.radio("View", view_options, horizontal=True)
 
                 with ctrl_col2:
                     channel_options = ["All Channels"] + channel_display_names
@@ -1655,6 +1654,11 @@ def show():
 
                 if view_type == "Saturation Curves":
                     _show_saturation_curves(
+                        wrapper, config, channel_cols, display_names,
+                        selected_channel, spend_scale, revenue_scale
+                    )
+                elif view_type == "ROI Curves":
+                    _show_roi_curves(
                         wrapper, config, channel_cols, display_names,
                         selected_channel, spend_scale, revenue_scale
                     )
@@ -1985,6 +1989,185 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
                 })
 
             st.dataframe(pd.DataFrame(scenario_data), use_container_width=True, hide_index=True)
+
+
+def _show_roi_curves(wrapper, config, channel_cols, display_names, selected_channel, spend_scale, revenue_scale):
+    """Show Average ROI and Marginal ROI curves."""
+    import plotly.graph_objects as go
+    from mmm_platform.analysis.marginal_roi import logistic_saturation_derivative
+
+    posterior = wrapper.idata.posterior
+
+    # Time period selector (same as saturation curves)
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        time_period = st.selectbox(
+            "Time Period",
+            ["Weekly", "Yearly"],
+            index=0,
+            help="Weekly shows ROI per week. Yearly shows annualized ROI.",
+            key="roi_time_period"
+        )
+    time_multiplier = 52 if time_period == "Yearly" else 1
+    period_label = "Yearly" if time_period == "Yearly" else "Weekly"
+
+    # Determine which channels to show
+    if selected_channel == "All Channels":
+        channels_to_show = list(range(len(channel_cols)))
+    else:
+        channel_display_names = [display_names.get(ch, ch) for ch in channel_cols]
+        idx = channel_display_names.index(selected_channel)
+        channels_to_show = [idx]
+
+    # Get contributions for calibration
+    contribs = wrapper.get_contributions()
+    n_periods = len(wrapper.df_scaled)
+
+    # Generate ROI data for each channel
+    curves_data = []
+    for i in channels_to_show:
+        ch = channel_cols[i]
+        display_name = display_names.get(ch, ch)
+
+        # Get posterior mean for lambda
+        lam = float(posterior['saturation_lam'].mean(dim=['chain', 'draw']).values[i])
+
+        # Get spend data
+        spend_data = wrapper.df_scaled[ch].values
+        x_max = spend_data.max()
+        if x_max == 0:
+            x_max = 1.0
+
+        # Get actual values for calibration
+        actual_contrib_total = contribs[ch].sum() * revenue_scale if ch in contribs.columns else 0
+        avg_weekly_spend = spend_data.mean() * spend_scale
+        avg_weekly_contrib = actual_contrib_total / n_periods if n_periods > 0 else 0
+
+        # Calibration factor (same as saturation curves)
+        avg_spend_normalized = avg_weekly_spend / (x_max * spend_scale)
+        avg_saturation = _logistic_saturation(avg_spend_normalized, lam)
+        calibration_factor = avg_weekly_contrib / avg_saturation if avg_saturation > 0.001 else avg_weekly_contrib
+
+        # Generate spend range
+        max_spend_real = x_max * spend_scale * 2.5
+        spend_range_real = np.linspace(0.01, max_spend_real, 200)  # Avoid division by zero
+        spend_range_normalized = spend_range_real / (x_max * spend_scale)
+
+        # Calculate response at each spend level
+        response_normalized = _logistic_saturation(spend_range_normalized, lam)
+        response_weekly = calibration_factor * response_normalized
+
+        # Average ROI = Response / Spend (same units, so no scale adjustment needed)
+        avg_roi = response_weekly / spend_range_real
+
+        # Marginal ROI = d(Response)/d(Spend)
+        marginal_normalized = np.array([logistic_saturation_derivative(x, lam) for x in spend_range_normalized])
+        marginal_roi = calibration_factor * marginal_normalized / (x_max * spend_scale)
+
+        # Current position
+        current_avg_roi = avg_weekly_contrib / avg_weekly_spend if avg_weekly_spend > 0 else 0
+        current_marginal_normalized = logistic_saturation_derivative(avg_spend_normalized, lam)
+        current_marginal_roi = calibration_factor * current_marginal_normalized / (x_max * spend_scale)
+
+        curves_data.append({
+            'channel': ch,
+            'display_name': display_name,
+            'spend_range': spend_range_real * time_multiplier,
+            'avg_roi': avg_roi,
+            'marginal_roi': marginal_roi,
+            'current_spend': avg_weekly_spend * time_multiplier,
+            'current_avg_roi': current_avg_roi,
+            'current_marginal_roi': current_marginal_roi,
+            'lam': lam,
+            'calibration_factor': calibration_factor,
+            'x_max': x_max,
+        })
+
+    # Create Plotly figure
+    fig = go.Figure()
+
+    colors = px.colors.qualitative.Set2
+
+    for idx, curve in enumerate(curves_data):
+        color = colors[idx % len(colors)]
+
+        # Average ROI curve (solid)
+        fig.add_trace(go.Scatter(
+            x=curve['spend_range'],
+            y=curve['avg_roi'],
+            mode='lines',
+            name=f"{curve['display_name']} - Avg ROI",
+            line=dict(color=color, width=3),
+            hovertemplate=f"<b>{curve['display_name']} - Avg ROI</b><br>" +
+                         f"{period_label} Spend: $%{{x:,.0f}}<br>Avg ROI: %{{y:.2f}}<extra></extra>"
+        ))
+
+        # Marginal ROI curve (dashed)
+        fig.add_trace(go.Scatter(
+            x=curve['spend_range'],
+            y=curve['marginal_roi'],
+            mode='lines',
+            name=f"{curve['display_name']} - Marginal ROI",
+            line=dict(color=color, width=2, dash='dash'),
+            hovertemplate=f"<b>{curve['display_name']} - Marginal ROI</b><br>" +
+                         f"{period_label} Spend: $%{{x:,.0f}}<br>Marginal ROI: %{{y:.2f}}<extra></extra>"
+        ))
+
+        # Current position markers
+        fig.add_trace(go.Scatter(
+            x=[curve['current_spend']],
+            y=[curve['current_avg_roi']],
+            mode='markers',
+            name=f"{curve['display_name']} (Current)",
+            marker=dict(size=12, color=color, symbol='circle',
+                       line=dict(width=2, color='black')),
+            hovertemplate=f"<b>{curve['display_name']} - Current</b><br>" +
+                         f"Spend: $%{{x:,.0f}}<br>Avg ROI: %{{y:.2f}}<extra></extra>",
+            showlegend=False
+        ))
+
+    # Breakeven line at ROI = 1.0
+    fig.add_hline(y=1.0, line_dash="dot", line_color="red", opacity=0.7,
+                  annotation_text="Breakeven (ROI = 1.0)", annotation_position="right")
+
+    fig.update_layout(
+        title=f"ROI Curves - {period_label} Spend",
+        xaxis_title=f"{period_label} Spend ($)",
+        yaxis_title="ROI ($ return per $ spent)",
+        hovermode='closest',
+        showlegend=True,
+        height=500,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Caption
+    st.caption("*Solid lines show Average ROI (total return / total spend). "
+               "Dashed lines show Marginal ROI (return on next dollar). "
+               "When Marginal ROI < 1.0, additional spend loses money.*")
+
+    # Metrics for single channel
+    if len(channels_to_show) == 1:
+        curve = curves_data[0]
+
+        st.markdown("---")
+        st.subheader(f"ROI Analysis: {curve['display_name']}")
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Current Avg ROI", f"${curve['current_avg_roi']:.2f}")
+        col2.metric("Current Marginal ROI", f"${curve['current_marginal_roi']:.2f}")
+
+        # Determine recommendation
+        if curve['current_marginal_roi'] > 1.5:
+            col3.metric("Recommendation", "INCREASE", delta="High marginal returns")
+            st.success("**Strong opportunity to increase spend** - Marginal ROI is well above breakeven")
+        elif curve['current_marginal_roi'] > 1.0:
+            col3.metric("Recommendation", "HOLD", delta="Good returns")
+            st.info("**Near optimal spend level** - Marginal ROI is positive but diminishing")
+        else:
+            col3.metric("Recommendation", "REDUCE", delta="Below breakeven", delta_color="inverse")
+            st.warning("**Consider reducing spend** - Additional dollars lose money (Marginal ROI < 1.0)")
 
 
 def _show_adstock_curves(wrapper, config, channel_cols, display_names, selected_channel):
