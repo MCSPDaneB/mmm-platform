@@ -275,6 +275,9 @@ def show():
         # Grouped contributions table (use category mappings from config)
         if selected_category_col:
             channel_categories = config.get_channel_category_map(selected_category_col)
+            # Include owned media categories (they're treated as channels in ContributionAnalyzer)
+            owned_media_categories = config.get_owned_media_category_map(selected_category_col)
+            channel_categories.update(owned_media_categories)
             control_categories = config.get_control_category_map(selected_category_col)
         else:
             channel_categories = None
