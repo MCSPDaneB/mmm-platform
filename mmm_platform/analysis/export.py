@@ -16,7 +16,8 @@ if TYPE_CHECKING:
 def generate_decomps_stacked(
     wrapper: "MMMWrapper",
     config: "ModelConfig",
-    brand: str
+    brand: str,
+    force_to_actuals: bool = False
 ) -> pd.DataFrame:
     """
     Generate stacked decomposition export with all components.
@@ -32,6 +33,8 @@ def generate_decomps_stacked(
         Model configuration
     brand : str
         Brand name for the export
+    force_to_actuals : bool, optional
+        If True, absorb residuals into intercept so decomposition sums to actuals
 
     Returns
     -------
@@ -46,6 +49,18 @@ def generate_decomps_stacked(
 
     # Get category column names
     cat_col_names = config.get_category_column_names()
+
+    # Calculate residuals per date if forcing to actuals
+    residuals = {}
+    if force_to_actuals:
+        df_indexed = wrapper.df_scaled.set_index(date_col)
+        for date_val in contribs.index:
+            if date_val in df_indexed.index:
+                actual = df_indexed.loc[date_val, target_col] * revenue_scale
+                fitted = contribs.loc[date_val].sum() * revenue_scale
+                residuals[date_val] = actual - fitted
+            else:
+                residuals[date_val] = 0
 
     rows = []
     for date_val in contribs.index:
@@ -95,8 +110,11 @@ def generate_decomps_stacked(
             if len(categories) < 2:
                 row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
 
-            # Add KPI value
-            row[f'kpi_{target_col}'] = contribs.loc[date_val, col] * revenue_scale
+            # Add KPI value (with residual adjustment for intercept if forcing to actuals)
+            kpi_value = contribs.loc[date_val, col] * revenue_scale
+            if force_to_actuals and col == 'intercept':
+                kpi_value += residuals.get(date_val, 0)
+            row[f'kpi_{target_col}'] = kpi_value
 
             rows.append(row)
 
@@ -268,7 +286,8 @@ def generate_actual_vs_fitted(
 
 def generate_combined_decomps_stacked(
     wrappers_with_labels: List[Tuple["MMMWrapper", str]],
-    brand: str
+    brand: str,
+    force_to_actuals: bool = False
 ) -> pd.DataFrame:
     """
     Generate stacked decomposition export combining multiple models.
@@ -282,6 +301,8 @@ def generate_combined_decomps_stacked(
         List of (wrapper, label) tuples. Labels are used for column names (e.g., "online", "offline")
     brand : str
         Brand name for the export
+    force_to_actuals : bool, optional
+        If True, absorb residuals into intercept so decomposition sums to actuals
 
     Returns
     -------
@@ -295,6 +316,7 @@ def generate_combined_decomps_stacked(
     # Get contributions and configs from all wrappers
     all_contribs = []
     all_configs = []
+    all_wrappers = []
     labels = []
     revenue_scales = []
 
@@ -302,6 +324,7 @@ def generate_combined_decomps_stacked(
         contribs = wrapper.get_contributions()
         all_contribs.append(contribs)
         all_configs.append(wrapper.config)
+        all_wrappers.append(wrapper)
         labels.append(label)
         revenue_scales.append(wrapper.config.data.revenue_scale)
 
@@ -318,6 +341,25 @@ def generate_combined_decomps_stacked(
     # Use first config for category columns (assume same structure)
     config = all_configs[0]
     cat_col_names = config.get_category_column_names()
+
+    # Calculate residuals per date per model if forcing to actuals
+    all_residuals = []
+    if force_to_actuals:
+        for idx, (wrapper, cfg, contribs, scale) in enumerate(
+            zip(all_wrappers, all_configs, all_contribs, revenue_scales)
+        ):
+            date_col = cfg.data.date_column
+            target_col = cfg.data.target_column
+            df_indexed = wrapper.df_scaled.set_index(date_col)
+            residuals = {}
+            for date_val in common_dates:
+                if date_val in df_indexed.index:
+                    actual = df_indexed.loc[date_val, target_col] * scale
+                    fitted = contribs.loc[date_val].sum() * scale
+                    residuals[date_val] = actual - fitted
+                else:
+                    residuals[date_val] = 0
+            all_residuals.append(residuals)
 
     rows = []
     for date_val in common_dates:
@@ -377,6 +419,9 @@ def generate_combined_decomps_stacked(
                     value = contribs.loc[date_val, col] * scale
                 else:
                     value = 0
+                # Add residual to intercept if forcing to actuals
+                if force_to_actuals and col == 'intercept':
+                    value += all_residuals[idx].get(date_val, 0)
                 row[f'kpi_{label}'] = value
                 total += value
 

@@ -85,6 +85,14 @@ def _show_single_model_export(
         st.warning("Please enter a brand name to enable exports.")
         st.stop()
 
+    # Force to actuals checkbox
+    force_to_actuals = st.checkbox(
+        "Force decomposition to actuals",
+        value=False,
+        help="Absorb residuals into intercept so decomposition sums to actual values instead of fitted",
+        key="single_force_to_actuals"
+    )
+
     st.markdown("---")
 
     # Export files section
@@ -110,7 +118,7 @@ def _show_single_model_export(
 
         with st.spinner("Generating decomps_stacked..."):
             try:
-                df_decomps = generate_decomps_stacked(wrapper, config, brand)
+                df_decomps = generate_decomps_stacked(wrapper, config, brand, force_to_actuals)
                 csv_decomps = df_decomps.to_csv(index=False)
 
                 st.download_button(
@@ -385,6 +393,14 @@ def _show_combined_model_export(
         # Use client from first selected model
         brand = model_options[selected_options[0]]["client"] or "unknown"
 
+    # Force to actuals checkbox
+    force_to_actuals = st.checkbox(
+        "Force decomposition to actuals",
+        value=False,
+        help="Absorb residuals into intercept so decomposition sums to actual values instead of fitted",
+        key="combined_force_to_actuals"
+    )
+
     st.markdown("---")
 
     # Load models
@@ -424,7 +440,7 @@ def _show_combined_model_export(
 
         with st.spinner("Generating combined decomps_stacked..."):
             try:
-                df_decomps = generate_combined_decomps_stacked(wrappers_with_labels, brand)
+                df_decomps = generate_combined_decomps_stacked(wrappers_with_labels, brand, force_to_actuals)
                 csv_decomps = df_decomps.to_csv(index=False)
 
                 st.download_button(
