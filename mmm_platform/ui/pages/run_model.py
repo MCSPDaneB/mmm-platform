@@ -313,6 +313,21 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
                     "adstock_type": ch.adstock_type.value if hasattr(ch.adstock_type, 'value') else str(ch.adstock_type),
                 })
 
+            # Build owned media configs
+            owned_media = []
+            for om in config.owned_media:
+                owned_media.append({
+                    "name": om.name,
+                    "display_name": om.display_name,
+                    "categories": om.categories,
+                    "adstock_type": om.adstock_type.value if hasattr(om.adstock_type, 'value') else str(om.adstock_type),
+                    "curve_sharpness_override": om.curve_sharpness_override,
+                    "include_roi": om.include_roi,
+                    "roi_prior_low": om.roi_prior_low,
+                    "roi_prior_mid": om.roi_prior_mid,
+                    "roi_prior_high": om.roi_prior_high,
+                })
+
             # Build control configs
             controls = []
             for ctrl in config.controls:
@@ -357,6 +372,7 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
                 model_name=config.name,
                 data=df,
                 channels=channels,
+                owned_media=owned_media,
                 controls=controls,
                 dummy_variables=dummy_variables,
                 data_config=data_config,

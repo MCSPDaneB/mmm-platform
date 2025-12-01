@@ -62,6 +62,18 @@ class DummyVariableConfig(BaseModel):
     sign_constraint: str = "positive"
 
 
+class OwnedMediaConfig(BaseModel):
+    name: str
+    display_name: Optional[str] = None
+    categories: Dict[str, str] = {}
+    adstock_type: str = "medium"
+    curve_sharpness_override: Optional[str] = None
+    include_roi: bool = False
+    roi_prior_low: Optional[float] = None
+    roi_prior_mid: Optional[float] = None
+    roi_prior_high: Optional[float] = None
+
+
 class DataConfig(BaseModel):
     target_column: str
     date_column: str
@@ -82,6 +94,7 @@ class ModelRunRequest(BaseModel):
     model_name: str = Field(..., description="Name for this model run")
     data: List[Dict[str, Any]] = Field(..., description="Data as list of row dicts")
     channels: List[ChannelConfig]
+    owned_media: List[OwnedMediaConfig] = []
     controls: List[ControlConfig] = []
     dummy_variables: List[DummyVariableConfig] = []
     data_config: DataConfig
@@ -194,7 +207,8 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
             ModelConfig, ChannelConfig as SchemaChannelConfig,
             ControlConfig as SchemaControlConfig, DataConfig as SchemaDataConfig,
             SamplingConfig as SchemaSamplingConfig,
-            DummyVariableConfig as SchemaDummyVariableConfig
+            DummyVariableConfig as SchemaDummyVariableConfig,
+            OwnedMediaConfig as SchemaOwnedMediaConfig
         )
 
         logger.info(f"Job {job_id}: Loading data...")
@@ -247,9 +261,28 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
 
         logger.info(f"Job {job_id}: Configured {len(dummy_variables)} dummy variables: {[dv.name for dv in dummy_variables]}")
 
+        # Build owned media
+        owned_media = [
+            SchemaOwnedMediaConfig(
+                name=om.name,
+                display_name=om.display_name,
+                categories=om.categories,
+                adstock_type=om.adstock_type,
+                curve_sharpness_override=om.curve_sharpness_override,
+                include_roi=om.include_roi,
+                roi_prior_low=om.roi_prior_low,
+                roi_prior_mid=om.roi_prior_mid,
+                roi_prior_high=om.roi_prior_high,
+            )
+            for om in request.owned_media
+        ]
+
+        logger.info(f"Job {job_id}: Configured {len(owned_media)} owned media: {[om.name for om in owned_media]}")
+
         config = ModelConfig(
             name=request.model_name,
             channels=channels,
+            owned_media=owned_media,
             controls=controls,
             dummy_variables=dummy_variables,
             data=SchemaDataConfig(

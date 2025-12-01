@@ -115,6 +115,7 @@ class EC2ModelClient:
         channels: List[Dict[str, Any]],
         data_config: Dict[str, Any],
         controls: List[Dict[str, Any]] = None,
+        owned_media: List[Dict[str, Any]] = None,
         dummy_variables: List[Dict[str, Any]] = None,
         sampling_config: Dict[str, Any] = None,
     ) -> str:
@@ -133,6 +134,8 @@ class EC2ModelClient:
             Data configuration (target_column, date_column, etc.).
         controls : list[dict], optional
             Control variable configurations.
+        owned_media : list[dict], optional
+            Owned media configurations (name, adstock_type, include_roi, etc.).
         dummy_variables : list[dict], optional
             Dummy variable configurations (name, start_date, end_date, sign_constraint).
         sampling_config : dict, optional
@@ -157,6 +160,7 @@ class EC2ModelClient:
             "model_name": model_name,
             "data": data_records,
             "channels": channels,
+            "owned_media": owned_media or [],
             "controls": controls or [],
             "dummy_variables": dummy_variables or [],
             "data_config": data_config,
