@@ -10,7 +10,7 @@ import pandas as pd
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
-from mmm_platform.model.persistence import ModelPersistence, get_models_dir
+from mmm_platform.model.persistence import ModelPersistence, get_models_dir, list_clients
 from mmm_platform.model.mmm import MMMWrapper
 from mmm_platform.analysis.combined_models import MultiModelAnalyzer, MultiModelResult
 from mmm_platform.analysis.marginal_roi import MarginalROIAnalyzer
@@ -29,9 +29,22 @@ def show():
     if "combined_analyzer" not in st.session_state:
         st.session_state.combined_analyzer = None
 
-    # Get saved models
-    models_dir = get_models_dir()
-    saved_models = ModelPersistence.list_saved_models(models_dir)
+    # Client filter
+    clients = list_clients()
+    if clients:
+        client_options = ["All Clients"] + clients
+        selected_client = st.selectbox(
+            "Filter by Client",
+            options=client_options,
+            key="combined_analysis_client_filter",
+            help="Show models for a specific client"
+        )
+        client_filter = "all" if selected_client == "All Clients" else selected_client
+    else:
+        client_filter = "all"
+
+    # Get saved models (client-aware)
+    saved_models = ModelPersistence.list_saved_models(client=client_filter)
 
     if not saved_models:
         st.warning("No fitted models found. Please run and save at least 2 models first.")
@@ -54,7 +67,13 @@ def show():
         n_channels = model.get("n_channels", "?")
         created = model.get("created_at", "")[:10]
         name = model.get("config_name", "Unknown")
-        option_label = f"{name} ({created}) - {n_channels} channels, {r2_str}"
+        model_client = model.get("client", "")
+
+        # Show client in label when viewing all clients
+        if client_filter == "all" and model_client:
+            option_label = f"[{model_client}] {name} ({created}) - {n_channels} channels, {r2_str}"
+        else:
+            option_label = f"{name} ({created}) - {n_channels} channels, {r2_str}"
         model_options[option_label] = model["path"]
 
     selected_options = st.multiselect(
