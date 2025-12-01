@@ -1751,6 +1751,11 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
         response_weekly = calibration_factor * response_normalized
         response_real = response_weekly * time_multiplier
 
+        # Store raw data for validation (last 52 weeks or all if less)
+        n_validation_weeks = min(52, n_periods)
+        last_n_spend_scaled = spend_data[-n_validation_weeks:].sum()
+        last_n_contrib_scaled = contribs[ch].iloc[-n_validation_weeks:].sum() if ch in contribs.columns else 0
+
         curves_data.append({
             'channel': ch,
             'display_name': display_name,
@@ -1766,6 +1771,12 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
             'max_spend': max_spend_real * time_multiplier,
             'n_periods': n_periods,
             'time_multiplier': time_multiplier,
+            # Validation data
+            'n_validation_weeks': n_validation_weeks,
+            'last_n_spend_scaled': last_n_spend_scaled,
+            'last_n_contrib_scaled': last_n_contrib_scaled,
+            'spend_scale': spend_scale,
+            'revenue_scale': revenue_scale,
         })
 
     # Create Plotly figure
@@ -1838,6 +1849,45 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
                 st.caption("*Avg Weekly Response = Total Contribution / Periods.*")
             else:
                 st.caption("*Yearly values are weekly × 52.*")
+
+    # Validation section - compare curve predictions vs actual 52-week data
+    if len(channels_to_show) > 0:
+        with st.expander("✅ Validate Curve Against Actual Data"):
+            n_val_weeks = curves_data[0]['n_validation_weeks']
+            st.write(f"**Validation Period:** Last {n_val_weeks} weeks")
+            st.write("Compare what the curve predicts vs actual model contributions:")
+
+            validation_data = []
+            for curve in curves_data:
+                # Get actual data from last N weeks
+                last_n_spend = curve['last_n_spend_scaled'] * curve['spend_scale']
+                last_n_contrib = curve['last_n_contrib_scaled'] * curve['revenue_scale']
+                actual_roi = last_n_contrib / last_n_spend if last_n_spend > 0 else 0
+
+                # Calculate what curve predicts for that avg weekly spend
+                n_val = curve['n_validation_weeks']
+                avg_weekly_spend_val = last_n_spend / n_val if n_val > 0 else 0
+                avg_spend_normalized = avg_weekly_spend_val / (curve['x_max'] * curve['spend_scale'])
+                avg_saturation = _logistic_saturation(avg_spend_normalized, curve['lam'])
+                curve_weekly_prediction = curve['calibration_factor'] * avg_saturation
+                curve_total_prediction = curve_weekly_prediction * n_val
+
+                # Calculate difference
+                pct_diff = ((curve_total_prediction - last_n_contrib) / last_n_contrib * 100) if last_n_contrib != 0 else 0
+
+                validation_data.append({
+                    "Channel": curve['display_name'],
+                    f"Actual Spend ({n_val}wk)": f"${last_n_spend:,.0f}",
+                    f"Actual Contribution ({n_val}wk)": f"${last_n_contrib:,.0f}",
+                    "Actual ROI": f"{actual_roi:.2f}",
+                    f"Curve Prediction ({n_val}wk)": f"${curve_total_prediction:,.0f}",
+                    "Difference": f"{pct_diff:+.1f}%",
+                })
+
+            st.dataframe(pd.DataFrame(validation_data), use_container_width=True, hide_index=True)
+
+            st.caption("*Differences are expected due to varying weekly spend and adstock effects. "
+                      "The curve assumes constant weekly spend. Differences <15% are normal.*")
 
     # Interactive exploration (only for single channel)
     if len(channels_to_show) == 1:
