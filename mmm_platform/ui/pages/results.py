@@ -1511,10 +1511,10 @@ def show():
         try:
             idata = wrapper.idata
 
-            # Channels (saturation_beta) - paid media only
+            # Channels (saturation_beta) - paid media
             if "saturation_beta" in idata.posterior:
                 beta_summary = az.summary(idata, var_names=["saturation_beta"], hdi_prob=0.95)
-                channel_cols = config.get_channel_columns()  # Paid media only
+                channel_cols = config.get_channel_columns()
                 for i, ch in enumerate(channel_cols):
                     try:
                         row = beta_summary.iloc[i]
@@ -1524,6 +1524,27 @@ def show():
                         variables_data.append({
                             "Variable": ch,
                             "Type": "Channel",
+                            "Coef Mean": f"{row['mean']:.2f}",
+                            "Coef Std": f"{row['sd']:.2f}",
+                            "95% HDI": f"[{hdi_low:.2f}, {hdi_high:.2f}]",
+                            "Significant": significant
+                        })
+                    except Exception:
+                        pass
+
+                # Owned media (also in saturation_beta, after paid channels)
+                owned_media_cols = config.get_owned_media_columns()
+                paid_channel_count = len(channel_cols)
+                for i, om in enumerate(owned_media_cols):
+                    try:
+                        idx = paid_channel_count + i
+                        row = beta_summary.iloc[idx]
+                        hdi_low = row["hdi_2.5%"]
+                        hdi_high = row["hdi_97.5%"]
+                        significant = "Yes" if (hdi_low > 0 or hdi_high < 0) else "No"
+                        variables_data.append({
+                            "Variable": om,
+                            "Type": "Owned Media",
                             "Coef Mean": f"{row['mean']:.2f}",
                             "Coef Std": f"{row['sd']:.2f}",
                             "95% HDI": f"[{hdi_low:.2f}, {hdi_high:.2f}]",
