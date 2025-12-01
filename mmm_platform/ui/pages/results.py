@@ -1689,6 +1689,11 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
         idx = channel_display_names.index(selected_channel)
         channels_to_show = [idx]
 
+    # Get actual contributions to calibrate the curve scale
+    # The model contributions are summed over all time periods, so we need to scale accordingly
+    contribs = wrapper.get_contributions()
+    n_periods = len(wrapper.df_scaled)
+
     # Generate curve data for each channel
     curves_data = []
     for i in channels_to_show:
@@ -1707,10 +1712,14 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
         if x_max == 0:
             x_max = 1.0
 
-        # Current spend (weekly average) in real dollars
+        # Get actual total contribution and spend for this channel (in real units)
+        actual_contrib_real = contribs[ch].sum() * revenue_scale if ch in contribs.columns else 0
+        actual_spend_real = spend_data.sum() * spend_scale
+
+        # Current spend (average per period) in real dollars
         current_spend_real = spend_data.mean() * spend_scale
 
-        # Generate spend range in real dollars (0 to 2.5x max weekly spend)
+        # Generate spend range in real dollars (0 to 2.5x max spend per period)
         max_spend_real = x_max * spend_scale * 2.5
         spend_range_real = np.linspace(0.001, max_spend_real, 200)
 
@@ -1718,14 +1727,17 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
         # This matches how PyMC-Marketing applies the transform internally
         spend_range_normalized = spend_range_real / (x_max * spend_scale)
 
-        # Apply saturation in normalized space, then scale by beta
+        # Apply saturation in normalized space
         response_normalized = _logistic_saturation(spend_range_normalized, lam)
-        response_real = beta * response_normalized * revenue_scale
 
-        # Current position
+        # Scale to get TOTAL contribution (sum over all periods)
+        # If you spent 'spend' every period, total response = n_periods * beta * saturation(spend_norm) * revenue_scale
+        response_real = n_periods * beta * response_normalized * revenue_scale
+
+        # Current position - total contribution if you spent current_spend every period
         current_spend_normalized = (current_spend_real / spend_scale) / x_max
         current_response_normalized = _logistic_saturation(current_spend_normalized, lam)
-        current_response_real = beta * current_response_normalized * revenue_scale
+        current_response_real = n_periods * beta * current_response_normalized * revenue_scale
 
         curves_data.append({
             'channel': ch,
@@ -1734,10 +1746,13 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
             'response': response_real,
             'current_spend': current_spend_real,
             'current_response': current_response_real,
+            'actual_contrib': actual_contrib_real,
+            'actual_spend': actual_spend_real,
             'lam': lam,
             'beta': beta,
             'x_max': x_max,  # For slider calculations
             'max_spend': max_spend_real,
+            'n_periods': n_periods,
         })
 
     # Create Plotly figure
@@ -1776,9 +1791,9 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
     fig.add_hline(y=0, line_dash="dot", line_color="gray", opacity=0.5)
 
     fig.update_layout(
-        title="Saturation Curves - Response vs Spend",
-        xaxis_title="Spend ($)",
-        yaxis_title="Response ($)",
+        title=f"Saturation Curves - Total Response vs Weekly Spend ({n_periods} periods)",
+        xaxis_title="Weekly Spend ($)",
+        yaxis_title="Total Response ($)",
         hovermode='closest',
         showlegend=True,
         height=500,
@@ -1786,6 +1801,26 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
     )
 
     st.plotly_chart(fig, use_container_width=True)
+
+    # Show comparison to actual contributions
+    st.caption(f"*Curve shows total response if weekly spend is held constant across all {n_periods} periods. "
+               "Actual contributions may differ due to varying weekly spend and adstock carryover effects.*")
+
+    # Show a comparison table for all channels in the view
+    if len(channels_to_show) > 0:
+        with st.expander("📊 Compare Curve vs Actual Model Contributions"):
+            comparison_data = []
+            for curve in curves_data:
+                comparison_data.append({
+                    "Channel": curve['display_name'],
+                    "Avg Weekly Spend": f"${curve['current_spend']:,.0f}",
+                    "Curve Response (at avg spend)": f"${curve['current_response']:,.0f}",
+                    "Actual Model Contribution": f"${curve['actual_contrib']:,.0f}",
+                    "Actual Total Spend": f"${curve['actual_spend']:,.0f}",
+                })
+            st.dataframe(pd.DataFrame(comparison_data), use_container_width=True, hide_index=True)
+            st.caption("*Differences between Curve Response and Actual Contribution are due to varying weekly spend "
+                      "levels and adstock (carryover) effects in the actual model.*")
 
     # Interactive exploration (only for single channel)
     if len(channels_to_show) == 1:
@@ -1801,7 +1836,7 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
         current = int(curve['current_spend'])
 
         slider_spend = st.slider(
-            "Explore Spend Level",
+            "Explore Weekly Spend Level",
             min_value=min_spend,
             max_value=max_spend,
             value=current,
@@ -1812,26 +1847,30 @@ def _show_saturation_curves(wrapper, config, channel_cols, display_names, select
         # Calculate metrics at slider position
         # Normalize spend the same way as the curve generation
         x_max = curve['x_max']
+        n_periods = curve['n_periods']
         slider_spend_normalized = slider_spend / (x_max * spend_scale)
         slider_response_normalized = _logistic_saturation(slider_spend_normalized, curve['lam'])
-        slider_response = curve['beta'] * slider_response_normalized * revenue_scale
+
+        # Total response if you spent slider_spend every period
+        slider_response = n_periods * curve['beta'] * slider_response_normalized * revenue_scale
 
         # Marginal ROI calculation (derivative in normalized space, then scale)
+        # Note: marginal ROI is per-dollar, so it doesn't get multiplied by n_periods
         from mmm_platform.analysis.marginal_roi import logistic_saturation_derivative
         # Derivative is d(response)/d(spend_normalized), need to convert to d(response)/d(spend_real)
         marginal_normalized = logistic_saturation_derivative(slider_spend_normalized, curve['lam'])
-        # Chain rule: d(response_real)/d(spend_real) = beta * revenue_scale * d(sat)/d(normalized) * d(normalized)/d(real)
+        # Chain rule: d(response_real)/d(spend_real) = n_periods * beta * revenue_scale * d(sat)/d(normalized) * d(normalized)/d(real)
         # d(normalized)/d(real) = 1 / (x_max * spend_scale)
-        marginal_roi = curve['beta'] * revenue_scale * marginal_normalized / (x_max * spend_scale)
+        marginal_roi = n_periods * curve['beta'] * revenue_scale * marginal_normalized / (x_max * spend_scale)
 
-        # Saturation percentage (response / max_response)
-        max_response = curve['beta'] * revenue_scale  # Asymptotic max (when saturation = 1)
-        saturation_pct = (slider_response / max_response) * 100 if max_response > 0 else 0
+        # Saturation percentage (response / max_response) - doesn't depend on n_periods
+        max_response_normalized = 1.0  # Asymptotic max of saturation function
+        saturation_pct = slider_response_normalized / max_response_normalized * 100
 
         # Display metrics
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Spend", f"${slider_spend:,.0f}")
-        col2.metric("Predicted Response", f"${slider_response:,.0f}")
+        col1.metric("Weekly Spend", f"${slider_spend:,.0f}")
+        col2.metric("Total Response", f"${slider_response:,.0f}")
         col3.metric("Marginal ROI", f"${marginal_roi:.2f}")
         col4.metric("Saturation Level", f"{saturation_pct:.0f}%")
 

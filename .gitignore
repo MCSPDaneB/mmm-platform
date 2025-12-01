@@ -50,6 +50,7 @@ data/
 output/
 projects/
 ec2_results/
+mmm_workspace/
 *.mmm
 
 # Logs
