@@ -10,6 +10,49 @@ from mmm_platform.core.validation import DataValidator, ValidationResult
 from mmm_platform.config.schema import DataConfig
 
 
+def _check_config_compatibility(new_df: pd.DataFrame):
+    """Check if existing config is compatible with new dataset columns.
+
+    If columns are missing, prompts user to reset or keep config.
+    If columns match, shows a subtle confirmation.
+    """
+    config = st.session_state.get("current_config")
+
+    if config is None:
+        return  # No config to check
+
+    new_columns = set(new_df.columns)
+
+    # Get columns referenced by config
+    config_columns = set()
+    config_columns.add(config.data.date_column)
+    config_columns.add(config.data.target_column)
+    config_columns.update(ch.name for ch in config.channels)
+    config_columns.update(ctrl.name for ctrl in config.controls)
+
+    # Check if all config columns exist in new data
+    missing_columns = config_columns - new_columns
+
+    if missing_columns:
+        # Columns don't match - prompt user
+        st.warning(f"⚠️ New dataset is missing columns used in current config: **{', '.join(sorted(missing_columns))}**")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Reset Config", type="primary", key="reset_config_btn"):
+                st.session_state.current_config = None
+                st.session_state.model_fitted = False
+                st.session_state.current_model = None
+                st.success("Config reset!")
+                st.rerun()
+        with col2:
+            if st.button("Keep Config", key="keep_config_btn"):
+                st.info("Config kept. Some features may not work correctly.")
+    else:
+        # Columns match - keep config silently with subtle confirmation
+        st.info(f"✅ Existing config ({config.name}) is compatible with new dataset")
+
+
 def show():
     """Show the data upload page."""
     st.title("📁 Upload Data")
@@ -49,6 +92,9 @@ def show():
             # Store in session state
             st.session_state.current_data = df
             st.session_state.uploaded_filename = uploaded_file.name
+
+            # Check config compatibility with new data
+            _check_config_compatibility(df)
 
             # Show preview
             st.subheader("Data Preview")
