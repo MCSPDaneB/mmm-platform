@@ -143,8 +143,8 @@ class TransformEngine:
         """
         Get adstock decay means for all effective channels.
 
-        This includes paid media channels plus owned media that have both
-        adstock and saturation enabled (which are treated as channels).
+        This includes paid media channels plus all owned media variables.
+        Owned media always has adstock applied.
 
         Returns
         -------
@@ -155,17 +155,17 @@ class TransformEngine:
         # Paid media channels
         for ch in self.config.get_channel_columns():
             decays.append(self.get_adstock_decay(ch))
-        # Owned media with adstock+saturation (treated as channels)
+        # All owned media (always treated as channels)
         for om in self.config.owned_media:
-            if om.apply_adstock and om.apply_saturation:
-                decays.append(self._get_decay_from_type(om.adstock_type))
+            decays.append(self._get_decay_from_type(om.adstock_type))
         return np.array(decays)
 
     def get_effective_channel_columns(self) -> list[str]:
         """
         Get columns that should be treated as channels (adstock + saturation).
 
-        This includes paid media and owned media with both transforms enabled.
+        This includes paid media channels and all owned media variables.
+        Owned media always has adstock and saturation applied.
 
         Returns
         -------
@@ -173,10 +173,9 @@ class TransformEngine:
             List of column names to be treated as channels.
         """
         cols = list(self.config.get_channel_columns())
-        # Add owned media with both adstock and saturation
+        # Add all owned media (always treated as channels with adstock+saturation)
         for om in self.config.owned_media:
-            if om.apply_adstock and om.apply_saturation:
-                cols.append(om.name)
+            cols.append(om.name)
         return cols
 
     def compute_geometric_adstock(
@@ -385,8 +384,8 @@ class TransformEngine:
         """
         Compute lambda parameters for all effective channels.
 
-        This includes paid media channels plus owned media that have both
-        adstock and saturation enabled.
+        This includes paid media channels plus all owned media variables.
+        Owned media always has saturation applied.
 
         Parameters
         ----------
@@ -409,14 +408,13 @@ class TransformEngine:
                 ch_percentile = self.get_channel_percentile(ch)
             lams.append(self.compute_channel_lam(df, ch, ch_percentile))
 
-        # Owned media with both adstock and saturation
+        # All owned media (always have saturation applied)
         for om in self.config.owned_media:
-            if om.apply_adstock and om.apply_saturation:
-                if percentile is not None:
-                    om_percentile = percentile
-                else:
-                    om_percentile = self.get_owned_media_percentile(om.name)
-                lams.append(self.compute_channel_lam(df, om.name, om_percentile))
+            if percentile is not None:
+                om_percentile = percentile
+            else:
+                om_percentile = self.get_owned_media_percentile(om.name)
+            lams.append(self.compute_channel_lam(df, om.name, om_percentile))
 
         return np.array(lams)
 

@@ -166,27 +166,35 @@ class ChannelConfig(BaseModel):
 class OwnedMediaConfig(BaseModel):
     """Configuration for owned media channels (email, organic social, etc.).
 
-    Owned media has optional adstock and saturation (unlike paid media which requires both).
-    ROI tracking is optional since owned media may not have direct costs.
+    Owned media always has adstock and saturation applied (like paid media channels).
+    ROI tracking is optional - only set ROI priors if you have cost/spend data.
     """
     name: str = Field(..., description="Column name in the data")
     display_name: Optional[str] = Field(None, description="Human-readable name for display")
     categories: dict[str, str] = Field(default_factory=dict, description="Category values keyed by column name")
 
-    # Adstock is optional (default on)
-    apply_adstock: bool = Field(True, description="Whether to apply adstock transformation")
+    # Adstock settings (always applied)
     adstock_type: AdstockType = Field(AdstockType.MEDIUM, description="Adstock decay category")
 
-    # Saturation is optional (default on)
-    apply_saturation: bool = Field(True, description="Whether to apply saturation transformation")
+    # Saturation settings (always applied)
     curve_sharpness_override: Optional[str] = Field(None,
         description="Per-variable curve sharpness override: 'gradual', 'balanced', 'sharp', or None for global default")
 
-    # ROI is optional - only if tracking costs
-    include_roi: bool = Field(False, description="Whether to include in ROI calculations")
-    roi_prior_low: float = Field(0.1, ge=0, description="Lower bound for ROI prior")
-    roi_prior_mid: float = Field(1.0, ge=0, description="Central estimate for ROI prior")
-    roi_prior_high: float = Field(5.0, ge=0, description="Upper bound for ROI prior")
+    # ROI priors - OPTIONAL. Only set if you have cost/spend data for this variable.
+    # If roi_prior_mid is None, variable won't appear in ROI calculations.
+    roi_prior_low: Optional[float] = Field(None, ge=0, description="Lower bound for ROI prior (optional)")
+    roi_prior_mid: Optional[float] = Field(None, ge=0, description="Central estimate for ROI prior (optional)")
+    roi_prior_high: Optional[float] = Field(None, ge=0, description="Upper bound for ROI prior (optional)")
+
+    # Backward compatibility - these fields are ignored but accepted for old configs
+    apply_adstock: Optional[bool] = Field(None, description="DEPRECATED: adstock is always applied")
+    apply_saturation: Optional[bool] = Field(None, description="DEPRECATED: saturation is always applied")
+    include_roi: Optional[bool] = Field(None, description="DEPRECATED: determined by roi_prior_mid being set")
+
+    @property
+    def has_roi_priors(self) -> bool:
+        """Check if ROI priors are configured (for inclusion in ROI calculations)."""
+        return self.roi_prior_mid is not None
 
     @model_validator(mode="before")
     @classmethod
