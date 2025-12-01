@@ -359,6 +359,52 @@ class ModelPersistence:
         return models
 
     @classmethod
+    def update_config(cls, path: Union[str, Path], config: Any) -> None:
+        """
+        Update the config.json file for a saved model.
+
+        This is useful for updating metadata-only fields (like categories)
+        without re-running the model.
+
+        Parameters
+        ----------
+        path : Union[str, Path]
+            Path to the saved model directory.
+        config : ModelConfig
+            Updated model configuration.
+        """
+        path = Path(path)
+
+        if not path.exists():
+            raise FileNotFoundError(f"Model directory not found: {path}")
+
+        config_file = path / cls.CONFIG_FILE
+        if not config_file.exists():
+            raise FileNotFoundError(f"Config file not found: {config_file}")
+
+        # Save updated config
+        config_dict = config.model_dump(mode="json")
+        with open(config_file, "w") as f:
+            json.dump(config_dict, f, indent=2)
+
+        # Also update metadata with new counts if channels/controls changed
+        metadata_file = path / cls.METADATA_FILE
+        if metadata_file.exists():
+            with open(metadata_file, "r") as f:
+                metadata = json.load(f)
+
+            # Update channel/control counts
+            metadata["n_channels"] = len(config.channels)
+            metadata["n_controls"] = len(config.controls)
+            metadata["config_name"] = config.name
+            metadata["client"] = getattr(config, 'client', None)
+
+            with open(metadata_file, "w") as f:
+                json.dump(metadata, f, indent=2)
+
+        logger.info(f"Config updated for model at {path}")
+
+    @classmethod
     def get_model_hash(cls, mmm_wrapper: Any) -> str:
         """
         Generate a hash for the model configuration.

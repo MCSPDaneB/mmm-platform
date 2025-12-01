@@ -6,9 +6,11 @@ Shows two sections:
 2. Fitted Models - models that have been trained
 """
 
+import json
 import streamlit as st
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 
 from mmm_platform.model.persistence import (
     ModelPersistence,
@@ -20,6 +22,7 @@ from mmm_platform.model.persistence import (
     restore_config_to_session,
     list_clients,
 )
+from mmm_platform.config.schema import ModelConfig, CategoryColumnConfig
 
 
 def show():
@@ -298,6 +301,10 @@ def _show_models_section(client: str = "all"):
                     if st.button("🗑️ Delete", key=f"delete_model_{model_path}"):
                         _delete_path(model_path, "Model")
 
+                # Edit Categories expander
+                with st.expander("Edit Categories", expanded=False):
+                    _show_category_editor(model_path, model_path.replace("\\", "_").replace("/", "_"))
+
 
 def _save_current_config(name: str):
     """Save the current configuration."""
@@ -431,3 +438,310 @@ def _delete_path(path: str, item_type: str = "Item"):
         st.rerun()
     except Exception as e:
         st.error(f"Error deleting {item_type.lower()}: {e}")
+
+
+def _load_model_config(model_path: str) -> Optional[ModelConfig]:
+    """Load config from a saved model directory."""
+    config_file = Path(model_path) / "config.json"
+    if not config_file.exists():
+        return None
+
+    try:
+        with open(config_file, "r") as f:
+            config_dict = json.load(f)
+        return ModelConfig(**config_dict)
+    except Exception as e:
+        st.error(f"Error loading config: {e}")
+        return None
+
+
+def _generate_categories_csv(config: ModelConfig) -> str:
+    """Generate CSV content with all variables and their categories."""
+    import pandas as pd
+    import io
+
+    # Fixed columns
+    rows = []
+
+    # Get all existing category column names
+    existing_cat_cols = [col.name for col in config.category_columns]
+
+    # Add channels
+    for ch in config.channels:
+        row = {
+            "variable_name": ch.name,
+            "variable_type": "channel",
+            "display_name": ch.display_name or ch.name,
+        }
+        for cat_col in existing_cat_cols:
+            row[cat_col] = ch.categories.get(cat_col, "")
+        rows.append(row)
+
+    # Add owned media
+    for om in config.owned_media:
+        row = {
+            "variable_name": om.name,
+            "variable_type": "owned_media",
+            "display_name": om.display_name or om.name,
+        }
+        for cat_col in existing_cat_cols:
+            row[cat_col] = om.categories.get(cat_col, "")
+        rows.append(row)
+
+    # Add competitors
+    for comp in config.competitors:
+        row = {
+            "variable_name": comp.name,
+            "variable_type": "competitor",
+            "display_name": comp.display_name or comp.name,
+        }
+        for cat_col in existing_cat_cols:
+            row[cat_col] = comp.categories.get(cat_col, "")
+        rows.append(row)
+
+    # Add controls
+    for ctrl in config.controls:
+        row = {
+            "variable_name": ctrl.name,
+            "variable_type": "control",
+            "display_name": ctrl.display_name or ctrl.name,
+        }
+        for cat_col in existing_cat_cols:
+            row[cat_col] = ctrl.categories.get(cat_col, "")
+        rows.append(row)
+
+    if not rows:
+        # Empty config - return template with just headers
+        return "variable_name,variable_type,display_name\n"
+
+    df = pd.DataFrame(rows)
+    # Ensure column order: fixed cols first, then category cols
+    fixed_cols = ["variable_name", "variable_type", "display_name"]
+    col_order = fixed_cols + [c for c in df.columns if c not in fixed_cols]
+    df = df[col_order]
+
+    return df.to_csv(index=False)
+
+
+def _parse_categories_csv(csv_content: str, config: ModelConfig) -> tuple[dict, list[str], list[str], list[str], list[dict]]:
+    """
+    Parse uploaded CSV and extract category changes.
+
+    Returns:
+        (new_categories_by_var, added_columns, removed_columns, final_columns, changes_list)
+    """
+    import pandas as pd
+    import io
+
+    df = pd.read_csv(io.StringIO(csv_content))
+
+    # Fixed columns that are read-only
+    fixed_cols = {"variable_name", "variable_type", "display_name"}
+
+    # Detect category columns in CSV (anything not in fixed cols)
+    csv_category_cols = [c for c in df.columns if c not in fixed_cols]
+
+    # Get current category columns
+    current_cat_cols = {col.name for col in config.category_columns}
+
+    # Check which columns have at least one non-empty value
+    cols_with_values = set()
+    for col in csv_category_cols:
+        for val in df[col]:
+            if pd.notna(val) and str(val).strip():
+                cols_with_values.add(col)
+                break
+
+    # Determine column changes:
+    # - Added: in CSV with values, not in current
+    # - Removed: in current but not in CSV, OR in CSV but completely empty
+    added_columns = [c for c in cols_with_values if c not in current_cat_cols]
+    removed_columns = [c for c in current_cat_cols if c not in cols_with_values]
+
+    # Final columns = columns with at least one value
+    final_columns = list(cols_with_values)
+
+    # Build categories dict keyed by variable_name
+    new_categories = {}
+    for _, row in df.iterrows():
+        var_name = row["variable_name"]
+        cats = {}
+        for col in final_columns:  # Only include columns that have values
+            val = row.get(col, "")
+            if pd.notna(val) and str(val).strip():
+                cats[col] = str(val).strip()
+        new_categories[var_name] = cats
+
+    # Build list of changes for preview
+    changes = []
+
+    # Helper to get current categories for a variable
+    def get_current_cats(var_config):
+        return var_config.categories if var_config else {}
+
+    # Check all variables
+    all_vars = (
+        [(ch, "channel") for ch in config.channels] +
+        [(om, "owned_media") for om in config.owned_media] +
+        [(comp, "competitor") for comp in config.competitors] +
+        [(ctrl, "control") for ctrl in config.controls]
+    )
+
+    for var_config, var_type in all_vars:
+        var_name = var_config.name
+        current_cats = get_current_cats(var_config)
+        new_cats = new_categories.get(var_name, {})
+
+        # Check each category column (current and new)
+        all_cols = set(current_cats.keys()) | set(new_cats.keys())
+        for col in all_cols:
+            old_val = current_cats.get(col, "")
+            new_val = new_cats.get(col, "")
+            if old_val != new_val:
+                changes.append({
+                    "variable": var_name,
+                    "column": col,
+                    "old_value": old_val or "(empty)",
+                    "new_value": new_val or "(empty)",
+                })
+
+    return new_categories, added_columns, removed_columns, final_columns, changes
+
+
+def _apply_categories_from_csv(config: ModelConfig, new_categories: dict, all_category_cols: list[str]) -> ModelConfig:
+    """Apply category changes from parsed CSV to config."""
+    # Update category columns list
+    config.category_columns = [
+        CategoryColumnConfig(name=col, options=[])
+        for col in all_category_cols
+    ]
+
+    # Update channels
+    for ch in config.channels:
+        if ch.name in new_categories:
+            ch.categories = new_categories[ch.name]
+
+    # Update owned media
+    for om in config.owned_media:
+        if om.name in new_categories:
+            om.categories = new_categories[om.name]
+
+    # Update competitors
+    for comp in config.competitors:
+        if comp.name in new_categories:
+            comp.categories = new_categories[comp.name]
+
+    # Update controls
+    for ctrl in config.controls:
+        if ctrl.name in new_categories:
+            ctrl.categories = new_categories[ctrl.name]
+
+    return config
+
+
+def _show_category_editor(model_path: str, unique_key: str):
+    """Show CSV-based category editing UI for a saved model."""
+    import pandas as pd
+
+    config = _load_model_config(model_path)
+    if config is None:
+        st.warning("Could not load configuration for this model.")
+        return
+
+    edit_key = f"cat_edit_{unique_key}"
+
+    # Initialize session state
+    if edit_key not in st.session_state:
+        st.session_state[edit_key] = {
+            "uploaded_csv": None,
+            "preview_data": None,
+        }
+
+    edit_state = st.session_state[edit_key]
+
+    st.caption("Download the categories template, edit in Excel/Sheets, then upload to update.")
+
+    # Download button
+    csv_content = _generate_categories_csv(config)
+    model_name = Path(model_path).name
+    st.download_button(
+        label="Download Categories CSV",
+        data=csv_content,
+        file_name=f"{model_name}_categories.csv",
+        mime="text/csv",
+        key=f"{edit_key}_download",
+    )
+
+    st.markdown("---")
+
+    # Upload section
+    uploaded_file = st.file_uploader(
+        "Upload Updated CSV",
+        type=["csv"],
+        key=f"{edit_key}_upload",
+        help="Upload a modified CSV to update categories. Add new columns to create new category groupings."
+    )
+
+    if uploaded_file is not None:
+        try:
+            csv_content = uploaded_file.getvalue().decode("utf-8")
+            new_categories, added_cols, removed_cols, final_cols, changes = _parse_categories_csv(csv_content, config)
+
+            # Store for apply
+            edit_state["preview_data"] = {
+                "new_categories": new_categories,
+                "added_cols": added_cols,
+                "removed_cols": removed_cols,
+                "final_cols": final_cols,
+                "changes": changes,
+                "csv_content": csv_content,
+            }
+
+            # Show preview
+            st.markdown("##### Preview Changes")
+
+            if added_cols:
+                st.success(f"New category columns: **{', '.join(added_cols)}**")
+
+            if removed_cols:
+                st.warning(f"Removed category columns: **{', '.join(removed_cols)}**")
+
+            if changes:
+                st.markdown(f"**{len(changes)} value change(s) detected:**")
+
+                # Show changes as a table
+                changes_df = pd.DataFrame(changes)
+                changes_df.columns = ["Variable", "Category Column", "Old Value", "New Value"]
+                st.dataframe(changes_df, use_container_width=True, hide_index=True)
+            elif not added_cols and not removed_cols:
+                st.info("No changes detected.")
+
+            # Apply / Cancel buttons
+            col1, col2 = st.columns(2)
+            with col1:
+                has_changes = changes or added_cols or removed_cols
+                if has_changes:
+                    if st.button("Apply Changes", key=f"{edit_key}_apply", type="primary"):
+                        try:
+                            # Apply changes using final_cols (only columns with values)
+                            updated_config = _apply_categories_from_csv(config, new_categories, final_cols)
+
+                            # Save
+                            ModelPersistence.update_config(model_path, updated_config)
+
+                            # Clear state
+                            del st.session_state[edit_key]
+
+                            st.success("Categories updated successfully!")
+                            st.rerun()
+
+                        except Exception as e:
+                            st.error(f"Error applying changes: {e}")
+
+            with col2:
+                if st.button("Cancel", key=f"{edit_key}_cancel"):
+                    del st.session_state[edit_key]
+                    st.rerun()
+
+        except Exception as e:
+            st.error(f"Error parsing CSV: {e}")
