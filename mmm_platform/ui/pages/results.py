@@ -1998,8 +1998,8 @@ def _show_roi_curves(wrapper, config, channel_cols, display_names, selected_chan
 
     posterior = wrapper.idata.posterior
 
-    # Time period selector (same as saturation curves)
-    col1, col2 = st.columns([1, 3])
+    # Controls row: Time period and ROI type toggles
+    col1, col2, col3 = st.columns([1, 1, 2])
     with col1:
         time_period = st.selectbox(
             "Time Period",
@@ -2008,8 +2008,19 @@ def _show_roi_curves(wrapper, config, channel_cols, display_names, selected_chan
             help="Weekly shows ROI per week. Yearly shows annualized ROI.",
             key="roi_time_period"
         )
+    with col2:
+        show_avg_roi = st.checkbox("Average ROI", value=True, key="show_avg_roi",
+                                   help="Total return / total spend at each level")
+        show_marginal_roi = st.checkbox("Marginal ROI", value=True, key="show_marginal_roi",
+                                        help="Return on the next dollar spent")
+
     time_multiplier = 52 if time_period == "Yearly" else 1
     period_label = "Yearly" if time_period == "Yearly" else "Weekly"
+
+    # Ensure at least one is selected
+    if not show_avg_roi and not show_marginal_roi:
+        st.warning("Please select at least one ROI type to display.")
+        return
 
     # Determine which channels to show
     if selected_channel == "All Channels":
@@ -2091,38 +2102,47 @@ def _show_roi_curves(wrapper, config, channel_cols, display_names, selected_chan
     for idx, curve in enumerate(curves_data):
         color = colors[idx % len(colors)]
 
-        # Average ROI curve (solid)
-        fig.add_trace(go.Scatter(
-            x=curve['spend_range'],
-            y=curve['avg_roi'],
-            mode='lines',
-            name=f"{curve['display_name']} - Avg ROI",
-            line=dict(color=color, width=3),
-            hovertemplate=f"<b>{curve['display_name']} - Avg ROI</b><br>" +
-                         f"{period_label} Spend: $%{{x:,.0f}}<br>Avg ROI: %{{y:.2f}}<extra></extra>"
-        ))
+        # Average ROI curve (solid) - if toggled on
+        if show_avg_roi:
+            fig.add_trace(go.Scatter(
+                x=curve['spend_range'],
+                y=curve['avg_roi'],
+                mode='lines',
+                name=f"{curve['display_name']} - Avg ROI" if show_marginal_roi else curve['display_name'],
+                line=dict(color=color, width=3),
+                hovertemplate=f"<b>{curve['display_name']} - Avg ROI</b><br>" +
+                             f"{period_label} Spend: $%{{x:,.0f}}<br>Avg ROI: %{{y:.2f}}<extra></extra>"
+            ))
 
-        # Marginal ROI curve (dashed)
-        fig.add_trace(go.Scatter(
-            x=curve['spend_range'],
-            y=curve['marginal_roi'],
-            mode='lines',
-            name=f"{curve['display_name']} - Marginal ROI",
-            line=dict(color=color, width=2, dash='dash'),
-            hovertemplate=f"<b>{curve['display_name']} - Marginal ROI</b><br>" +
-                         f"{period_label} Spend: $%{{x:,.0f}}<br>Marginal ROI: %{{y:.2f}}<extra></extra>"
-        ))
+        # Marginal ROI curve (dashed) - if toggled on
+        if show_marginal_roi:
+            fig.add_trace(go.Scatter(
+                x=curve['spend_range'],
+                y=curve['marginal_roi'],
+                mode='lines',
+                name=f"{curve['display_name']} - Marginal ROI" if show_avg_roi else curve['display_name'],
+                line=dict(color=color, width=2, dash='dash'),
+                hovertemplate=f"<b>{curve['display_name']} - Marginal ROI</b><br>" +
+                             f"{period_label} Spend: $%{{x:,.0f}}<br>Marginal ROI: %{{y:.2f}}<extra></extra>"
+            ))
 
-        # Current position markers
+        # Current position marker - show on whichever curve is visible
+        if show_avg_roi:
+            marker_y = curve['current_avg_roi']
+            marker_label = "Avg ROI"
+        else:
+            marker_y = curve['current_marginal_roi']
+            marker_label = "Marginal ROI"
+
         fig.add_trace(go.Scatter(
             x=[curve['current_spend']],
-            y=[curve['current_avg_roi']],
+            y=[marker_y],
             mode='markers',
             name=f"{curve['display_name']} (Current)",
             marker=dict(size=12, color=color, symbol='circle',
                        line=dict(width=2, color='black')),
             hovertemplate=f"<b>{curve['display_name']} - Current</b><br>" +
-                         f"Spend: $%{{x:,.0f}}<br>Avg ROI: %{{y:.2f}}<extra></extra>",
+                         f"Spend: $%{{x:,.0f}}<br>{marker_label}: %{{y:.2f}}<extra></extra>",
             showlegend=False
         ))
 
@@ -2142,10 +2162,16 @@ def _show_roi_curves(wrapper, config, channel_cols, display_names, selected_chan
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Caption
-    st.caption("*Solid lines show Average ROI (total return / total spend). "
-               "Dashed lines show Marginal ROI (return on next dollar). "
-               "When Marginal ROI < 1.0, additional spend loses money.*")
+    # Dynamic caption based on what's shown
+    if show_avg_roi and show_marginal_roi:
+        st.caption("*Solid lines show Average ROI (total return / total spend). "
+                   "Dashed lines show Marginal ROI (return on next dollar). "
+                   "When Marginal ROI < 1.0, additional spend loses money.*")
+    elif show_avg_roi:
+        st.caption("*Average ROI = total return / total spend at each level.*")
+    else:
+        st.caption("*Marginal ROI = return on the next dollar spent. "
+                   "When Marginal ROI < 1.0, additional spend loses money.*")
 
     # Metrics for single channel
     if len(channels_to_show) == 1:
