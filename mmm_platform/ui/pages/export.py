@@ -405,7 +405,7 @@ def _show_combined_model_export(
             ),
         },
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
         key="export_config_editor",
     )
 
@@ -487,7 +487,7 @@ def _show_combined_model_export(
                 )
 
                 with st.expander("Preview (first 10 rows)"):
-                    st.dataframe(df_decomps.head(10), use_container_width=True)
+                    st.dataframe(df_decomps.head(10), width="stretch")
 
                 st.caption(f"{len(df_decomps):,} rows × {len(df_decomps.columns)} columns")
 
@@ -516,7 +516,7 @@ def _show_combined_model_export(
                 )
 
                 with st.expander("Preview (first 10 rows)"):
-                    st.dataframe(df_media.head(10), use_container_width=True)
+                    st.dataframe(df_media.head(10), width="stretch")
 
                 st.caption(f"{len(df_media):,} rows × {len(df_media.columns)} columns")
 
@@ -545,7 +545,7 @@ def _show_combined_model_export(
                 )
 
                 with st.expander("Preview (first 10 rows)"):
-                    st.dataframe(df_fit.head(10), use_container_width=True)
+                    st.dataframe(df_fit.head(10), width="stretch")
 
                 st.caption(f"{len(df_fit):,} rows × {len(df_fit.columns)} columns")
 

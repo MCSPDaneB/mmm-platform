@@ -712,7 +712,7 @@ def _show_category_editor(model_path: str, unique_key: str):
                 # Show changes as a table
                 changes_df = pd.DataFrame(changes)
                 changes_df.columns = ["Variable", "Category Column", "Old Value", "New Value"]
-                st.dataframe(changes_df, use_container_width=True, hide_index=True)
+                st.dataframe(changes_df, width="stretch", hide_index=True)
             elif not added_cols and not removed_cols:
                 st.info("No changes detected.")
 
