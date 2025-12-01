@@ -731,6 +731,11 @@ def show():
 
             st.info("**Note:** Owned media always has adstock and saturation applied. ROI priors are optional - only set them if you have cost/spend data for these variables.")
 
+            # Category columns manager (same as paid media)
+            render_category_columns_manager(key_prefix="owned_media_")
+
+            st.markdown("---")
+
             # Get saved settings
             saved_om_config = st.session_state.get("config_state", {}).get("owned_media", [])
             om_config_dict = {om["name"]: om for om in saved_om_config}
