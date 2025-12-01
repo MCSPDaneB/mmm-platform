@@ -158,6 +158,9 @@ def show():
         # Get saved values from config_state
         saved_data = st.session_state.config_state
 
+        # Get config version for widget keys (forces re-init when config loaded)
+        config_version = st.session_state.get("config_version", 0)
+
         col1, col2 = st.columns(2)
 
         with col1:
@@ -209,6 +212,7 @@ def show():
                 "Date Column",
                 options=date_options,
                 index=date_index,
+                key=f"date_col_select_{config_version}",
             )
 
             # Target column - try to find saved value in numeric columns
@@ -219,6 +223,7 @@ def show():
                 "Target Column",
                 options=target_options,
                 index=target_index,
+                key=f"target_col_select_{config_version}",
             )
 
         with col2:
@@ -273,16 +278,21 @@ def show():
                     trend_default = False
 
             with trend_col2:
-                # Checkbox with data-driven default from trend detection
+                # Use saved value if available, otherwise fall back to trend detection
+                saved_include_trend = saved_data.get("include_trend")
+                checkbox_default = saved_include_trend if saved_include_trend is not None else trend_default
+
                 include_trend = st.checkbox(
                     "Include Trend",
-                    value=trend_default,
+                    value=checkbox_default,
+                    key=f"include_trend_check_{config_version}",
                     help="Add a linear time trend (t=1,2,3,...) as a control variable"
                 )
         else:
             include_trend = st.checkbox(
                 "Include Time Trend",
                 value=saved_data.get("include_trend", True),
+                key=f"include_trend_check_fallback_{config_version}",
                 help="Add a linear time trend (t=1,2,3,...) as a control variable"
             )
 

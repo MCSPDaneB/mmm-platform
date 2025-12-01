@@ -6,7 +6,7 @@ These formats are designed for upload to external visualization platforms.
 
 import pandas as pd
 import numpy as np
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, List, Tuple
 
 if TYPE_CHECKING:
     from mmm_platform.model.mmm import MMMWrapper
@@ -257,5 +257,356 @@ def generate_actual_vs_fitted(
             'actual_fitted': 'Fitted',
             'value': fitted.loc[date_val]
         })
+
+    return pd.DataFrame(rows)
+
+
+# =============================================================================
+# Combined Model Export Functions
+# =============================================================================
+
+
+def generate_combined_decomps_stacked(
+    wrappers_with_labels: List[Tuple["MMMWrapper", str]],
+    brand: str
+) -> pd.DataFrame:
+    """
+    Generate stacked decomposition export combining multiple models.
+
+    Creates a long-format DataFrame with one row per date per decomposition component,
+    with separate KPI columns for each model plus a total column.
+
+    Parameters
+    ----------
+    wrappers_with_labels : List[Tuple[MMMWrapper, str]]
+        List of (wrapper, label) tuples. Labels are used for column names (e.g., "online", "offline")
+    brand : str
+        Brand name for the export
+
+    Returns
+    -------
+    pd.DataFrame
+        Stacked decomposition data with columns:
+        date, wc_mon, brand, decomp, decomp_lvl1, decomp_lvl2, kpi_{label1}, kpi_{label2}, kpi_total
+    """
+    if len(wrappers_with_labels) < 2:
+        raise ValueError("At least 2 models required for combined export")
+
+    # Get contributions and configs from all wrappers
+    all_contribs = []
+    all_configs = []
+    labels = []
+    revenue_scales = []
+
+    for wrapper, label in wrappers_with_labels:
+        contribs = wrapper.get_contributions()
+        all_contribs.append(contribs)
+        all_configs.append(wrapper.config)
+        labels.append(label)
+        revenue_scales.append(wrapper.config.data.revenue_scale)
+
+    # Find common dates (inner join)
+    common_dates = all_contribs[0].index
+    for contribs in all_contribs[1:]:
+        common_dates = common_dates.intersection(contribs.index)
+
+    # Get all unique decomp components across all models
+    all_components = set()
+    for contribs in all_contribs:
+        all_components.update(contribs.columns)
+
+    # Use first config for category columns (assume same structure)
+    config = all_configs[0]
+    cat_col_names = config.get_category_column_names()
+
+    rows = []
+    for date_val in common_dates:
+        for col in sorted(all_components):
+            # Determine display name and categories from first config that has this component
+            display_name = col.replace("_", " ").title()
+            categories = []
+
+            for cfg in all_configs:
+                channel_cfg = cfg.get_channel_by_name(col)
+                control_cfg = cfg.get_control_by_name(col)
+
+                if channel_cfg:
+                    display_name = channel_cfg.get_display_name()
+                    categories = [channel_cfg.get_category(cat_name) for cat_name in cat_col_names]
+                    break
+                elif control_cfg:
+                    display_name = control_cfg.get_display_name()
+                    categories = [control_cfg.get_category(cat_name) for cat_name in cat_col_names]
+                    break
+                else:
+                    # Base component
+                    if col in ['intercept', 'trend']:
+                        base_category = "Base"
+                    elif 'season' in col.lower() or 'fourier' in col.lower():
+                        base_category = "Seasonality"
+                    else:
+                        base_category = "Other"
+                    categories = [base_category] * len(cat_col_names)
+
+            # If no category columns defined, use display_name
+            if not categories:
+                categories = [display_name, display_name]
+
+            # Build row
+            row = {
+                'date': date_val,
+                'wc_mon': date_val,
+                'brand': brand,
+                'decomp': col,
+            }
+
+            # Add category levels
+            for i, cat_val in enumerate(categories):
+                row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
+
+            # Ensure at least lvl1 and lvl2
+            if len(categories) < 1:
+                row['decomp_lvl1'] = display_name
+            if len(categories) < 2:
+                row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
+
+            # Add KPI values for each model
+            total = 0
+            for idx, (contribs, label, scale) in enumerate(zip(all_contribs, labels, revenue_scales)):
+                if col in contribs.columns:
+                    value = contribs.loc[date_val, col] * scale
+                else:
+                    value = 0
+                row[f'kpi_{label}'] = value
+                total += value
+
+            row['kpi_total'] = total
+
+            rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def generate_combined_media_results(
+    wrappers_with_labels: List[Tuple["MMMWrapper", str]],
+    brand: str
+) -> pd.DataFrame:
+    """
+    Generate media results export combining multiple models (channels only).
+
+    Creates a long-format DataFrame with one row per date per media channel,
+    with separate KPI columns for each model plus a total column.
+    Spend is a single column (same business spend regardless of KPI).
+
+    Parameters
+    ----------
+    wrappers_with_labels : List[Tuple[MMMWrapper, str]]
+        List of (wrapper, label) tuples
+    brand : str
+        Brand name for the export
+
+    Returns
+    -------
+    pd.DataFrame
+        Media results data with columns:
+        date, wc_mon, brand, decomp_lvl1, decomp_lvl2, spend, kpi_{label}, kpi_total, decomp
+    """
+    if len(wrappers_with_labels) < 2:
+        raise ValueError("At least 2 models required for combined export")
+
+    # Get contributions and configs from all wrappers
+    all_contribs = []
+    all_configs = []
+    all_scaled_dfs = []
+    labels = []
+    revenue_scales = []
+    spend_scales = []
+
+    for wrapper, label in wrappers_with_labels:
+        all_contribs.append(wrapper.get_contributions())
+        all_configs.append(wrapper.config)
+        all_scaled_dfs.append(wrapper.df_scaled)
+        labels.append(label)
+        revenue_scales.append(wrapper.config.data.revenue_scale)
+        spend_scales.append(wrapper.config.data.spend_scale)
+
+    # Find common dates
+    common_dates = all_contribs[0].index
+    for contribs in all_contribs[1:]:
+        common_dates = common_dates.intersection(contribs.index)
+
+    # Get all unique channels across all models
+    all_channels = set()
+    channel_configs = {}  # col_name -> first config that has it
+    for cfg in all_configs:
+        for channel_cfg in cfg.channels:
+            if channel_cfg.name not in channel_configs:
+                channel_configs[channel_cfg.name] = channel_cfg
+            all_channels.add(channel_cfg.name)
+
+    # Use first config for category columns and spend
+    config = all_configs[0]
+    cat_col_names = config.get_category_column_names()
+    spend_scale = spend_scales[0]  # Use first model's spend scale (should be same)
+
+    rows = []
+    for date_idx, date_val in enumerate(common_dates):
+        for col in sorted(all_channels):
+            channel_cfg = channel_configs.get(col)
+            if not channel_cfg:
+                continue
+
+            # Get display name and categories
+            display_name = channel_cfg.get_display_name()
+            categories = [channel_cfg.get_category(cat_name) for cat_name in cat_col_names]
+
+            if not categories:
+                categories = [display_name, display_name]
+
+            # Build row
+            row = {
+                'date': date_val,
+                'wc_mon': date_val,
+                'brand': brand,
+            }
+
+            # Add category levels
+            for i, cat_val in enumerate(categories):
+                row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
+
+            if len(categories) < 1:
+                row['decomp_lvl1'] = display_name
+            if len(categories) < 2:
+                row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
+
+            # Get spend from first model that has this channel (spend is same for all KPIs)
+            spend = 0
+            for idx, df_scaled in enumerate(all_scaled_dfs):
+                if col in df_scaled.columns:
+                    date_col = all_configs[idx].data.date_column
+                    if date_col in df_scaled.columns:
+                        mask = df_scaled[date_col] == date_val
+                        if mask.any():
+                            spend = df_scaled.loc[mask, col].iloc[0] * spend_scale
+                            break  # Found spend, no need to check other models
+            row['spend'] = spend
+
+            # Add KPI contribution for each model
+            kpi_total = 0
+            for idx, (contribs, label, rev_scale) in enumerate(
+                zip(all_contribs, labels, revenue_scales)
+            ):
+                if col in contribs.columns and date_val in contribs.index:
+                    kpi_value = contribs.loc[date_val, col] * rev_scale
+                else:
+                    kpi_value = 0
+                row[f'kpi_{label}'] = kpi_value
+                kpi_total += kpi_value
+
+            row['kpi_total'] = kpi_total
+            row['decomp'] = col
+
+            # Placeholders
+            row['impressions'] = 0
+            row['clicks'] = 0
+
+            rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def generate_combined_actual_vs_fitted(
+    wrappers_with_labels: List[Tuple["MMMWrapper", str]],
+    brand: str
+) -> pd.DataFrame:
+    """
+    Generate actual vs fitted export combining multiple models.
+
+    Creates a long-format DataFrame with two rows per date (Actual and Fitted),
+    with separate value columns for each model plus a total column.
+
+    Parameters
+    ----------
+    wrappers_with_labels : List[Tuple[MMMWrapper, str]]
+        List of (wrapper, label) tuples
+    brand : str
+        Brand name for the export
+
+    Returns
+    -------
+    pd.DataFrame
+        Actual vs fitted data with columns:
+        date, wc_mon, brand, actual_fitted, value_{label1}, value_{label2}, value_total
+    """
+    if len(wrappers_with_labels) < 2:
+        raise ValueError("At least 2 models required for combined export")
+
+    # Get contributions and configs
+    all_contribs = []
+    all_configs = []
+    all_scaled_dfs = []
+    labels = []
+    revenue_scales = []
+
+    for wrapper, label in wrappers_with_labels:
+        all_contribs.append(wrapper.get_contributions())
+        all_configs.append(wrapper.config)
+        all_scaled_dfs.append(wrapper.df_scaled)
+        labels.append(label)
+        revenue_scales.append(wrapper.config.data.revenue_scale)
+
+    # Find common dates
+    common_dates = all_contribs[0].index
+    for contribs in all_contribs[1:]:
+        common_dates = common_dates.intersection(contribs.index)
+
+    rows = []
+    for date_val in common_dates:
+        # Actual row
+        actual_row = {
+            'date': date_val,
+            'wc_mon': date_val,
+            'brand': brand,
+            'actual_fitted': 'Actual',
+        }
+
+        actual_total = 0
+        for idx, (df_scaled, cfg, label, scale) in enumerate(
+            zip(all_scaled_dfs, all_configs, labels, revenue_scales)
+        ):
+            date_col = cfg.data.date_column
+            target_col = cfg.data.target_column
+
+            # Get actual value
+            df_indexed = df_scaled.set_index(date_col)
+            if date_val in df_indexed.index:
+                actual = df_indexed.loc[date_val, target_col] * scale
+            else:
+                actual = np.nan
+            actual_row[f'value_{label}'] = actual
+            if not np.isnan(actual):
+                actual_total += actual
+
+        actual_row['value_total'] = actual_total
+        rows.append(actual_row)
+
+        # Fitted row
+        fitted_row = {
+            'date': date_val,
+            'wc_mon': date_val,
+            'brand': brand,
+            'actual_fitted': 'Fitted',
+        }
+
+        fitted_total = 0
+        for idx, (contribs, label, scale) in enumerate(
+            zip(all_contribs, labels, revenue_scales)
+        ):
+            fitted = contribs.loc[date_val].sum() * scale
+            fitted_row[f'value_{label}'] = fitted
+            fitted_total += fitted
+
+        fitted_row['value_total'] = fitted_total
+        rows.append(fitted_row)
 
     return pd.DataFrame(rows)

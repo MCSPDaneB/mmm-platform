@@ -485,6 +485,8 @@ class ConfigPersistence:
             # Multiselect states for channels and controls
             "channel_multiselect": session_state.get("channel_multiselect", []),
             "control_multiselect": session_state.get("control_multiselect", []),
+            # Also save include_trend explicitly for backwards compatibility
+            "include_trend": session_state.get("config_state", {}).get("include_trend", True),
         }
 
         with open(config_dir / cls.SESSION_FILE, "w") as f:
@@ -647,19 +649,44 @@ def restore_config_to_session(config: Any, data: pd.DataFrame, session_state: di
     if "category_columns" in session_state:
         updates["category_columns"] = session_state["category_columns"]
 
-    # Restore config_state (channels, controls settings from UI)
-    if "config_state" in session_state:
-        updates["config_state"] = session_state["config_state"]
+    # Restore config_state: start with saved values, then MERGE authoritative values from config
+    # This ensures config.json is the source of truth while preserving other session fields
+    config_state = session_state.get("config_state", {}).copy() if session_state.get("config_state") else {}
 
-    # Restore data settings
-    if session_state.get("date_column"):
+    # ALWAYS merge/override with authoritative values from loaded ModelConfig
+    if config is not None:
+        config_state["name"] = config.name
+        config_state["client"] = config.client
+        config_state["description"] = config.description
+        if config.data:
+            config_state["date_col"] = config.data.date_column
+            config_state["target_col"] = config.data.target_column
+            config_state["revenue_scale"] = config.data.revenue_scale
+            config_state["spend_scale"] = config.data.spend_scale
+            config_state["dayfirst"] = config.data.dayfirst
+            config_state["include_trend"] = config.data.include_trend
+            config_state["model_start_date"] = config.data.model_start_date
+            config_state["model_end_date"] = config.data.model_end_date
+
+    updates["config_state"] = config_state
+
+    # Restore data settings - ALWAYS prefer config values (authoritative source)
+    if config is not None and config.data and config.data.date_column:
+        updates["date_column"] = config.data.date_column
+    elif session_state.get("date_column"):
         updates["date_column"] = session_state["date_column"]
-    if session_state.get("target_column"):
+
+    if config is not None and config.data and config.data.target_column:
+        updates["target_column"] = config.data.target_column
+    elif session_state.get("target_column"):
         updates["target_column"] = session_state["target_column"]
+
     if session_state.get("detected_channels"):
         updates["detected_channels"] = session_state["detected_channels"]
     if "dayfirst" in session_state:
         updates["dayfirst"] = session_state["dayfirst"]
+    elif config is not None and config.data:
+        updates["dayfirst"] = config.data.dayfirst
 
     # Restore multiselect states for channels and controls
     if session_state.get("channel_multiselect"):

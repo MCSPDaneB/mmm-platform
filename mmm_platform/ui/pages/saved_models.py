@@ -346,6 +346,10 @@ def _load_config(path: str):
             if value is not None:
                 st.session_state[key] = value
 
+        # Increment config version to force widget reset in configure_model page
+        # This ensures selectboxes/checkboxes re-initialize with loaded values
+        st.session_state["config_version"] = st.session_state.get("config_version", 0) + 1
+
         st.success(
             "Configuration loaded! Navigate to **Configure Model** to continue editing."
         )
@@ -400,6 +404,9 @@ def _load_model(path: str, navigate_to_results: bool = False):
                     st.session_state.detected_channels = session_state["detected_channels"]
                 if "dayfirst" in session_state:
                     st.session_state.dayfirst = session_state["dayfirst"]
+
+        # Increment config version to force widget reset in configure_model page
+        st.session_state["config_version"] = st.session_state.get("config_version", 0) + 1
 
         if navigate_to_results:
             st.success("Model loaded! Navigating to Results...")

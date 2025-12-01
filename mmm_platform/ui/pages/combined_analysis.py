@@ -79,7 +79,7 @@ def show():
     selected_options = st.multiselect(
         "Select models to combine",
         options=list(model_options.keys()),
-        default=list(model_options.keys())[:2] if len(model_options) >= 2 else [],
+        default=[],
         help="Select at least 2 models to combine",
     )
 
