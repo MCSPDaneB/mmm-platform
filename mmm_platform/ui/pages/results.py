@@ -201,7 +201,7 @@ def show():
     exec_generator = ExecutiveSummaryGenerator(marginal_analyzer)
 
     # Tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
         "Overview",
         "Channel ROI",
         "Marginal ROI & Priority",
@@ -212,7 +212,8 @@ def show():
         "Export",
         "Visualizations",
         "Model Coefficients",
-        "Media Curves"
+        "Media Curves",
+        "Owned Media"
     ])
 
     # =========================================================================
@@ -612,12 +613,12 @@ def show():
         for channel_config in config.channels:
             prior_rois[channel_config.name] = channel_config.roi_prior_mid
 
-        # Create analyzer
+        # Create analyzer (paid media only)
         try:
             sig_analyzer = BayesianSignificanceAnalyzer(
                 idata=wrapper.idata,
                 df_scaled=wrapper.df_scaled,
-                channel_cols=wrapper.transform_engine.get_effective_channel_columns(),
+                channel_cols=config.get_channel_columns(),  # Paid media only
                 target_col=config.data.target_column,
                 prior_rois=prior_rois,
             )
@@ -1237,10 +1238,10 @@ def show():
                         st.session_state.pending_dummies.pop(i)
                         st.rerun()
 
-        # Channel contributions over time
+        # Channel contributions over time (paid media only)
         st.subheader("Channel Contributions Over Time")
 
-        channel_cols = wrapper.transform_engine.get_effective_channel_columns()
+        channel_cols = config.get_channel_columns()  # Paid media only
         channel_contribs = contribs[[c for c in channel_cols if c in contribs.columns]] * config.data.revenue_scale
 
         fig3 = go.Figure()
@@ -1321,7 +1322,7 @@ def show():
             sig_analyzer_export = BayesianSignificanceAnalyzer(
                 idata=wrapper.idata,
                 df_scaled=wrapper.df_scaled,
-                channel_cols=wrapper.transform_engine.get_effective_channel_columns(),
+                channel_cols=config.get_channel_columns(),  # Paid media only
                 target_col=config.data.target_column,
                 prior_rois=prior_rois_export,
             )
@@ -1368,9 +1369,9 @@ def show():
 
         try:
             if viz_option == "Contribution Waterfall":
-                # Get contributions by component
+                # Get contributions by component (paid media only)
                 contribs_df = wrapper.get_contributions()
-                channel_cols = wrapper.transform_engine.get_effective_channel_columns()
+                channel_cols = config.get_channel_columns()  # Paid media only
 
                 # Build contribution dict
                 contrib_dict = {}
@@ -1406,7 +1407,7 @@ def show():
 
             elif viz_option == "Stacked Contributions Over Time":
                 contribs_df = wrapper.get_contributions()
-                channel_cols = wrapper.transform_engine.get_effective_channel_columns()
+                channel_cols = config.get_channel_columns()  # Paid media only
                 dates = contribs_df.index
                 channel_contribs = contribs_df[[c for c in channel_cols if c in contribs_df.columns]] * config.data.revenue_scale
                 fig = create_stacked_contributions_area(dates, channel_contribs)
@@ -1424,8 +1425,8 @@ def show():
                 fig = create_roi_effectiveness_bubble(metrics)
 
             elif viz_option == "Response Curves":
-                # Get response curve data from the model
-                channel_cols = wrapper.transform_engine.get_effective_channel_columns()
+                # Get response curve data from the model (paid media only)
+                channel_cols = config.get_channel_columns()  # Paid media only
                 curves = []
 
                 # Try to extract saturation parameters from the model
@@ -1507,10 +1508,10 @@ def show():
         try:
             idata = wrapper.idata
 
-            # Channels (saturation_beta)
+            # Channels (saturation_beta) - paid media only
             if "saturation_beta" in idata.posterior:
                 beta_summary = az.summary(idata, var_names=["saturation_beta"], hdi_prob=0.95)
-                channel_cols = wrapper.transform_engine.get_effective_channel_columns()
+                channel_cols = config.get_channel_columns()  # Paid media only
                 for i, ch in enumerate(channel_cols):
                     try:
                         row = beta_summary.iloc[i]
@@ -1623,15 +1624,13 @@ def show():
             if not has_saturation:
                 st.warning("Saturation parameters not found in model posterior")
             else:
-                # Get channel info
-                channel_cols = wrapper.transform_engine.get_effective_channel_columns()
+                # Get channel info (paid media only)
+                channel_cols = config.get_channel_columns()  # Paid media only
 
-                # Build display names
+                # Build display names (paid media only)
                 display_names = {}
                 for ch_config in config.channels:
                     display_names[ch_config.name] = ch_config.get_display_name()
-                for om_config in config.owned_media:
-                    display_names[om_config.name] = om_config.get_display_name()
 
                 channel_display_names = [display_names.get(ch, ch) for ch in channel_cols]
 
@@ -1669,6 +1668,324 @@ def show():
                         wrapper, config, channel_cols, display_names,
                         selected_channel
                     )
+
+    # =========================================================================
+    # Tab 12: Owned Media
+    # =========================================================================
+    with tab12:
+        st.header("Owned Media Analysis")
+
+        owned_media_cols = config.get_owned_media_columns()
+
+        if not owned_media_cols:
+            st.info("No owned media configured for this model.")
+        else:
+            # Build display names for owned media
+            om_display_names = {
+                om.name: om.get_display_name() for om in config.owned_media
+            }
+
+            # Sub-tabs for organized analysis
+            om_tab1, om_tab2, om_tab3, om_tab4 = st.tabs([
+                "Contributions",
+                "Coefficients",
+                "Response Curves",
+                "Significance"
+            ])
+
+            # -----------------------------------------------------------------
+            # Sub-tab 1: Contributions
+            # -----------------------------------------------------------------
+            with om_tab1:
+                st.subheader("Owned Media Contributions Over Time")
+
+                try:
+                    contribs_df = wrapper.get_contributions()
+                    om_contribs = contribs_df[[c for c in owned_media_cols if c in contribs_df.columns]] * config.data.revenue_scale
+
+                    if om_contribs.empty or om_contribs.shape[1] == 0:
+                        st.warning("No contribution data available for owned media.")
+                    else:
+                        fig = go.Figure()
+                        for om in owned_media_cols:
+                            if om in om_contribs.columns:
+                                display_name = om_display_names.get(om, om)
+                                fig.add_trace(go.Scatter(
+                                    x=contribs_df.index,
+                                    y=om_contribs[om],
+                                    name=display_name,
+                                    stackgroup="one"
+                                ))
+
+                        fig.update_layout(
+                            title="Stacked Owned Media Contributions",
+                            xaxis_title="Date",
+                            yaxis_title=f"Contribution ({config.data.target_column})",
+                            hovermode="x unified",
+                            template="plotly_dark",
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+
+                        # Summary table
+                        st.subheader("Contribution Summary")
+                        summary_data = []
+                        for om in owned_media_cols:
+                            if om in contribs_df.columns:
+                                total_contrib = contribs_df[om].sum() * config.data.revenue_scale
+                                avg_contrib = contribs_df[om].mean() * config.data.revenue_scale
+                                summary_data.append({
+                                    "Owned Media": om_display_names.get(om, om),
+                                    "Total Contribution": f"${total_contrib:,.0f}",
+                                    "Avg Weekly": f"${avg_contrib:,.0f}",
+                                })
+                        if summary_data:
+                            st.dataframe(pd.DataFrame(summary_data), use_container_width=True)
+
+                except Exception as e:
+                    st.error(f"Error loading contributions: {e}")
+
+            # -----------------------------------------------------------------
+            # Sub-tab 2: Coefficients
+            # -----------------------------------------------------------------
+            with om_tab2:
+                st.subheader("Owned Media Coefficients")
+
+                try:
+                    idata = wrapper.idata
+                    variables_data = []
+
+                    # Owned media coefficients are in saturation_beta after paid media
+                    if "saturation_beta" in idata.posterior:
+                        beta_summary = az.summary(idata, var_names=["saturation_beta"], hdi_prob=0.95)
+                        paid_channel_count = len(config.get_channel_columns())
+
+                        for i, om in enumerate(owned_media_cols):
+                            try:
+                                # Owned media starts after paid channels in the index
+                                idx = paid_channel_count + i
+                                row = beta_summary.iloc[idx]
+                                hdi_low = row["hdi_2.5%"]
+                                hdi_high = row["hdi_97.5%"]
+                                significant = "Yes" if (hdi_low > 0 or hdi_high < 0) else "No"
+                                variables_data.append({
+                                    "Variable": om_display_names.get(om, om),
+                                    "Type": "Owned Media",
+                                    "Coef Mean": f"{row['mean']:.4f}",
+                                    "Coef Std": f"{row['sd']:.4f}",
+                                    "95% HDI": f"[{hdi_low:.4f}, {hdi_high:.4f}]",
+                                    "Significant": significant
+                                })
+                            except Exception:
+                                pass
+
+                    if variables_data:
+                        coef_df = pd.DataFrame(variables_data)
+                        st.dataframe(coef_df, use_container_width=True)
+                    else:
+                        st.info("No coefficient data available for owned media.")
+
+                except Exception as e:
+                    st.error(f"Error loading coefficients: {e}")
+
+            # -----------------------------------------------------------------
+            # Sub-tab 3: Response Curves
+            # -----------------------------------------------------------------
+            with om_tab3:
+                st.subheader("Owned Media Saturation Curves")
+
+                try:
+                    idata = wrapper.idata
+                    posterior = idata.posterior
+
+                    has_saturation = "saturation_lam" in posterior and "saturation_beta" in posterior
+                    has_adstock = "adstock_alpha" in posterior
+
+                    if not has_saturation:
+                        st.warning("Saturation parameters not found in model posterior.")
+                    else:
+                        # Controls
+                        view_options = ["Saturation Curves"]
+                        if has_adstock:
+                            view_options.append("Adstock Decay")
+                        view_type = st.radio("View", view_options, horizontal=True, key="om_view_type")
+
+                        om_display_names_list = [om_display_names.get(om, om) for om in owned_media_cols]
+                        channel_options = ["All Owned Media"] + om_display_names_list
+                        selected_om = st.selectbox("Owned Media", channel_options, key="om_selected")
+
+                        st.markdown("---")
+
+                        spend_scale = config.data.spend_scale
+                        revenue_scale = config.data.revenue_scale
+                        paid_channel_count = len(config.get_channel_columns())
+
+                        if view_type == "Saturation Curves":
+                            _show_owned_media_saturation_curves(
+                                wrapper, config, owned_media_cols, om_display_names,
+                                selected_om, spend_scale, revenue_scale, paid_channel_count
+                            )
+                        else:
+                            _show_owned_media_adstock_curves(
+                                wrapper, config, owned_media_cols, om_display_names,
+                                selected_om, paid_channel_count
+                            )
+
+                except Exception as e:
+                    st.error(f"Error loading response curves: {e}")
+
+            # -----------------------------------------------------------------
+            # Sub-tab 4: Significance
+            # -----------------------------------------------------------------
+            with om_tab4:
+                st.subheader("Bayesian Significance Analysis")
+
+                try:
+                    # Build prior ROIs for owned media (if applicable)
+                    om_prior_rois = {}
+                    for om_config in config.owned_media:
+                        if om_config.include_roi and om_config.roi_prior_mid:
+                            om_prior_rois[om_config.name] = om_config.roi_prior_mid
+
+                    sig_analyzer = BayesianSignificanceAnalyzer(
+                        idata=wrapper.idata,
+                        df_scaled=wrapper.df_scaled,
+                        channel_cols=owned_media_cols,
+                        target_col=config.data.target_column,
+                        prior_rois=om_prior_rois,
+                    )
+
+                    sig_report = sig_analyzer.run_full_analysis()
+
+                    # Display summary
+                    if sig_report.channel_results:
+                        sig_data = []
+                        for channel, result in sig_report.channel_results.items():
+                            display_name = om_display_names.get(channel, channel)
+                            sig_data.append({
+                                "Owned Media": display_name,
+                                "Effect Mean": f"{result.effect_mean:.4f}",
+                                "95% CI": f"[{result.ci_lower:.4f}, {result.ci_upper:.4f}]",
+                                "Prob. Direction": f"{result.prob_direction:.1%}",
+                                "Significant": "Yes" if result.is_significant else "No"
+                            })
+                        sig_df = pd.DataFrame(sig_data)
+                        st.dataframe(sig_df, use_container_width=True)
+                    else:
+                        st.info("No significance data available.")
+
+                except Exception as e:
+                    st.error(f"Error running significance analysis: {e}")
+
+
+def _show_owned_media_saturation_curves(wrapper, config, owned_media_cols, display_names, selected_om, spend_scale, revenue_scale, paid_channel_count):
+    """Show saturation curves for owned media."""
+    posterior = wrapper.idata.posterior
+
+    # Time period selector
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        time_period = st.selectbox(
+            "Time Period",
+            ["Weekly", "Yearly"],
+            index=0,
+            key="om_time_period",
+            help="Weekly shows response per week. Yearly multiplies by 52 weeks."
+        )
+    time_multiplier = 52 if time_period == "Yearly" else 1
+    period_label = "Yearly" if time_period == "Yearly" else "Weekly"
+
+    # Get saturation parameters
+    lam_mean = posterior["saturation_lam"].mean(dim=["chain", "draw"]).values
+    beta_mean = posterior["saturation_beta"].mean(dim=["chain", "draw"]).values
+
+    fig = go.Figure()
+
+    for i, om in enumerate(owned_media_cols):
+        display_name = display_names.get(om, om)
+
+        # Skip if not selected and not "All"
+        if selected_om != "All Owned Media" and display_name != selected_om:
+            continue
+
+        try:
+            # Index for owned media (after paid channels)
+            idx = paid_channel_count + i
+            lam = float(lam_mean[idx])
+            beta = float(beta_mean[idx])
+
+            # Get spend range from data
+            if om in wrapper.df_raw.columns:
+                max_spend = float(wrapper.df_raw[om].max()) * spend_scale
+            else:
+                max_spend = 10000  # Default
+
+            # Generate curve
+            x_spend = np.linspace(0, max_spend * 1.5, 100)
+            x_scaled = x_spend / spend_scale
+            y_sat = _logistic_saturation(x_scaled, lam) * beta * revenue_scale * time_multiplier
+
+            fig.add_trace(go.Scatter(
+                x=x_spend,
+                y=y_sat,
+                name=display_name,
+                mode="lines"
+            ))
+        except Exception:
+            pass
+
+    fig.update_layout(
+        title=f"Owned Media Saturation Curves ({period_label})",
+        xaxis_title="Activity Level ($)",
+        yaxis_title=f"Response ({config.data.target_column})",
+        hovermode="x unified",
+        template="plotly_dark",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def _show_owned_media_adstock_curves(wrapper, config, owned_media_cols, display_names, selected_om, paid_channel_count):
+    """Show adstock decay curves for owned media."""
+    posterior = wrapper.idata.posterior
+
+    if "adstock_alpha" not in posterior:
+        st.warning("Adstock parameters not found.")
+        return
+
+    alpha_mean = posterior["adstock_alpha"].mean(dim=["chain", "draw"]).values
+
+    fig = go.Figure()
+    max_periods = 12
+
+    for i, om in enumerate(owned_media_cols):
+        display_name = display_names.get(om, om)
+
+        if selected_om != "All Owned Media" and display_name != selected_om:
+            continue
+
+        try:
+            idx = paid_channel_count + i
+            alpha = float(alpha_mean[idx])
+
+            periods = np.arange(max_periods + 1)
+            decay = alpha ** periods
+
+            fig.add_trace(go.Scatter(
+                x=periods,
+                y=decay,
+                name=f"{display_name} (α={alpha:.3f})",
+                mode="lines+markers"
+            ))
+        except Exception:
+            pass
+
+    fig.update_layout(
+        title="Owned Media Adstock Decay",
+        xaxis_title="Weeks Since Activity",
+        yaxis_title="Remaining Effect (%)",
+        hovermode="x unified",
+        template="plotly_dark",
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def _logistic_saturation(x: np.ndarray, lam: float) -> np.ndarray:
