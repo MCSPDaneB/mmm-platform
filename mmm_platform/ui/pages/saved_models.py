@@ -497,6 +497,9 @@ def _load_model(path: str, navigate_to_results: bool = False):
             col.model_dump(mode="json") for col in wrapper.config.category_columns
         ]
 
+        # Sort category columns alphabetically for consistent display order
+        st.session_state.category_columns.sort(key=lambda x: x["name"])
+
         # Populate category column options from actual values in channels/controls
         # The config stores category_columns with empty options, but the actual values
         # are stored in each variable's categories dict. We need to collect these values
