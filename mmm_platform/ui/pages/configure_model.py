@@ -625,6 +625,8 @@ def show():
                 num_rows="fixed",
                 key="channels_data_editor",
             )
+            # Store the full DataFrame for sync function to access
+            st.session_state["channels_df_current"] = edited_channels
 
             # Save button to apply changes
             if st.button("💾 Save Channel Settings", key="save_channels_btn"):
@@ -772,6 +774,8 @@ def show():
                 num_rows="fixed",
                 key="owned_media_data_editor",
             )
+            # Store the full DataFrame for sync function to access
+            st.session_state["owned_media_df_current"] = edited_owned_media
 
             if st.button("💾 Save Owned Media Settings", key="save_owned_media_btn"):
                 owned_media_config = []
@@ -901,6 +905,8 @@ def show():
                 num_rows="fixed",
                 key="competitors_data_editor",
             )
+            # Store the full DataFrame for sync function to access
+            st.session_state["competitors_df_current"] = edited_competitors
 
             if st.button("💾 Save Competitor Settings", key="save_competitors_btn"):
                 competitors_config = []
@@ -1202,6 +1208,8 @@ def show():
                 num_rows="fixed",
                 key="controls_data_editor",
             )
+            # Store the full DataFrame for sync function to access
+            st.session_state["controls_df_current"] = edited_controls
 
             # Save button to apply changes (prevents constant refreshing)
             if st.button("💾 Save Control Settings", key="save_controls_btn"):
@@ -1549,12 +1557,15 @@ def _sync_data_editors_to_config_state():
 
     This ensures that edits made in the data editors are saved even if the user
     doesn't click the individual "Save" buttons before clicking "Build Configuration".
+
+    Note: We read from the stored DataFrames (e.g., "channels_df_current") because
+    st.session_state["channels_data_editor"] only contains a dict of edits, not the full DataFrame.
     """
     category_cols = st.session_state.get("category_columns", [])
 
     # Sync channels data editor
-    if "channels_data_editor" in st.session_state:
-        edited_df = st.session_state.channels_data_editor
+    if "channels_df_current" in st.session_state:
+        edited_df = st.session_state.channels_df_current
         if isinstance(edited_df, pd.DataFrame) and len(edited_df) > 0:
             channels_config = []
             for _, row in edited_df.iterrows():
@@ -1581,8 +1592,8 @@ def _sync_data_editors_to_config_state():
             st.session_state.config_state["channels"] = channels_config
 
     # Sync owned media data editor
-    if "owned_media_data_editor" in st.session_state:
-        edited_df = st.session_state.owned_media_data_editor
+    if "owned_media_df_current" in st.session_state:
+        edited_df = st.session_state.owned_media_df_current
         if isinstance(edited_df, pd.DataFrame) and len(edited_df) > 0:
             owned_media_config = []
             for _, row in edited_df.iterrows():
@@ -1596,7 +1607,7 @@ def _sync_data_editors_to_config_state():
                     "display_name": row.get("Display Name", row["Variable"]),
                     "categories": categories,
                     "apply_adstock": row.get("Apply Adstock", True),
-                    "adstock_type": row.get("Adstock", "medium"),
+                    "adstock_type": row.get("Adstock Type", "medium"),
                     "apply_saturation": row.get("Apply Saturation", True),
                     "include_roi": row.get("Track ROI", False),
                     "roi_prior_low": row.get("ROI Low", 0.1),
@@ -1606,8 +1617,8 @@ def _sync_data_editors_to_config_state():
             st.session_state.config_state["owned_media"] = owned_media_config
 
     # Sync competitors data editor
-    if "competitor_data_editor" in st.session_state:
-        edited_df = st.session_state.competitor_data_editor
+    if "competitors_df_current" in st.session_state:
+        edited_df = st.session_state.competitors_df_current
         if isinstance(edited_df, pd.DataFrame) and len(edited_df) > 0:
             competitors_config = []
             for _, row in edited_df.iterrows():
@@ -1620,13 +1631,13 @@ def _sync_data_editors_to_config_state():
                     "name": row["Variable"],
                     "display_name": row.get("Display Name", row["Variable"]),
                     "categories": categories,
-                    "adstock_type": row.get("Adstock", "short"),
+                    "adstock_type": row.get("Adstock Type", "short"),
                 })
             st.session_state.config_state["competitors"] = competitors_config
 
     # Sync controls data editor
-    if "controls_data_editor" in st.session_state:
-        edited_df = st.session_state.controls_data_editor
+    if "controls_df_current" in st.session_state:
+        edited_df = st.session_state.controls_df_current
         if isinstance(edited_df, pd.DataFrame) and len(edited_df) > 0:
             controls_config = []
             for _, row in edited_df.iterrows():
@@ -1639,7 +1650,7 @@ def _sync_data_editors_to_config_state():
                     "name": row["Control"],
                     "display_name": row.get("Display Name", row["Control"]),
                     "categories": categories,
-                    "sign_constraint": row.get("Sign", "unconstrained"),
+                    "sign_constraint": row.get("Sign Constraint", "unconstrained"),
                     "is_dummy": row.get("Is Dummy", False),
                     "scale": row.get("Scale", False),
                 })
