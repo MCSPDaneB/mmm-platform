@@ -345,16 +345,87 @@ def _load_config(path: str):
     try:
         config, data, session_state = ConfigPersistence.load(path)
 
-        # Use restore_config_to_session to build updates
-        updates = restore_config_to_session(config, data, session_state)
+        # Store data and config in session
+        st.session_state.current_data = data
+        st.session_state.current_config = config
+        st.session_state.model_fitted = False
 
-        # Apply updates to session state
-        for key, value in updates.items():
-            if value is not None:
-                st.session_state[key] = value
+        # ALWAYS rebuild config_state from ModelConfig to ensure UI displays correctly
+        # This ensures channels, priors, and all settings are properly serialized
+        st.session_state.config_state = _build_config_state_from_model(config)
+
+        # Restore category_columns from config
+        st.session_state.category_columns = [
+            col.model_dump(mode="json") for col in config.category_columns
+        ]
+
+        # Sort category columns alphabetically for consistent display order
+        st.session_state.category_columns.sort(key=lambda x: x["name"])
+
+        # Populate category column options from actual values in channels/controls
+        category_options: dict[str, set] = {}
+
+        for ch in config.channels:
+            for col_name, value in ch.categories.items():
+                if col_name not in category_options:
+                    category_options[col_name] = set()
+                if value:
+                    category_options[col_name].add(value)
+
+        for om in config.owned_media:
+            for col_name, value in om.categories.items():
+                if col_name not in category_options:
+                    category_options[col_name] = set()
+                if value:
+                    category_options[col_name].add(value)
+
+        for comp in config.competitors:
+            for col_name, value in comp.categories.items():
+                if col_name not in category_options:
+                    category_options[col_name] = set()
+                if value:
+                    category_options[col_name].add(value)
+
+        for ctrl in config.controls:
+            for col_name, value in ctrl.categories.items():
+                if col_name not in category_options:
+                    category_options[col_name] = set()
+                if value:
+                    category_options[col_name].add(value)
+
+        # Update category_columns with collected options
+        for cat_col in st.session_state.category_columns:
+            col_name = cat_col["name"]
+            if col_name in category_options:
+                cat_col["options"] = sorted(list(category_options[col_name]))
+
+        # Set date/target columns from config
+        if config.data:
+            st.session_state.date_column = config.data.date_column
+            st.session_state.target_column = config.data.target_column
+            st.session_state.dayfirst = config.data.dayfirst
+
+        # Set detected_channels from config's channel list
+        if config.channels:
+            st.session_state.detected_channels = [ch.name for ch in config.channels]
+
+        # Clear widget keys that need to be re-initialized from config
+        # This forces configure_model.py to re-read from config_state instead of using stale widget values
+        widget_keys_to_clear = [
+            "channel_multiselect",
+            "owned_media_multiselect",
+            "competitor_multiselect",
+            "control_multiselect",
+            "channels_data_editor",
+            "owned_media_data_editor",
+            "competitor_data_editor",
+            "controls_data_editor",
+        ]
+        for key in widget_keys_to_clear:
+            if key in st.session_state:
+                del st.session_state[key]
 
         # Increment config version to force widget reset in configure_model page
-        # This ensures selectboxes/checkboxes re-initialize with loaded values
         st.session_state["config_version"] = st.session_state.get("config_version", 0) + 1
 
         st.success(
