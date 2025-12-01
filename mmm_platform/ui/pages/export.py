@@ -4,6 +4,8 @@ Export page for MMM Platform.
 Generates CSV files in specific formats for upload to external visualization platforms.
 """
 
+import io
+import zipfile
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -194,6 +196,38 @@ def _show_single_model_export(
 
             except Exception as e:
                 st.error(f"Error generating actual_vs_fitted: {e}")
+
+    # Download All button
+    st.markdown("---")
+    st.subheader("Download All Files")
+
+    try:
+        # Generate all dataframes
+        df_decomps = generate_decomps_stacked(wrapper, config, brand, force_to_actuals)
+        df_media = generate_media_results(wrapper, config, brand)
+        df_fit = generate_actual_vs_fitted(wrapper, config, brand)
+
+        # Create ZIP file in memory
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(f"decomps_stacked_{timestamp}.csv", df_decomps.to_csv(index=False))
+            zf.writestr(f"mmm_media_results_{timestamp}.csv", df_media.to_csv(index=False))
+            zf.writestr(f"actual_vs_fitted_{timestamp}.csv", df_fit.to_csv(index=False))
+
+        zip_buffer.seek(0)
+
+        st.download_button(
+            label="Download All (ZIP)",
+            data=zip_buffer.getvalue(),
+            file_name=f"{brand}_exports_{timestamp}.zip",
+            mime="application/zip",
+            type="primary",
+            key="single_download_all"
+        )
+        st.caption("Downloads all three CSV files in a single ZIP archive")
+
+    except Exception as e:
+        st.error(f"Error creating ZIP: {e}")
 
     # File format documentation
     st.markdown("---")
@@ -517,6 +551,38 @@ def _show_combined_model_export(
 
             except Exception as e:
                 st.error(f"Error generating actual_vs_fitted: {e}")
+
+    # Download All button for combined exports
+    st.markdown("---")
+    st.subheader("Download All Files")
+
+    try:
+        # Generate all dataframes
+        df_decomps = generate_combined_decomps_stacked(wrappers_with_labels, brand, force_to_actuals)
+        df_media = generate_combined_media_results(wrappers_with_labels, brand)
+        df_fit = generate_combined_actual_vs_fitted(wrappers_with_labels, brand)
+
+        # Create ZIP file in memory
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(f"decomps_stacked_combined_{timestamp}.csv", df_decomps.to_csv(index=False))
+            zf.writestr(f"mmm_media_results_combined_{timestamp}.csv", df_media.to_csv(index=False))
+            zf.writestr(f"actual_vs_fitted_combined_{timestamp}.csv", df_fit.to_csv(index=False))
+
+        zip_buffer.seek(0)
+
+        st.download_button(
+            label="Download All (ZIP)",
+            data=zip_buffer.getvalue(),
+            file_name=f"{brand}_combined_exports_{timestamp}.zip",
+            mime="application/zip",
+            type="primary",
+            key="combined_download_all"
+        )
+        st.caption("Downloads all three CSV files in a single ZIP archive")
+
+    except Exception as e:
+        st.error(f"Error creating ZIP: {e}")
 
     # File format documentation for combined exports
     st.markdown("---")
