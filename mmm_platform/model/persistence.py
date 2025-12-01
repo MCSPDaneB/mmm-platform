@@ -51,15 +51,48 @@ def set_workspace_dir(workspace: Union[str, Path]) -> None:
 
 
 def get_configs_dir() -> Path:
-    """Get the configs subdirectory within workspace."""
+    """Get the configs subdirectory within workspace (legacy, non-client)."""
     configs_dir = get_workspace_dir() / "configs"
     configs_dir.mkdir(parents=True, exist_ok=True)
     return configs_dir
 
 
 def get_models_dir() -> Path:
-    """Get the models subdirectory within workspace."""
+    """Get the models subdirectory within workspace (legacy, non-client)."""
     models_dir = get_workspace_dir() / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+    return models_dir
+
+
+# =============================================================================
+# Client-aware directory functions
+# =============================================================================
+
+def get_clients_dir() -> Path:
+    """Get the clients subdirectory within workspace."""
+    clients_dir = get_workspace_dir() / "clients"
+    clients_dir.mkdir(parents=True, exist_ok=True)
+    return clients_dir
+
+
+def list_clients() -> list[str]:
+    """List all client folders."""
+    clients_dir = get_workspace_dir() / "clients"
+    if not clients_dir.exists():
+        return []
+    return sorted([d.name for d in clients_dir.iterdir() if d.is_dir()])
+
+
+def get_client_configs_dir(client: str) -> Path:
+    """Get configs directory for a specific client."""
+    configs_dir = get_clients_dir() / client / "configs"
+    configs_dir.mkdir(parents=True, exist_ok=True)
+    return configs_dir
+
+
+def get_client_models_dir(client: str) -> Path:
+    """Get models directory for a specific client."""
+    models_dir = get_clients_dir() / client / "models"
     models_dir.mkdir(parents=True, exist_ok=True)
     return models_dir
 
@@ -114,6 +147,9 @@ class ModelPersistence:
         except Exception:
             pass
 
+        # Get client from config
+        client = getattr(mmm_wrapper.config, 'client', None)
+
         # Save metadata
         metadata = {
             "version": "1.0",
@@ -121,6 +157,7 @@ class ModelPersistence:
             "fitted_at": mmm_wrapper.fitted_at.isoformat() if mmm_wrapper.fitted_at else None,
             "fit_duration_seconds": mmm_wrapper.fit_duration_seconds,
             "config_name": mmm_wrapper.config.name,
+            "client": client,
             "n_channels": len(mmm_wrapper.config.channels),
             "n_controls": len(mmm_wrapper.control_cols) if mmm_wrapper.control_cols else 0,
             "include_data": include_data,
@@ -251,21 +288,57 @@ class ModelPersistence:
         return wrapper
 
     @classmethod
-    def list_saved_models(cls, directory: Union[str, Path]) -> list[dict]:
+    def list_saved_models(
+        cls,
+        directory: Optional[Union[str, Path]] = None,
+        client: Optional[str] = None
+    ) -> list[dict]:
         """
         List all saved models in a directory.
 
         Parameters
         ----------
-        directory : Union[str, Path]
-            Directory to search.
+        directory : Union[str, Path], optional
+            Directory to search. If not provided, uses default or client directory.
+        client : str, optional
+            If provided, only list models for this client.
+            If "all", list from all clients plus legacy models.
 
         Returns
         -------
         list[dict]
             List of model metadata.
         """
-        directory = Path(directory)
+        models = []
+
+        if directory is not None:
+            # Use specified directory
+            models.extend(cls._scan_models_dir(Path(directory)))
+        elif client == "all" or client is None:
+            # Include legacy models (non-client)
+            legacy_dir = get_models_dir()
+            if legacy_dir.exists():
+                models.extend(cls._scan_models_dir(legacy_dir))
+
+            # Include all client models
+            for client_name in list_clients():
+                client_dir = get_client_models_dir(client_name)
+                if client_dir.exists():
+                    models.extend(cls._scan_models_dir(client_dir))
+        elif client:
+            # Only search specific client directory
+            client_dir = get_client_models_dir(client)
+            if client_dir.exists():
+                models.extend(cls._scan_models_dir(client_dir))
+
+        # Sort by creation date
+        models.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+
+        return models
+
+    @classmethod
+    def _scan_models_dir(cls, directory: Path) -> list[dict]:
+        """Scan a directory for model metadata files."""
         models = []
 
         if not directory.exists():
@@ -282,9 +355,6 @@ class ModelPersistence:
                         models.append(metadata)
                     except Exception as e:
                         logger.warning(f"Could not read metadata from {subdir}: {e}")
-
-        # Sort by creation date
-        models.sort(key=lambda x: x.get("created_at", ""), reverse=True)
 
         return models
 
@@ -352,14 +422,21 @@ class ConfigPersistence:
             Session state containing category_columns, config_state, etc.
         workspace : Path, optional
             Workspace directory. Uses default if not provided.
+            If config has a client set, saves to client-specific directory.
 
         Returns
         -------
         Path
             Path to the saved config directory.
         """
+        # Determine save directory based on client
+        client = getattr(config, 'client', None) if config else None
+
         if workspace is None:
-            workspace = get_configs_dir()
+            if client:
+                workspace = get_client_configs_dir(client)
+            else:
+                workspace = get_configs_dir()
         else:
             workspace = Path(workspace) / "configs"
 
@@ -376,6 +453,7 @@ class ConfigPersistence:
             "version": "1.0",
             "type": "config",
             "name": name,
+            "client": client,
             "created_at": datetime.now().isoformat(),
             "config_name": config.name if config else name,
             "n_channels": len(config.channels) if config and config.channels else 0,
@@ -468,7 +546,11 @@ class ConfigPersistence:
         return config, data, session_state
 
     @classmethod
-    def list_saved_configs(cls, directory: Optional[Union[str, Path]] = None) -> list[dict]:
+    def list_saved_configs(
+        cls,
+        directory: Optional[Union[str, Path]] = None,
+        client: Optional[str] = None
+    ) -> list[dict]:
         """
         List all saved configs in a directory.
 
@@ -476,16 +558,45 @@ class ConfigPersistence:
         ----------
         directory : Path, optional
             Directory to search. Uses default configs dir if not provided.
+        client : str, optional
+            If provided, only list configs for this client.
+            If "all", list from all clients plus legacy configs.
 
         Returns
         -------
         list[dict]
             List of config metadata.
         """
-        if directory is None:
-            directory = get_configs_dir()
+        configs = []
 
-        directory = Path(directory)
+        if client == "all" or client is None:
+            # Include legacy configs (non-client)
+            legacy_dir = get_configs_dir()
+            if legacy_dir.exists():
+                configs.extend(cls._scan_configs_dir(legacy_dir))
+
+            # Include all client configs
+            for client_name in list_clients():
+                client_dir = get_client_configs_dir(client_name)
+                if client_dir.exists():
+                    configs.extend(cls._scan_configs_dir(client_dir))
+        elif client:
+            # Only search specific client directory
+            client_dir = get_client_configs_dir(client)
+            if client_dir.exists():
+                configs.extend(cls._scan_configs_dir(client_dir))
+        elif directory is not None:
+            # Use specified directory
+            configs.extend(cls._scan_configs_dir(Path(directory)))
+
+        # Sort by creation date
+        configs.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+
+        return configs
+
+    @classmethod
+    def _scan_configs_dir(cls, directory: Path) -> list[dict]:
+        """Scan a directory for config metadata files."""
         configs = []
 
         if not directory.exists():
@@ -504,9 +615,6 @@ class ConfigPersistence:
                             configs.append(metadata)
                     except Exception as e:
                         logger.warning(f"Could not read metadata from {subdir}: {e}")
-
-        # Sort by creation date
-        configs.sort(key=lambda x: x.get("created_at", ""), reverse=True)
 
         return configs
 

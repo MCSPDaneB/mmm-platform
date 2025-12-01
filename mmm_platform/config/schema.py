@@ -293,6 +293,7 @@ class ModelConfig(BaseModel):
     """Complete model configuration."""
     name: str = Field(..., description="Name for this model configuration")
     description: Optional[str] = Field(None, description="Description of this configuration")
+    client: Optional[str] = Field(None, description="Client name for organizing saved configs/models")
 
     # Data configuration
     data: DataConfig

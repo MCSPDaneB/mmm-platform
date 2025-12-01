@@ -18,6 +18,7 @@ from mmm_platform.model.persistence import (
     get_configs_dir,
     get_models_dir,
     restore_config_to_session,
+    list_clients,
 )
 
 
@@ -30,14 +31,38 @@ def show():
 
     st.markdown("---")
 
+    # Client filter
+    selected_client = _show_client_filter()
+
+    st.markdown("---")
+
     # Two-column layout for the two sections
     tab1, tab2 = st.tabs(["📋 Saved Configurations", "📦 Fitted Models"])
 
     with tab1:
-        _show_configs_section()
+        _show_configs_section(client=selected_client)
 
     with tab2:
-        _show_models_section()
+        _show_models_section(client=selected_client)
+
+
+def _show_client_filter():
+    """Show client filter dropdown at top of page."""
+    clients = list_clients()
+
+    if not clients:
+        st.info("No clients found. Create one in **Configure Model** page.")
+        return "all"
+
+    client_options = ["All Clients"] + clients
+    selected = st.selectbox(
+        "Filter by Client",
+        options=client_options,
+        key="saved_models_client_filter",
+        help="Show configs and models for a specific client"
+    )
+
+    return "all" if selected == "All Clients" else selected
 
 
 def _show_workspace_setting():
@@ -71,7 +96,7 @@ def _show_workspace_setting():
             )
 
 
-def _show_configs_section():
+def _show_configs_section(client: str = "all"):
     """Show saved configurations section."""
     st.subheader("Saved Configurations")
     st.caption("Configurations that have been saved but not yet fitted")
@@ -91,11 +116,14 @@ def _show_configs_section():
             if st.button("Save Configuration", key="save_config_btn", type="primary"):
                 _save_current_config(config_name)
 
-    # List saved configs
-    configs = ConfigPersistence.list_saved_configs()
+    # List saved configs (filtered by client)
+    configs = ConfigPersistence.list_saved_configs(client=client)
 
     if not configs:
-        st.info("No saved configurations found. Configure a model and save it here.")
+        if client != "all":
+            st.info(f"No saved configurations found for client '{client}'.")
+        else:
+            st.info("No saved configurations found. Configure a model and save it here.")
         return
 
     st.write(f"Found **{len(configs)}** saved configuration(s)")
@@ -104,13 +132,21 @@ def _show_configs_section():
     for config in configs:
         config_path = config.get("path", "")
         config_name = config.get("name", "Unknown")
+        config_client = config.get("client", "")
         created_at = config.get("created_at", "Unknown")[:16].replace("T", " ")
 
-        with st.expander(f"📋 {config_name} - {created_at}"):
+        # Show client in expander title if viewing all
+        title = f"📋 {config_name} - {created_at}"
+        if client == "all" and config_client:
+            title = f"📋 [{config_client}] {config_name} - {created_at}"
+
+        with st.expander(title):
             col1, col2 = st.columns(2)
 
             with col1:
                 st.write(f"**Created:** {created_at}")
+                if config_client:
+                    st.write(f"**Client:** {config_client}")
                 st.write(f"**Channels:** {config.get('n_channels', 'N/A')}")
                 st.write(f"**Controls:** {config.get('n_controls', 'N/A')}")
 
@@ -135,7 +171,7 @@ def _show_configs_section():
                     _delete_path(config_path, "Configuration")
 
 
-def _show_models_section():
+def _show_models_section(client: str = "all"):
     """Show fitted models section."""
     st.subheader("Fitted Models")
     st.caption("Models that have been trained and saved")
@@ -144,16 +180,16 @@ def _show_models_section():
     if "models_to_compare" not in st.session_state:
         st.session_state.models_to_compare = []
 
-    # Get models directory
-    models_dir = get_models_dir()
-
-    # List saved models
-    models = ModelPersistence.list_saved_models(models_dir)
+    # List saved models (filtered by client)
+    models = ModelPersistence.list_saved_models(client=client)
 
     if not models:
-        st.info(
-            "No fitted models found. Run a model and it will be automatically saved here."
-        )
+        if client != "all":
+            st.info(f"No fitted models found for client '{client}'.")
+        else:
+            st.info(
+                "No fitted models found. Run a model and it will be automatically saved here."
+            )
         return
 
     # Show compare button if 2 models selected
@@ -183,10 +219,18 @@ def _show_models_section():
     for model in models:
         model_path = model.get("path", "")
         model_name = model.get("config_name", "Unknown")
+        model_client = model.get("client", "")
         created_at = model.get("created_at", "Unknown")[:16].replace("T", " ")
 
         # Check if this model is selected for comparison
         is_selected = model_path in st.session_state.models_to_compare
+
+        # Build expander title
+        title = f"📦 {model_name} - {created_at}"
+        if client == "all" and model_client:
+            title = f"📦 [{model_client}] {model_name} - {created_at}"
+        if is_selected:
+            title += " ✓"
 
         # Header with checkbox
         header_col1, header_col2 = st.columns([0.05, 0.95])
@@ -207,11 +251,13 @@ def _show_models_section():
                 st.rerun()
 
         with header_col2:
-            with st.expander(f"📦 {model_name} - {created_at}" + (" ✓" if is_selected else "")):
+            with st.expander(title):
                 col1, col2 = st.columns(2)
 
                 with col1:
                     st.write(f"**Created:** {created_at}")
+                    if model_client:
+                        st.write(f"**Client:** {model_client}")
                     fitted_at = model.get("fitted_at")
                     if fitted_at:
                         st.write(f"**Fitted:** {fitted_at[:16].replace('T', ' ')}")

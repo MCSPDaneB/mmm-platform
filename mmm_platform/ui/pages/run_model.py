@@ -503,10 +503,15 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
 
             # Save model if requested
             if save_model:
-                from mmm_platform.model.persistence import ModelPersistence, get_models_dir
+                from mmm_platform.model.persistence import ModelPersistence, get_models_dir, get_client_models_dir
                 import json
 
-                models_dir = get_models_dir()
+                # Use client-specific directory if client is set
+                client = getattr(config, 'client', None)
+                if client:
+                    models_dir = get_client_models_dir(client)
+                else:
+                    models_dir = get_models_dir()
                 save_dir = models_dir / f"{config.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
                 try:
                     ModelPersistence.save(wrapper, save_dir, include_data=True)
@@ -628,10 +633,15 @@ def run_model_local(config, df, draws, tune, chains, save_model):
                     st.write(f"- {warn}")
 
             if save_model:
-                from mmm_platform.model.persistence import ModelPersistence, get_models_dir
+                from mmm_platform.model.persistence import ModelPersistence, get_models_dir, get_client_models_dir
                 import json
 
-                models_dir = get_models_dir()
+                # Use client-specific directory if client is set
+                client = getattr(config, 'client', None)
+                if client:
+                    models_dir = get_client_models_dir(client)
+                else:
+                    models_dir = get_models_dir()
                 save_dir = models_dir / f"{config.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
                 ModelPersistence.save(wrapper, save_dir, include_data=True)
 

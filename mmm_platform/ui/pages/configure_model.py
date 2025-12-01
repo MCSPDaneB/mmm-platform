@@ -13,6 +13,7 @@ from mmm_platform.config.schema import (
     DummyVariableConfig
 )
 from mmm_platform.config.loader import ConfigLoader
+from mmm_platform.model.persistence import list_clients, get_client_configs_dir
 
 
 # Maximum number of custom category columns allowed
@@ -165,6 +166,40 @@ def show():
                 help="A unique name for this model configuration"
             )
 
+            # Client selection
+            clients = list_clients()
+            client_options = ["(Select or create new)"] + clients
+            saved_client = saved_data.get("client", "(Select or create new)")
+            if saved_client and saved_client in clients:
+                client_index = client_options.index(saved_client)
+            else:
+                client_index = 0
+
+            client_col1, client_col2 = st.columns([3, 1])
+            with client_col1:
+                selected_client = st.selectbox(
+                    "Client",
+                    options=client_options,
+                    index=client_index,
+                    help="Organize configs/models by client"
+                )
+            with client_col2:
+                new_client = st.text_input("New client", key="new_client_name", label_visibility="hidden", placeholder="New client")
+                if st.button("Add", key="add_client_btn") and new_client:
+                    # Create the client folder
+                    get_client_configs_dir(new_client)
+                    st.session_state.config_state["client"] = new_client
+                    st.success(f"Client '{new_client}' created!")
+                    st.rerun()
+
+            # Determine final client value
+            if selected_client != "(Select or create new)":
+                client_value = selected_client
+            elif new_client:
+                client_value = new_client
+            else:
+                client_value = None
+
             # Date column - try to find saved value in columns
             date_options = df.columns.tolist()
             saved_date = st.session_state.get("date_column") or saved_data.get("date_col")
@@ -206,6 +241,7 @@ def show():
 
         st.session_state.config_state.update({
             "name": model_name,
+            "client": client_value,
             "description": description,
             "date_col": date_col,
             "target_col": target_col,
@@ -1168,6 +1204,7 @@ def build_config_from_state() -> ModelConfig:
     config = ModelConfig(
         name=state.get("name", "my_mmm_model"),
         description=state.get("description"),
+        client=state.get("client"),
         data=DataConfig(
             date_column=state.get("date_col", "time"),
             target_column=state.get("target_col", "revenue"),
