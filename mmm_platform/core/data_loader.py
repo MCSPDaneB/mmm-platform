@@ -281,30 +281,8 @@ class DataLoader:
             competitor_cols.append(new_col)
             logger.info(f"Applied adstock to competitor: {comp.name} -> {new_col} (inverted)")
 
-        # Process owned media that has adstock but NOT saturation
-        # (those with both are treated as channels in PyMC-Marketing)
-        for om in config.owned_media:
-            if om.name not in df.columns:
-                logger.warning(f"Owned media column not found: {om.name}")
-                continue
-
-            # Skip if it will be treated as a channel (has both adstock + saturation)
-            if om.apply_adstock and om.apply_saturation:
-                continue
-
-            # If only adstock enabled, apply it as preprocessing
-            if om.apply_adstock:
-                alpha = transform_engine.get_owned_media_adstock_decay(om.name)
-                if alpha is not None:
-                    x = df[om.name].values.astype(float)
-                    x_adstocked = transform_engine.compute_geometric_adstock(x, alpha, l_max)
-                    new_col = f"{om.name}_adstock"
-                    df[new_col] = x_adstocked
-                    adstocked_control_cols.append(new_col)
-                    logger.info(f"Applied adstock to owned media: {om.name} -> {new_col}")
-            else:
-                # No transforms, just add as-is
-                adstocked_control_cols.append(om.name)
+        # Note: Owned media is now always treated as channels with adstock+saturation
+        # applied by PyMC-Marketing internally, so no preprocessing needed here.
 
         # Process controls with apply_adstock=True
         for ctrl in config.controls:
@@ -448,7 +426,7 @@ class DataLoader:
         # Add competitor columns (adstocked and inverted)
         final_control_cols.extend(competitor_cols)
 
-        # Add adstocked columns (owned media without saturation, controls with adstock)
+        # Add adstocked columns (controls with adstock)
         final_control_cols.extend(adstocked_cols)
 
         # Remove duplicates while preserving order
