@@ -165,9 +165,12 @@ def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
         Brand name for exports
     key_suffix : str
         Suffix to add to all widget keys (for multiple instances)
-    """
-    from mmm_platform.analysis.export import generate_disaggregated_results
 
+    Returns
+    -------
+    tuple or None
+        (mapped_df, granular_name_col, date_col, weight_col) if ready, None otherwise
+    """
     # File upload
     granular_file = st.file_uploader(
         "Upload granular mapping file",
@@ -176,187 +179,150 @@ def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
         key=f"granular_file_uploader{key_suffix}"
     )
 
-    if granular_file is not None:
-        # Load the file
-        try:
-            if granular_file.name.endswith('.csv'):
-                granular_df = pd.read_csv(granular_file)
-            else:
-                granular_df = pd.read_excel(granular_file)
+    if granular_file is None:
+        return None
 
-            st.success(f"Loaded {len(granular_df):,} rows × {len(granular_df.columns)} columns")
+    # Load the file
+    try:
+        if granular_file.name.endswith('.csv'):
+            granular_df = pd.read_csv(granular_file)
+        else:
+            granular_df = pd.read_excel(granular_file)
 
-            # Get all columns for mapping
-            all_columns = granular_df.columns.tolist()
-            numeric_columns = granular_df.select_dtypes(include=['number']).columns.tolist()
+        st.success(f"Loaded {len(granular_df):,} rows × {len(granular_df.columns)} columns")
 
-            # Get model channel names for dropdown
-            model_channels = [ch.name for ch in config.channels]
+        # Get all columns for mapping
+        all_columns = granular_df.columns.tolist()
+        numeric_columns = granular_df.select_dtypes(include=['number']).columns.tolist()
 
-            # Column mapping UI
-            st.markdown("#### Column Mapping")
+        # Get model channel names for dropdown
+        model_channels = [ch.name for ch in config.channels]
 
-            col1, col2 = st.columns(2)
+        # Column mapping UI
+        st.markdown("#### Column Mapping")
 
-            with col1:
-                granular_name_col = st.selectbox(
-                    "Granular Name Column",
-                    options=all_columns,
-                    help="Column containing granular identifiers (e.g., placement_name, campaign_name)",
-                    key=f"granular_name_col{key_suffix}"
-                )
+        col1, col2 = st.columns(2)
 
-                date_col_granular = st.selectbox(
-                    "Date Column",
-                    options=all_columns,
-                    help="Column containing dates",
-                    key=f"granular_date_col{key_suffix}"
-                )
-
-            with col2:
-                weight_col = st.selectbox(
-                    "Weight Column",
-                    options=numeric_columns if numeric_columns else all_columns,
-                    help="Numeric column to use for proportional allocation (e.g., spend, impressions, attribution)",
-                    key=f"granular_weight_col{key_suffix}"
-                )
-
-            # Model channel mapping
-            st.markdown("#### Map Granular Names to Model Channels")
-            st.caption(
-                "For each unique value in your granular file, select which model channel it maps to. "
-                "Leave as '-- Not Mapped --' to exclude from disaggregation."
+        with col1:
+            granular_name_col = st.selectbox(
+                "Granular Name Column",
+                options=all_columns,
+                help="Column containing granular identifiers (e.g., placement_name, campaign_name)",
+                key=f"granular_name_col{key_suffix}"
             )
 
-            # Get unique granular values that need mapping
-            unique_granular = granular_df[granular_name_col].unique().tolist()
-
-            # Create mapping DataFrame
-            mapping_options = ["-- Not Mapped --"] + model_channels
-
-            # Check for existing mapping in session state (unique per model)
-            mapping_key = f"granular_mapping{key_suffix}"
-            if mapping_key not in st.session_state:
-                st.session_state[mapping_key] = {}
-
-            # Build mapping table data
-            mapping_data = []
-            for granular_val in unique_granular[:50]:  # Limit to first 50 for performance
-                # Try to auto-match by checking if granular name contains channel name
-                auto_match = "-- Not Mapped --"
-                for ch in model_channels:
-                    if ch.lower() in str(granular_val).lower() or str(granular_val).lower() in ch.lower():
-                        auto_match = ch
-                        break
-
-                saved_mapping = st.session_state[mapping_key].get(str(granular_val), auto_match)
-                mapping_data.append({
-                    "Granular Name": str(granular_val),
-                    "Model Channel": saved_mapping,
-                })
-
-            if len(unique_granular) > 50:
-                st.warning(f"Showing first 50 of {len(unique_granular)} unique granular values. "
-                          "All values will be processed based on exact matches to mapped values.")
-
-            mapping_df = pd.DataFrame(mapping_data)
-
-            edited_mapping = st.data_editor(
-                mapping_df,
-                column_config={
-                    "Granular Name": st.column_config.TextColumn("Granular Name", disabled=True),
-                    "Model Channel": st.column_config.SelectboxColumn(
-                        "Model Channel",
-                        options=mapping_options,
-                        help="Select which model channel this maps to"
-                    ),
-                },
-                hide_index=True,
-                width="stretch",
-                key=f"granular_mapping_editor{key_suffix}",
+            date_col_granular = st.selectbox(
+                "Date Column",
+                options=all_columns,
+                help="Column containing dates",
+                key=f"granular_date_col{key_suffix}"
             )
 
-            # Save mapping to session state
-            for _, row in edited_mapping.iterrows():
-                st.session_state[mapping_key][row["Granular Name"]] = row["Model Channel"]
-
-            # Apply mapping to granular DataFrame
-            granular_df["_model_channel"] = granular_df[granular_name_col].map(
-                lambda x: st.session_state[mapping_key].get(str(x), "-- Not Mapped --")
+        with col2:
+            weight_col = st.selectbox(
+                "Weight Column",
+                options=numeric_columns if numeric_columns else all_columns,
+                help="Numeric column to use for proportional allocation (e.g., spend, impressions, attribution)",
+                key=f"granular_weight_col{key_suffix}"
             )
 
-            # Filter out unmapped rows
-            mapped_df = granular_df[granular_df["_model_channel"] != "-- Not Mapped --"].copy()
+        # Model channel mapping
+        st.markdown("#### Map Granular Names to Model Channels")
+        st.caption(
+            "For each unique value in your granular file, select which model channel it maps to. "
+            "Leave as '-- Not Mapped --' to exclude from disaggregation."
+        )
 
-            # Show mapping summary
-            st.markdown("#### Mapping Summary")
-            mapped_count = len(mapped_df)
-            total_count = len(granular_df)
-            mapped_channels = mapped_df["_model_channel"].nunique()
+        # Get unique granular values that need mapping
+        unique_granular = granular_df[granular_name_col].unique().tolist()
 
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Mapped Rows", f"{mapped_count:,} / {total_count:,}")
-            with col2:
-                st.metric("Mapped Channels", f"{mapped_channels} / {len(model_channels)}")
-            with col3:
-                unmapped_channels = set(model_channels) - set(mapped_df["_model_channel"].unique())
-                st.metric("Unmapped Channels", len(unmapped_channels))
+        # Create mapping DataFrame
+        mapping_options = ["-- Not Mapped --"] + model_channels
 
-            if unmapped_channels:
-                with st.expander("Unmapped Model Channels"):
-                    st.write("These channels have no granular mapping and will be output at channel level:")
-                    for ch in sorted(unmapped_channels):
-                        st.write(f"- {ch}")
+        # Check for existing mapping in session state (unique per model)
+        mapping_key = f"granular_mapping{key_suffix}"
+        if mapping_key not in st.session_state:
+            st.session_state[mapping_key] = {}
 
-            # Generate and download disaggregated results
-            if mapped_count > 0:
-                st.markdown("---")
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Build mapping table data
+        mapping_data = []
+        for granular_val in unique_granular[:50]:  # Limit to first 50 for performance
+            # Try to auto-match by checking if granular name contains channel name
+            auto_match = "-- Not Mapped --"
+            for ch in model_channels:
+                if ch.lower() in str(granular_val).lower() or str(granular_val).lower() in ch.lower():
+                    auto_match = ch
+                    break
 
-                if st.button("Generate Disaggregated Export", type="primary", key=f"generate_disagg_btn{key_suffix}"):
-                    with st.spinner("Generating disaggregated results..."):
-                        try:
-                            df_disagg = generate_disaggregated_results(
-                                wrapper=wrapper,
-                                config=config,
-                                granular_df=mapped_df,
-                                granular_name_col=granular_name_col,
-                                date_col=date_col_granular,
-                                model_channel_col="_model_channel",
-                                weight_col=weight_col,
-                                brand=brand
-                            )
+            saved_mapping = st.session_state[mapping_key].get(str(granular_val), auto_match)
+            mapping_data.append({
+                "Granular Name": str(granular_val),
+                "Model Channel": saved_mapping,
+            })
 
-                            result_key = f"disagg_result{key_suffix}"
-                            st.session_state[result_key] = df_disagg
+        if len(unique_granular) > 50:
+            st.warning(f"Showing first 50 of {len(unique_granular)} unique granular values. "
+                      "All values will be processed based on exact matches to mapped values.")
 
-                            st.success(f"Generated {len(df_disagg):,} rows")
+        mapping_df = pd.DataFrame(mapping_data)
 
-                        except Exception as e:
-                            st.error(f"Error generating disaggregated results: {e}")
+        edited_mapping = st.data_editor(
+            mapping_df,
+            column_config={
+                "Granular Name": st.column_config.TextColumn("Granular Name", disabled=True),
+                "Model Channel": st.column_config.SelectboxColumn(
+                    "Model Channel",
+                    options=mapping_options,
+                    help="Select which model channel this maps to"
+                ),
+            },
+            hide_index=True,
+            width="stretch",
+            key=f"granular_mapping_editor{key_suffix}",
+        )
 
-                # Show results and download if generated
-                result_key = f"disagg_result{key_suffix}"
-                if result_key in st.session_state and st.session_state[result_key] is not None:
-                    df_disagg = st.session_state[result_key]
+        # Save mapping to session state
+        for _, row in edited_mapping.iterrows():
+            st.session_state[mapping_key][row["Granular Name"]] = row["Model Channel"]
 
-                    with st.expander("Preview (first 20 rows)", expanded=True):
-                        st.dataframe(df_disagg.head(20), width="stretch")
+        # Apply mapping to granular DataFrame
+        granular_df["_model_channel"] = granular_df[granular_name_col].map(
+            lambda x: st.session_state[mapping_key].get(str(x), "-- Not Mapped --")
+        )
 
-                    csv_disagg = df_disagg.to_csv(index=False)
-                    st.download_button(
-                        label="Download disaggregated_results.csv",
-                        data=csv_disagg,
-                        file_name=f"disaggregated_results{key_suffix}_{timestamp}.csv",
-                        mime="text/csv",
-                        key=f"download_disagg_btn{key_suffix}"
-                    )
-            else:
-                st.warning("No rows are mapped to model channels. Please map at least one granular value.")
+        # Filter out unmapped rows
+        mapped_df = granular_df[granular_df["_model_channel"] != "-- Not Mapped --"].copy()
 
-        except Exception as e:
-            st.error(f"Error loading file: {e}")
+        # Show mapping summary
+        st.markdown("#### Mapping Summary")
+        mapped_count = len(mapped_df)
+        total_count = len(granular_df)
+        mapped_channels = mapped_df["_model_channel"].nunique()
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Mapped Rows", f"{mapped_count:,} / {total_count:,}")
+        with col2:
+            st.metric("Mapped Channels", f"{mapped_channels} / {len(model_channels)}")
+        with col3:
+            unmapped_channels = set(model_channels) - set(mapped_df["_model_channel"].unique())
+            st.metric("Unmapped Channels", len(unmapped_channels))
+
+        if unmapped_channels:
+            with st.expander("Unmapped Model Channels"):
+                st.write("These channels have no granular mapping and will be output at channel level:")
+                for ch in sorted(unmapped_channels):
+                    st.write(f"- {ch}")
+
+        if mapped_count > 0:
+            return (mapped_df, granular_name_col, date_col_granular, weight_col)
+        else:
+            st.warning("No rows are mapped to model channels. Please map at least one granular value.")
+            return None
+
+    except Exception as e:
+        st.error(f"Error loading file: {e}")
+        return None
 
 
 def _show_single_model_export(
@@ -368,6 +334,8 @@ def _show_single_model_export(
     generate_actual_vs_fitted
 ):
     """Show single model export UI."""
+    from mmm_platform.analysis.export import generate_disaggregated_results
+
     # Brand input section
     st.subheader("Export Settings")
 
@@ -401,141 +369,8 @@ def _show_single_model_export(
         key="enable_disaggregation"
     )
 
-    st.markdown("---")
-
-    # Export files section
-    st.subheader("Platform Export Files")
-    st.info(
-        "These CSV files are formatted for upload to external visualization platforms. "
-        "Each file follows a specific schema with stacked/long format data."
-    )
-
-    # Generate timestamp for filenames
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    # Three columns for the three export types
-    col1, col2, col3 = st.columns(3)
-
-    # 1. Decomps Stacked
-    with col1:
-        st.markdown("### Decomps Stacked")
-        st.markdown(
-            "All decomposition components (channels, controls, base) "
-            "in stacked format with category groupings."
-        )
-
-        with st.spinner("Generating decomps_stacked..."):
-            try:
-                df_decomps = generate_decomps_stacked(wrapper, config, brand, force_to_actuals)
-                csv_decomps = df_decomps.to_csv(index=False)
-
-                st.download_button(
-                    label="Download decomps_stacked.csv",
-                    data=csv_decomps,
-                    file_name=f"decomps_stacked_{timestamp}.csv",
-                    mime="text/csv",
-                    width="stretch"
-                )
-
-                with st.expander("Preview (first 10 rows)"):
-                    st.dataframe(df_decomps.head(10), width="stretch")
-
-                st.caption(f"{len(df_decomps):,} rows × {len(df_decomps.columns)} columns")
-
-            except Exception as e:
-                st.error(f"Error generating decomps_stacked: {e}")
-
-    # 2. Media Results
-    with col2:
-        st.markdown("### Media Results")
-        st.markdown(
-            "Media channels only with spend data. "
-            "Impressions/clicks are placeholders (0) for now."
-        )
-
-        with st.spinner("Generating mmm_media_results..."):
-            try:
-                df_media = generate_media_results(wrapper, config, brand)
-                csv_media = df_media.to_csv(index=False)
-
-                st.download_button(
-                    label="Download mmm_media_results.csv",
-                    data=csv_media,
-                    file_name=f"mmm_media_results_{timestamp}.csv",
-                    mime="text/csv",
-                    width="stretch"
-                )
-
-                with st.expander("Preview (first 10 rows)"):
-                    st.dataframe(df_media.head(10), width="stretch")
-
-                st.caption(f"{len(df_media):,} rows × {len(df_media.columns)} columns")
-
-            except Exception as e:
-                st.error(f"Error generating mmm_media_results: {e}")
-
-    # 3. Actual vs Fitted
-    with col3:
-        st.markdown("### Actual vs Fitted")
-        st.markdown(
-            "Model fit comparison with actual and fitted values "
-            "in long format (two rows per date)."
-        )
-
-        with st.spinner("Generating actual_vs_fitted..."):
-            try:
-                df_fit = generate_actual_vs_fitted(wrapper, config, brand)
-                csv_fit = df_fit.to_csv(index=False)
-
-                st.download_button(
-                    label="Download actual_vs_fitted.csv",
-                    data=csv_fit,
-                    file_name=f"actual_vs_fitted_{timestamp}.csv",
-                    mime="text/csv",
-                    width="stretch"
-                )
-
-                with st.expander("Preview (first 10 rows)"):
-                    st.dataframe(df_fit.head(10), width="stretch")
-
-                st.caption(f"{len(df_fit):,} rows × {len(df_fit.columns)} columns")
-
-            except Exception as e:
-                st.error(f"Error generating actual_vs_fitted: {e}")
-
-    # Download All button
-    st.markdown("---")
-    st.subheader("Download All Files")
-
-    try:
-        # Generate all dataframes
-        df_decomps = generate_decomps_stacked(wrapper, config, brand, force_to_actuals)
-        df_media = generate_media_results(wrapper, config, brand)
-        df_fit = generate_actual_vs_fitted(wrapper, config, brand)
-
-        # Create ZIP file in memory
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr(f"decomps_stacked_{timestamp}.csv", df_decomps.to_csv(index=False))
-            zf.writestr(f"mmm_media_results_{timestamp}.csv", df_media.to_csv(index=False))
-            zf.writestr(f"actual_vs_fitted_{timestamp}.csv", df_fit.to_csv(index=False))
-
-        zip_buffer.seek(0)
-
-        st.download_button(
-            label="Download All (ZIP)",
-            data=zip_buffer.getvalue(),
-            file_name=f"{brand}_exports_{timestamp}.zip",
-            mime="application/zip",
-            type="primary",
-            key="single_download_all"
-        )
-        st.caption("Downloads all three CSV files in a single ZIP archive")
-
-    except Exception as e:
-        st.error(f"Error creating ZIP: {e}")
-
-    # Disaggregation Section (only if enabled)
+    # Disaggregation settings (if enabled) - BEFORE prepare button
+    disagg_config = None
     if enable_disagg:
         st.markdown("---")
         st.subheader("Disaggregation Settings")
@@ -543,7 +378,153 @@ def _show_single_model_export(
             "Split model results to a more granular level (e.g., placements, campaigns) "
             "using proportional weighting from an uploaded file."
         )
-        _show_disaggregation_ui(wrapper, config, brand, key_suffix="")
+        disagg_config = _show_disaggregation_ui(wrapper, config, brand, key_suffix="")
+
+    st.markdown("---")
+
+    # Prepare button
+    if st.button("Prepare Export Files", type="primary", key="single_prepare_btn"):
+        with st.spinner("Generating export files..."):
+            try:
+                # Generate main exports
+                st.session_state["export_df_decomps"] = generate_decomps_stacked(wrapper, config, brand, force_to_actuals)
+                st.session_state["export_df_media"] = generate_media_results(wrapper, config, brand)
+                st.session_state["export_df_fit"] = generate_actual_vs_fitted(wrapper, config, brand)
+
+                # Generate disaggregated results if configured
+                if enable_disagg and disagg_config is not None:
+                    mapped_df, granular_name_col, date_col, weight_col = disagg_config
+                    st.session_state["export_df_disagg"] = generate_disaggregated_results(
+                        wrapper=wrapper,
+                        config=config,
+                        granular_df=mapped_df,
+                        granular_name_col=granular_name_col,
+                        date_col=date_col,
+                        model_channel_col="_model_channel",
+                        weight_col=weight_col,
+                        brand=brand
+                    )
+                else:
+                    st.session_state["export_df_disagg"] = None
+
+                st.session_state["export_files_ready"] = True
+                st.session_state["export_brand"] = brand
+                st.success("Export files ready!")
+
+            except Exception as e:
+                st.error(f"Error generating exports: {e}")
+                st.session_state["export_files_ready"] = False
+
+    # Show downloads only if files are ready
+    if st.session_state.get("export_files_ready", False):
+        st.markdown("---")
+        st.subheader("Platform Export Files")
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Three columns for the three export types
+        col1, col2, col3 = st.columns(3)
+
+        # 1. Decomps Stacked
+        with col1:
+            st.markdown("### Decomps Stacked")
+            df_decomps = st.session_state["export_df_decomps"]
+            csv_decomps = df_decomps.to_csv(index=False)
+
+            st.download_button(
+                label="Download decomps_stacked.csv",
+                data=csv_decomps,
+                file_name=f"decomps_stacked_{timestamp}.csv",
+                mime="text/csv",
+                width="stretch"
+            )
+
+            with st.expander("Preview (first 10 rows)"):
+                st.dataframe(df_decomps.head(10), width="stretch")
+
+            st.caption(f"{len(df_decomps):,} rows × {len(df_decomps.columns)} columns")
+
+        # 2. Media Results
+        with col2:
+            st.markdown("### Media Results")
+            df_media = st.session_state["export_df_media"]
+            csv_media = df_media.to_csv(index=False)
+
+            st.download_button(
+                label="Download mmm_media_results.csv",
+                data=csv_media,
+                file_name=f"mmm_media_results_{timestamp}.csv",
+                mime="text/csv",
+                width="stretch"
+            )
+
+            with st.expander("Preview (first 10 rows)"):
+                st.dataframe(df_media.head(10), width="stretch")
+
+            st.caption(f"{len(df_media):,} rows × {len(df_media.columns)} columns")
+
+        # 3. Actual vs Fitted
+        with col3:
+            st.markdown("### Actual vs Fitted")
+            df_fit = st.session_state["export_df_fit"]
+            csv_fit = df_fit.to_csv(index=False)
+
+            st.download_button(
+                label="Download actual_vs_fitted.csv",
+                data=csv_fit,
+                file_name=f"actual_vs_fitted_{timestamp}.csv",
+                mime="text/csv",
+                width="stretch"
+            )
+
+            with st.expander("Preview (first 10 rows)"):
+                st.dataframe(df_fit.head(10), width="stretch")
+
+            st.caption(f"{len(df_fit):,} rows × {len(df_fit.columns)} columns")
+
+        # Disaggregated results (if generated)
+        df_disagg = st.session_state.get("export_df_disagg")
+        if df_disagg is not None:
+            st.markdown("---")
+            st.markdown("### Disaggregated Results")
+            csv_disagg = df_disagg.to_csv(index=False)
+
+            st.download_button(
+                label="Download disaggregated_results.csv",
+                data=csv_disagg,
+                file_name=f"disaggregated_results_{timestamp}.csv",
+                mime="text/csv",
+            )
+
+            with st.expander("Preview (first 20 rows)"):
+                st.dataframe(df_disagg.head(20), width="stretch")
+
+            st.caption(f"{len(df_disagg):,} rows × {len(df_disagg.columns)} columns")
+
+        # Download All button
+        st.markdown("---")
+        st.subheader("Download All Files")
+
+        export_brand = st.session_state.get("export_brand", brand)
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(f"decomps_stacked_{timestamp}.csv", df_decomps.to_csv(index=False))
+            zf.writestr(f"mmm_media_results_{timestamp}.csv", df_media.to_csv(index=False))
+            zf.writestr(f"actual_vs_fitted_{timestamp}.csv", df_fit.to_csv(index=False))
+            if df_disagg is not None:
+                zf.writestr(f"disaggregated_results_{timestamp}.csv", df_disagg.to_csv(index=False))
+
+        zip_buffer.seek(0)
+
+        st.download_button(
+            label="Download All (ZIP)",
+            data=zip_buffer.getvalue(),
+            file_name=f"{export_brand}_exports_{timestamp}.zip",
+            mime="application/zip",
+            type="primary",
+            key="single_download_all"
+        )
+        st.caption("Downloads all CSV files in a single ZIP archive")
 
     # File format documentation
     st.markdown("---")
@@ -616,6 +597,7 @@ def _show_combined_model_export(
     generate_combined_actual_vs_fitted
 ):
     """Show combined model export UI for merging 2+ models."""
+    from mmm_platform.analysis.export import generate_disaggregated_results
 
     # Model Configuration Section
     st.subheader("Configure Labels")
@@ -682,6 +664,13 @@ def _show_combined_model_export(
         # Use client from first selected model
         brand = model_options[selected_options[0]]["client"] or "unknown"
 
+    # Build wrappers_with_labels using already-loaded wrappers
+    wrappers_with_labels = []
+    for i, row in edited_config.iterrows():
+        # Find the wrapper that matches this path
+        wrapper = next(w for w, n, p in loaded_wrappers if p == row["Path"])
+        wrappers_with_labels.append((wrapper, row["Label"]))
+
     # Export options
     st.subheader("Export Settings")
 
@@ -699,153 +688,8 @@ def _show_combined_model_export(
         key="combined_enable_disaggregation"
     )
 
-    st.markdown("---")
-
-    # Build wrappers_with_labels using already-loaded wrappers
-    wrappers_with_labels = []
-    for i, row in edited_config.iterrows():
-        # Find the wrapper that matches this path
-        wrapper = next(w for w, n, p in loaded_wrappers if p == row["Path"])
-        wrappers_with_labels.append((wrapper, row["Label"]))
-
-    # Get labels for display
-    label_list = [label for _, label in wrappers_with_labels]
-    label_display = ", ".join([f"kpi_{l}" for l in label_list])
-
-    # Export files section
-    st.subheader("Platform Export Files")
-    st.info(
-        f"These CSV files combine data from all models with separate columns: "
-        f"{label_display}, kpi_total"
-    )
-
-    # Generate timestamp for filenames
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    # Three columns for the three export types
-    col1, col2, col3 = st.columns(3)
-
-    # 1. Decomps Stacked
-    with col1:
-        st.markdown("### Decomps Stacked")
-        st.markdown(
-            f"All decomposition components with {label_display}, `kpi_total` columns."
-        )
-
-        with st.spinner("Generating combined decomps_stacked..."):
-            try:
-                df_decomps = generate_combined_decomps_stacked(wrappers_with_labels, brand, force_to_actuals)
-                csv_decomps = df_decomps.to_csv(index=False)
-
-                st.download_button(
-                    label="Download decomps_stacked.csv",
-                    data=csv_decomps,
-                    file_name=f"decomps_stacked_combined_{timestamp}.csv",
-                    mime="text/csv",
-                    key="combined_decomps_download",
-                    type="primary"
-                )
-
-                with st.expander("Preview (first 10 rows)"):
-                    st.dataframe(df_decomps.head(10), width="stretch")
-
-                st.caption(f"{len(df_decomps):,} rows × {len(df_decomps.columns)} columns")
-
-            except Exception as e:
-                st.error(f"Error generating decomps_stacked: {e}")
-
-    # 2. Media Results
-    with col2:
-        st.markdown("### Media Results")
-        st.markdown(
-            f"Media channels with `spend`, {label_display}, `kpi_total`."
-        )
-
-        with st.spinner("Generating combined mmm_media_results..."):
-            try:
-                df_media = generate_combined_media_results(wrappers_with_labels, brand)
-                csv_media = df_media.to_csv(index=False)
-
-                st.download_button(
-                    label="Download mmm_media_results.csv",
-                    data=csv_media,
-                    file_name=f"mmm_media_results_combined_{timestamp}.csv",
-                    mime="text/csv",
-                    key="combined_media_download",
-                    type="primary"
-                )
-
-                with st.expander("Preview (first 10 rows)"):
-                    st.dataframe(df_media.head(10), width="stretch")
-
-                st.caption(f"{len(df_media):,} rows × {len(df_media.columns)} columns")
-
-            except Exception as e:
-                st.error(f"Error generating mmm_media_results: {e}")
-
-    # 3. Actual vs Fitted
-    with col3:
-        st.markdown("### Actual vs Fitted")
-        value_label_display = ", ".join([f"value_{l}" for l in label_list])
-        st.markdown(
-            f"Model fit with {value_label_display}, `value_total` columns."
-        )
-
-        with st.spinner("Generating combined actual_vs_fitted..."):
-            try:
-                df_fit = generate_combined_actual_vs_fitted(wrappers_with_labels, brand)
-                csv_fit = df_fit.to_csv(index=False)
-
-                st.download_button(
-                    label="Download actual_vs_fitted.csv",
-                    data=csv_fit,
-                    file_name=f"actual_vs_fitted_combined_{timestamp}.csv",
-                    mime="text/csv",
-                    key="combined_fit_download",
-                    type="primary"
-                )
-
-                with st.expander("Preview (first 10 rows)"):
-                    st.dataframe(df_fit.head(10), width="stretch")
-
-                st.caption(f"{len(df_fit):,} rows × {len(df_fit.columns)} columns")
-
-            except Exception as e:
-                st.error(f"Error generating actual_vs_fitted: {e}")
-
-    # Download All button for combined exports
-    st.markdown("---")
-    st.subheader("Download All Files")
-
-    try:
-        # Generate all dataframes
-        df_decomps = generate_combined_decomps_stacked(wrappers_with_labels, brand, force_to_actuals)
-        df_media = generate_combined_media_results(wrappers_with_labels, brand)
-        df_fit = generate_combined_actual_vs_fitted(wrappers_with_labels, brand)
-
-        # Create ZIP file in memory
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr(f"decomps_stacked_combined_{timestamp}.csv", df_decomps.to_csv(index=False))
-            zf.writestr(f"mmm_media_results_combined_{timestamp}.csv", df_media.to_csv(index=False))
-            zf.writestr(f"actual_vs_fitted_combined_{timestamp}.csv", df_fit.to_csv(index=False))
-
-        zip_buffer.seek(0)
-
-        st.download_button(
-            label="Download All (ZIP)",
-            data=zip_buffer.getvalue(),
-            file_name=f"{brand}_combined_exports_{timestamp}.zip",
-            mime="application/zip",
-            type="primary",
-            key="combined_download_all"
-        )
-        st.caption("Downloads all three CSV files in a single ZIP archive")
-
-    except Exception as e:
-        st.error(f"Error creating ZIP: {e}")
-
-    # Disaggregation Section - per model (only if enabled)
+    # Disaggregation settings per model (if enabled) - BEFORE prepare button
+    disagg_configs = {}
     if enable_disagg:
         st.markdown("---")
         st.subheader("Disaggregation Settings")
@@ -856,12 +700,179 @@ def _show_combined_model_export(
 
         for idx, (wrapper, label) in enumerate(wrappers_with_labels):
             with st.expander(f"Disaggregation for {label}", expanded=False):
-                _show_disaggregation_ui(
+                disagg_config = _show_disaggregation_ui(
                     wrapper=wrapper,
                     config=wrapper.config,
                     brand=brand,
                     key_suffix=f"_{idx}_{label}"
                 )
+                if disagg_config is not None:
+                    disagg_configs[label] = (wrapper, disagg_config)
+
+    st.markdown("---")
+
+    # Prepare button
+    if st.button("Prepare Export Files", type="primary", key="combined_prepare_btn"):
+        with st.spinner("Generating export files..."):
+            try:
+                # Generate main exports
+                st.session_state["combined_df_decomps"] = generate_combined_decomps_stacked(wrappers_with_labels, brand, force_to_actuals)
+                st.session_state["combined_df_media"] = generate_combined_media_results(wrappers_with_labels, brand)
+                st.session_state["combined_df_fit"] = generate_combined_actual_vs_fitted(wrappers_with_labels, brand)
+
+                # Generate disaggregated results for each configured model
+                combined_disagg_results = {}
+                for label, (wrapper, disagg_config) in disagg_configs.items():
+                    mapped_df, granular_name_col, date_col, weight_col = disagg_config
+                    df_disagg = generate_disaggregated_results(
+                        wrapper=wrapper,
+                        config=wrapper.config,
+                        granular_df=mapped_df,
+                        granular_name_col=granular_name_col,
+                        date_col=date_col,
+                        model_channel_col="_model_channel",
+                        weight_col=weight_col,
+                        brand=brand
+                    )
+                    combined_disagg_results[label] = df_disagg
+
+                st.session_state["combined_disagg_results"] = combined_disagg_results if combined_disagg_results else None
+
+                st.session_state["combined_files_ready"] = True
+                st.session_state["combined_brand"] = brand
+                st.session_state["combined_labels"] = [label for _, label in wrappers_with_labels]
+                st.success("Export files ready!")
+
+            except Exception as e:
+                st.error(f"Error generating exports: {e}")
+                st.session_state["combined_files_ready"] = False
+
+    # Show downloads only if files are ready
+    if st.session_state.get("combined_files_ready", False):
+        st.markdown("---")
+
+        label_list = st.session_state.get("combined_labels", [])
+        label_display = ", ".join([f"kpi_{l}" for l in label_list])
+
+        st.subheader("Platform Export Files")
+        st.info(
+            f"These CSV files combine data from all models with separate columns: "
+            f"{label_display}, kpi_total"
+        )
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Three columns for the three export types
+        col1, col2, col3 = st.columns(3)
+
+        # 1. Decomps Stacked
+        with col1:
+            st.markdown("### Decomps Stacked")
+            df_decomps = st.session_state["combined_df_decomps"]
+            csv_decomps = df_decomps.to_csv(index=False)
+
+            st.download_button(
+                label="Download decomps_stacked.csv",
+                data=csv_decomps,
+                file_name=f"decomps_stacked_combined_{timestamp}.csv",
+                mime="text/csv",
+                key="combined_decomps_download",
+                type="primary"
+            )
+
+            with st.expander("Preview (first 10 rows)"):
+                st.dataframe(df_decomps.head(10), width="stretch")
+
+            st.caption(f"{len(df_decomps):,} rows × {len(df_decomps.columns)} columns")
+
+        # 2. Media Results
+        with col2:
+            st.markdown("### Media Results")
+            df_media = st.session_state["combined_df_media"]
+            csv_media = df_media.to_csv(index=False)
+
+            st.download_button(
+                label="Download mmm_media_results.csv",
+                data=csv_media,
+                file_name=f"mmm_media_results_combined_{timestamp}.csv",
+                mime="text/csv",
+                key="combined_media_download",
+                type="primary"
+            )
+
+            with st.expander("Preview (first 10 rows)"):
+                st.dataframe(df_media.head(10), width="stretch")
+
+            st.caption(f"{len(df_media):,} rows × {len(df_media.columns)} columns")
+
+        # 3. Actual vs Fitted
+        with col3:
+            st.markdown("### Actual vs Fitted")
+            df_fit = st.session_state["combined_df_fit"]
+            csv_fit = df_fit.to_csv(index=False)
+
+            st.download_button(
+                label="Download actual_vs_fitted.csv",
+                data=csv_fit,
+                file_name=f"actual_vs_fitted_combined_{timestamp}.csv",
+                mime="text/csv",
+                key="combined_fit_download",
+                type="primary"
+            )
+
+            with st.expander("Preview (first 10 rows)"):
+                st.dataframe(df_fit.head(10), width="stretch")
+
+            st.caption(f"{len(df_fit):,} rows × {len(df_fit.columns)} columns")
+
+        # Disaggregated results (if generated)
+        combined_disagg = st.session_state.get("combined_disagg_results")
+        if combined_disagg:
+            st.markdown("---")
+            st.subheader("Disaggregated Results")
+
+            for label, df_disagg in combined_disagg.items():
+                st.markdown(f"### {label}")
+                csv_disagg = df_disagg.to_csv(index=False)
+
+                st.download_button(
+                    label=f"Download disaggregated_{label}.csv",
+                    data=csv_disagg,
+                    file_name=f"disaggregated_{label}_{timestamp}.csv",
+                    mime="text/csv",
+                    key=f"combined_disagg_download_{label}"
+                )
+
+                with st.expander(f"Preview (first 20 rows)"):
+                    st.dataframe(df_disagg.head(20), width="stretch")
+
+                st.caption(f"{len(df_disagg):,} rows × {len(df_disagg.columns)} columns")
+
+        # Download All button
+        st.markdown("---")
+        st.subheader("Download All Files")
+
+        export_brand = st.session_state.get("combined_brand", brand)
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(f"decomps_stacked_combined_{timestamp}.csv", df_decomps.to_csv(index=False))
+            zf.writestr(f"mmm_media_results_combined_{timestamp}.csv", df_media.to_csv(index=False))
+            zf.writestr(f"actual_vs_fitted_combined_{timestamp}.csv", df_fit.to_csv(index=False))
+            if combined_disagg:
+                for label, df_disagg in combined_disagg.items():
+                    zf.writestr(f"disaggregated_{label}_{timestamp}.csv", df_disagg.to_csv(index=False))
+
+        zip_buffer.seek(0)
+
+        st.download_button(
+            label="Download All (ZIP)",
+            data=zip_buffer.getvalue(),
+            file_name=f"{export_brand}_combined_exports_{timestamp}.zip",
+            mime="application/zip",
+            type="primary",
+            key="combined_download_all"
+        )
+        st.caption("Downloads all CSV files in a single ZIP archive")
 
     # File format documentation for combined exports
     st.markdown("---")
