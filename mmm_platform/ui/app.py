@@ -151,20 +151,21 @@ def show_home():
     col1, col2 = st.columns([2, 1])
 
     with col1:
-        client_options = ["-- Select a client --"] + clients if clients else ["-- No clients yet --"]
+        client_options = ["All Clients"] + clients if clients else ["-- No clients yet --"]
 
         # Sync widget state FROM active_client before render
         active = st.session_state.get("active_client")
         if active and active in clients:
             st.session_state.home_client_selector = active
         else:
-            st.session_state.home_client_selector = "-- Select a client --"
+            st.session_state.home_client_selector = "All Clients"
 
         def on_home_client_change():
             val = st.session_state.home_client_selector
-            if val not in ["-- Select a client --", "-- No clients yet --"]:
+            if val == "All Clients":
+                st.session_state.active_client = None
+            elif val != "-- No clients yet --":
                 st.session_state.active_client = val
-            # Note: Don't set to None here - keep current selection if placeholder chosen
 
         st.selectbox(
             "Client",
@@ -197,7 +198,7 @@ def show_home():
     if st.session_state.get("active_client"):
         st.success(f"Working with: **{st.session_state.active_client}**")
     else:
-        st.info("No client selected. Select a client above or choose 'All Clients' in the sidebar to view everything.")
+        st.info("Viewing **All Clients**. Select a specific client above to filter.")
 
     st.markdown("---")
 
