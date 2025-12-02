@@ -13,6 +13,32 @@ if TYPE_CHECKING:
     from mmm_platform.config.schema import ModelConfig
 
 
+def _reorder_decomp_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Ensure decomp_lvl columns are in correct order (lvl1, lvl2, lvl3, etc.).
+
+    This handles cases where category columns might be stored in a different order
+    in the config, ensuring the output always has decomp_lvl1 before decomp_lvl2, etc.
+    """
+    cols = list(df.columns)
+    # Find all decomp_lvl columns and sort by numeric suffix
+    decomp_cols = sorted(
+        [c for c in cols if c.startswith('decomp_lvl')],
+        key=lambda x: int(x.replace('decomp_lvl', ''))
+    )
+    # Get non-decomp columns in their original order
+    other_cols = [c for c in cols if not c.startswith('decomp_lvl')]
+
+    # Rebuild column order: insert decomp_lvl columns after 'brand' if it exists
+    if 'brand' in other_cols:
+        brand_idx = other_cols.index('brand') + 1
+        new_order = other_cols[:brand_idx] + decomp_cols + other_cols[brand_idx:]
+    else:
+        new_order = other_cols + decomp_cols
+
+    return df[new_order]
+
+
 def get_channel_adstock_alphas(wrapper: "MMMWrapper") -> Dict[str, float]:
     """
     Get posterior mean adstock alpha for each channel from fitted model.
@@ -236,15 +262,16 @@ def generate_decomps_stacked(
                 'decomp': col,
             }
 
-            # Add category levels (decomp_lvl1, decomp_lvl2, etc.)
+            # Add category levels using actual column names from config
             for i, cat_val in enumerate(categories):
-                row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
+                col_name = cat_col_names[i] if i < len(cat_col_names) else f'decomp_lvl{i + 1}'
+                row[col_name] = cat_val if cat_val else display_name
 
             # If fewer than 2 category columns, ensure at least lvl1 and lvl2
-            if len(categories) < 1:
+            if len(cat_col_names) < 1:
                 row['decomp_lvl1'] = display_name
-            if len(categories) < 2:
-                row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
+            if len(cat_col_names) < 2:
+                row['decomp_lvl2'] = row.get(cat_col_names[0] if cat_col_names else 'decomp_lvl1', display_name)
 
             # Add KPI value (with residual adjustment for intercept if forcing to actuals)
             kpi_value = contribs.loc[date_val, col] * revenue_scale
@@ -254,7 +281,7 @@ def generate_decomps_stacked(
 
             rows.append(row)
 
-    return pd.DataFrame(rows)
+    return _reorder_decomp_columns(pd.DataFrame(rows))
 
 
 def generate_media_results(
@@ -329,15 +356,16 @@ def generate_media_results(
                 'brand': brand,
             }
 
-            # Add category levels
+            # Add category levels using actual column names from config
             for i, cat_val in enumerate(categories):
-                row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
+                col_name = cat_col_names[i] if i < len(cat_col_names) else f'decomp_lvl{i + 1}'
+                row[col_name] = cat_val if cat_val else display_name
 
             # If fewer than 2 category columns, ensure at least lvl1 and lvl2
-            if len(categories) < 1:
+            if len(cat_col_names) < 1:
                 row['decomp_lvl1'] = display_name
-            if len(categories) < 2:
-                row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
+            if len(cat_col_names) < 2:
+                row['decomp_lvl2'] = row.get(cat_col_names[0] if cat_col_names else 'decomp_lvl1', display_name)
 
             # Add spend and derived metrics
             row['spend'] = spend
@@ -365,7 +393,7 @@ def generate_media_results(
 
             rows.append(row)
 
-    return pd.DataFrame(rows)
+    return _reorder_decomp_columns(pd.DataFrame(rows))
 
 
 def generate_actual_vs_fitted(
@@ -427,7 +455,7 @@ def generate_actual_vs_fitted(
             'value': fitted.loc[date_val]
         })
 
-    return pd.DataFrame(rows)
+    return _reorder_decomp_columns(pd.DataFrame(rows))
 
 
 # =============================================================================
@@ -588,15 +616,16 @@ def generate_combined_decomps_stacked(
                 'decomp': col,
             }
 
-            # Add category levels
+            # Add category levels using actual column names from config
             for i, cat_val in enumerate(categories):
-                row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
+                col_name = cat_col_names[i] if i < len(cat_col_names) else f'decomp_lvl{i + 1}'
+                row[col_name] = cat_val if cat_val else display_name
 
             # Ensure at least lvl1 and lvl2
-            if len(categories) < 1:
+            if len(cat_col_names) < 1:
                 row['decomp_lvl1'] = display_name
-            if len(categories) < 2:
-                row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
+            if len(cat_col_names) < 2:
+                row['decomp_lvl2'] = row.get(cat_col_names[0] if cat_col_names else 'decomp_lvl1', display_name)
 
             # Add KPI values for each model
             total = 0
@@ -615,7 +644,7 @@ def generate_combined_decomps_stacked(
 
             rows.append(row)
 
-    return pd.DataFrame(rows)
+    return _reorder_decomp_columns(pd.DataFrame(rows))
 
 
 def generate_combined_media_results(
@@ -701,14 +730,15 @@ def generate_combined_media_results(
                 'brand': brand,
             }
 
-            # Add category levels
+            # Add category levels using actual column names from config
             for i, cat_val in enumerate(categories):
-                row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
+                col_name = cat_col_names[i] if i < len(cat_col_names) else f'decomp_lvl{i + 1}'
+                row[col_name] = cat_val if cat_val else display_name
 
-            if len(categories) < 1:
+            if len(cat_col_names) < 1:
                 row['decomp_lvl1'] = display_name
-            if len(categories) < 2:
-                row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
+            if len(cat_col_names) < 2:
+                row['decomp_lvl2'] = row.get(cat_col_names[0] if cat_col_names else 'decomp_lvl1', display_name)
 
             # Get spend from first model that has this channel (spend is same for all KPIs)
             spend = 0
@@ -763,7 +793,7 @@ def generate_combined_media_results(
 
             rows.append(row)
 
-    return pd.DataFrame(rows)
+    return _reorder_decomp_columns(pd.DataFrame(rows))
 
 
 def generate_disaggregated_results(
@@ -872,9 +902,10 @@ def generate_disaggregated_results(
             'decomp': channel_name,
         }
 
-        # Add existing category levels (may be 0, 1, 2, or more)
+        # Add existing category levels using actual column names from config
         for i, cat_val in enumerate(categories):
-            row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
+            col_name = cat_col_names[i] if i < len(cat_col_names) else f'decomp_lvl{i + 1}'
+            row[col_name] = cat_val if cat_val else display_name
 
         # Add granular_name as the NEXT level after existing categories
         next_lvl = len(cat_col_names) + 1
@@ -959,7 +990,7 @@ def generate_disaggregated_results(
                         is_mapped=True
                     ))
 
-    return pd.DataFrame(rows)
+    return _reorder_decomp_columns(pd.DataFrame(rows))
 
 
 def generate_decomps_stacked_disaggregated(
@@ -1140,14 +1171,15 @@ def generate_decomps_stacked_disaggregated(
                         'decomp': col,
                     }
                     for i, cat_val in enumerate(categories):
-                        row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
+                        col_name = cat_col_names[i] if i < len(cat_col_names) else f'decomp_lvl{i + 1}'
+                        row[col_name] = cat_val if cat_val else display_name
                     # Add granular_name as next level (channel name as placeholder)
                     next_lvl = len(cat_col_names) + 1
                     row[f'decomp_lvl{next_lvl}'] = col
-                    if len(categories) < 1:
+                    if len(cat_col_names) < 1:
                         row['decomp_lvl1'] = display_name
-                    if len(categories) < 2:
-                        row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
+                    if len(cat_col_names) < 2:
+                        row['decomp_lvl2'] = row.get(cat_col_names[0] if cat_col_names else 'decomp_lvl1', display_name)
                     row[f'kpi_{target_col}'] = kpi_value
                     rows.append(row)
                 else:
@@ -1169,14 +1201,15 @@ def generate_decomps_stacked_disaggregated(
                             'decomp': col,
                         }
                         for i, cat_val in enumerate(categories):
-                            row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
+                            col_name = cat_col_names[i] if i < len(cat_col_names) else f'decomp_lvl{i + 1}'
+                            row[col_name] = cat_val if cat_val else display_name
                         # Add granular_name as next level
                         next_lvl = len(cat_col_names) + 1
                         row[f'decomp_lvl{next_lvl}'] = granular_name
-                        if len(categories) < 1:
+                        if len(cat_col_names) < 1:
                             row['decomp_lvl1'] = display_name
-                        if len(categories) < 2:
-                            row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
+                        if len(cat_col_names) < 2:
+                            row['decomp_lvl2'] = row.get(cat_col_names[0] if cat_col_names else 'decomp_lvl1', display_name)
                         row[f'kpi_{target_col}'] = granular_contrib
                         rows.append(row)
             else:
@@ -1188,15 +1221,16 @@ def generate_decomps_stacked_disaggregated(
                     'decomp': col,
                 }
                 for i, cat_val in enumerate(categories):
-                    row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
-                if len(categories) < 1:
+                    col_name = cat_col_names[i] if i < len(cat_col_names) else f'decomp_lvl{i + 1}'
+                    row[col_name] = cat_val if cat_val else display_name
+                if len(cat_col_names) < 1:
                     row['decomp_lvl1'] = display_name
-                if len(categories) < 2:
-                    row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
+                if len(cat_col_names) < 2:
+                    row['decomp_lvl2'] = row.get(cat_col_names[0] if cat_col_names else 'decomp_lvl1', display_name)
                 row[f'kpi_{target_col}'] = kpi_value
                 rows.append(row)
 
-    return pd.DataFrame(rows)
+    return _reorder_decomp_columns(pd.DataFrame(rows))
 
 
 def generate_media_results_disaggregated(
@@ -1319,13 +1353,14 @@ def generate_media_results_disaggregated(
                         'brand': brand,
                     }
                     for i, cat_val in enumerate(categories):
-                        row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
+                        col_name = cat_col_names[i] if i < len(cat_col_names) else f'decomp_lvl{i + 1}'
+                        row[col_name] = cat_val if cat_val else display_name
                     next_lvl = len(cat_col_names) + 1
                     row[f'decomp_lvl{next_lvl}'] = col
-                    if len(categories) < 1:
+                    if len(cat_col_names) < 1:
                         row['decomp_lvl1'] = display_name
-                    if len(categories) < 2:
-                        row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
+                    if len(cat_col_names) < 2:
+                        row['decomp_lvl2'] = row.get(cat_col_names[0] if cat_col_names else 'decomp_lvl1', display_name)
                     row['spend'] = spend
                     row['impressions'] = 0
                     row['clicks'] = 0
@@ -1354,13 +1389,14 @@ def generate_media_results_disaggregated(
                             'brand': brand,
                         }
                         for i, cat_val in enumerate(categories):
-                            row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
+                            col_name = cat_col_names[i] if i < len(cat_col_names) else f'decomp_lvl{i + 1}'
+                            row[col_name] = cat_val if cat_val else display_name
                         next_lvl = len(cat_col_names) + 1
                         row[f'decomp_lvl{next_lvl}'] = granular_name
-                        if len(categories) < 1:
+                        if len(cat_col_names) < 1:
                             row['decomp_lvl1'] = display_name
-                        if len(categories) < 2:
-                            row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
+                        if len(cat_col_names) < 2:
+                            row['decomp_lvl2'] = row.get(cat_col_names[0] if cat_col_names else 'decomp_lvl1', display_name)
 
                         # Use actual values from granular file for spend column
                         row['spend'] = g_row[weight_col] if weight_col else 0
@@ -1393,11 +1429,12 @@ def generate_media_results_disaggregated(
                     'brand': brand,
                 }
                 for i, cat_val in enumerate(categories):
-                    row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
-                if len(categories) < 1:
+                    col_name = cat_col_names[i] if i < len(cat_col_names) else f'decomp_lvl{i + 1}'
+                    row[col_name] = cat_val if cat_val else display_name
+                if len(cat_col_names) < 1:
                     row['decomp_lvl1'] = display_name
-                if len(categories) < 2:
-                    row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
+                if len(cat_col_names) < 2:
+                    row['decomp_lvl2'] = row.get(cat_col_names[0] if cat_col_names else 'decomp_lvl1', display_name)
                 row['spend'] = spend
 
                 # Derive impressions/clicks column names
@@ -1418,7 +1455,7 @@ def generate_media_results_disaggregated(
                 row[f'kpi_{target_col}'] = kpi_value
                 rows.append(row)
 
-    return pd.DataFrame(rows)
+    return _reorder_decomp_columns(pd.DataFrame(rows))
 
 
 def generate_combined_decomps_stacked_disaggregated(
@@ -1506,7 +1543,7 @@ def generate_combined_decomps_stacked_disaggregated(
     if 'date' in result.columns:
         result = result.sort_values(['date', 'decomp'])
 
-    return result
+    return _reorder_decomp_columns(result)
 
 
 def generate_combined_media_results_disaggregated(
@@ -1597,7 +1634,7 @@ def generate_combined_media_results_disaggregated(
     if 'date' in result.columns:
         result = result.sort_values(['date', 'decomp'])
 
-    return result
+    return _reorder_decomp_columns(result)
 
 
 def generate_combined_actual_vs_fitted(
@@ -1694,4 +1731,4 @@ def generate_combined_actual_vs_fitted(
         fitted_row['value_total'] = fitted_total
         rows.append(fitted_row)
 
-    return pd.DataFrame(rows)
+    return _reorder_decomp_columns(pd.DataFrame(rows))
