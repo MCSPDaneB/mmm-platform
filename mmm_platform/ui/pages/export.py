@@ -169,7 +169,8 @@ def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
     Returns
     -------
     tuple or None
-        (mapped_df, granular_name_col, date_col, weight_col) if ready, None otherwise
+        (mapped_df, granular_name_cols, date_col, weight_col) if ready, None otherwise
+        granular_name_cols is a list of column names forming the entity identifier
     """
     # File upload
     granular_file = st.file_uploader(
@@ -204,11 +205,11 @@ def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
         col1, col2 = st.columns(2)
 
         with col1:
-            granular_name_col = st.selectbox(
-                "Granular Name Column",
+            granular_name_cols = st.multiselect(
+                "Entity Identifier Column(s)",
                 options=all_columns,
-                help="Column containing granular identifiers (e.g., placement_name, campaign_name)",
-                key=f"granular_name_col{key_suffix}"
+                help="Select one or more columns to form the unique entity identifier (e.g., Region + Store_ID)",
+                key=f"granular_name_cols{key_suffix}"
             )
 
             date_col_granular = st.selectbox(
@@ -226,15 +227,27 @@ def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
                 key=f"granular_weight_col{key_suffix}"
             )
 
+        # Validate entity columns selected
+        if not granular_name_cols:
+            st.warning("Please select at least one entity identifier column.")
+            return None
+
         # Model channel mapping
-        st.markdown("#### Map Granular Names to Model Channels")
+        st.markdown("#### Map Granular Entities to Model Channels")
         st.caption(
-            "For each unique value in your granular file, select which model channel it maps to. "
+            "For each unique entity in your granular file, select which model channel it maps to. "
             "Leave as '-- Not Mapped --' to exclude from disaggregation."
         )
 
-        # Get unique granular values that need mapping
-        unique_granular = granular_df[granular_name_col].unique().tolist()
+        # Get unique entity combinations (composite key from multiple columns)
+        unique_entities_df = granular_df[granular_name_cols].drop_duplicates()
+
+        # Create composite key for display and mapping
+        def make_composite_key(row):
+            return " | ".join(str(row[col]) for col in granular_name_cols)
+
+        unique_entities_df["_composite_key"] = unique_entities_df.apply(make_composite_key, axis=1)
+        unique_granular = unique_entities_df["_composite_key"].tolist()
 
         # Create mapping DataFrame
         mapping_options = ["-- Not Mapped --"] + model_channels
@@ -247,7 +260,7 @@ def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
         # Build mapping table data
         mapping_data = []
         for granular_val in unique_granular[:50]:  # Limit to first 50 for performance
-            # Try to auto-match by checking if granular name contains channel name
+            # Try to auto-match by checking if entity name contains channel name
             auto_match = "-- Not Mapped --"
             for ch in model_channels:
                 if ch.lower() in str(granular_val).lower() or str(granular_val).lower() in ch.lower():
@@ -256,12 +269,12 @@ def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
 
             saved_mapping = st.session_state[mapping_key].get(str(granular_val), auto_match)
             mapping_data.append({
-                "Granular Name": str(granular_val),
+                "Entity": str(granular_val),
                 "Model Channel": saved_mapping,
             })
 
         if len(unique_granular) > 50:
-            st.warning(f"Showing first 50 of {len(unique_granular)} unique granular values. "
+            st.warning(f"Showing first 50 of {len(unique_granular)} unique entities. "
                       "All values will be processed based on exact matches to mapped values.")
 
         mapping_df = pd.DataFrame(mapping_data)
@@ -269,7 +282,7 @@ def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
         edited_mapping = st.data_editor(
             mapping_df,
             column_config={
-                "Granular Name": st.column_config.TextColumn("Granular Name", disabled=True),
+                "Entity": st.column_config.TextColumn("Entity", disabled=True),
                 "Model Channel": st.column_config.SelectboxColumn(
                     "Model Channel",
                     options=mapping_options,
@@ -283,10 +296,13 @@ def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
 
         # Save mapping to session state
         for _, row in edited_mapping.iterrows():
-            st.session_state[mapping_key][row["Granular Name"]] = row["Model Channel"]
+            st.session_state[mapping_key][row["Entity"]] = row["Model Channel"]
 
-        # Apply mapping to granular DataFrame
-        granular_df["_model_channel"] = granular_df[granular_name_col].map(
+        # Create composite key column in granular_df for mapping
+        granular_df["_composite_key"] = granular_df.apply(make_composite_key, axis=1)
+
+        # Apply mapping to granular DataFrame using composite key
+        granular_df["_model_channel"] = granular_df["_composite_key"].map(
             lambda x: st.session_state[mapping_key].get(str(x), "-- Not Mapped --")
         )
 
@@ -315,9 +331,9 @@ def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
                     st.write(f"- {ch}")
 
         if mapped_count > 0:
-            return (mapped_df, granular_name_col, date_col_granular, weight_col)
+            return (mapped_df, granular_name_cols, date_col_granular, weight_col)
         else:
-            st.warning("No rows are mapped to model channels. Please map at least one granular value.")
+            st.warning("No rows are mapped to model channels. Please map at least one entity.")
             return None
 
     except Exception as e:
@@ -393,12 +409,12 @@ def _show_single_model_export(
 
                 # Generate disaggregated results if configured
                 if enable_disagg and disagg_config is not None:
-                    mapped_df, granular_name_col, date_col, weight_col = disagg_config
+                    mapped_df, granular_name_cols, date_col, weight_col = disagg_config
                     st.session_state["export_df_disagg"] = generate_disaggregated_results(
                         wrapper=wrapper,
                         config=config,
                         granular_df=mapped_df,
-                        granular_name_col=granular_name_col,
+                        granular_name_cols=granular_name_cols,
                         date_col=date_col,
                         model_channel_col="_model_channel",
                         weight_col=weight_col,
@@ -723,12 +739,12 @@ def _show_combined_model_export(
                 # Generate disaggregated results for each configured model
                 combined_disagg_results = {}
                 for label, (wrapper, disagg_config) in disagg_configs.items():
-                    mapped_df, granular_name_col, date_col, weight_col = disagg_config
+                    mapped_df, granular_name_cols, date_col, weight_col = disagg_config
                     df_disagg = generate_disaggregated_results(
                         wrapper=wrapper,
                         config=wrapper.config,
                         granular_df=mapped_df,
-                        granular_name_col=granular_name_col,
+                        granular_name_cols=granular_name_cols,
                         date_col=date_col,
                         model_channel_col="_model_channel",
                         weight_col=weight_col,

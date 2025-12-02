@@ -664,7 +664,7 @@ def generate_disaggregated_results(
     wrapper: "MMMWrapper",
     config: "ModelConfig",
     granular_df: pd.DataFrame,
-    granular_name_col: str,
+    granular_name_cols: list[str],
     date_col: str,
     model_channel_col: str,
     weight_col: str,
@@ -684,12 +684,13 @@ def generate_disaggregated_results(
         Model configuration
     granular_df : pd.DataFrame
         DataFrame with granular-level data containing:
-        - granular name column (e.g., placement names)
+        - granular name column(s) (e.g., placement names, or multiple columns for composite key)
         - date column
         - model channel mapping column (maps to existing model channels)
         - weight column (numeric values for proportional splitting)
-    granular_name_col : str
-        Column name containing granular identifiers (e.g., "placement_name")
+    granular_name_cols : list[str]
+        List of column names forming the entity identifier (composite key).
+        Multiple columns are joined with " | " to create a single identifier.
     date_col : str
         Column name containing dates
     model_channel_col : str
@@ -713,6 +714,10 @@ def generate_disaggregated_results(
     # Convert granular date column to datetime for matching
     granular_df = granular_df.copy()
     granular_df[date_col] = pd.to_datetime(granular_df[date_col])
+
+    # Helper to create composite key from multiple columns
+    def make_composite_key(row):
+        return " | ".join(str(row[col]) for col in granular_name_cols)
 
     # Get model channel names
     model_channels = [ch.name for ch in config.channels]
@@ -767,7 +772,7 @@ def generate_disaggregated_results(
                         'wc_mon': date_val,
                         'brand': brand,
                         'model_channel': channel_name,
-                        'granular_name': g_row[granular_name_col],
+                        'granular_name': make_composite_key(g_row),
                         'weight': g_row[weight_col],
                         'weight_pct': 1.0 / n_granular,
                         f'kpi_{target_col}': channel_contrib / n_granular,
@@ -785,7 +790,7 @@ def generate_disaggregated_results(
                         'wc_mon': date_val,
                         'brand': brand,
                         'model_channel': channel_name,
-                        'granular_name': g_row[granular_name_col],
+                        'granular_name': make_composite_key(g_row),
                         'weight': weight,
                         'weight_pct': weight_pct,
                         f'kpi_{target_col}': granular_contrib,
