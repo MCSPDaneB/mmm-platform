@@ -104,6 +104,10 @@ def _show_configs_section(client: str = "all"):
     st.subheader("Saved Configurations")
     st.caption("Configurations that have been saved but not yet fitted")
 
+    # Initialize selection state
+    if "configs_selected" not in st.session_state:
+        st.session_state.configs_selected = []
+
     # Save current config button
     if st.session_state.get("current_data") is not None:
         with st.expander("💾 Save Current Configuration", expanded=False):
@@ -156,9 +160,39 @@ def _show_configs_section(client: str = "all"):
             st.info("No saved configurations found. Configure a model and save it here.")
         return
 
+    # Bulk action bar (shown when items selected)
+    n_selected = len(st.session_state.configs_selected)
+    if n_selected > 0:
+        st.write(f"**{n_selected} selected**")
+        action_cols = st.columns(5)
+        with action_cols[0]:
+            if st.button("⭐ Favorite", key="bulk_fav_configs"):
+                _bulk_favorite(st.session_state.configs_selected, "config", True)
+                st.session_state.configs_selected = []
+                st.rerun()
+        with action_cols[1]:
+            if st.button("☆ Unfavorite", key="bulk_unfav_configs"):
+                _bulk_favorite(st.session_state.configs_selected, "config", False)
+                st.session_state.configs_selected = []
+                st.rerun()
+        with action_cols[2]:
+            if st.button("📦 Archive", key="bulk_arch_configs"):
+                _bulk_archive(st.session_state.configs_selected, "config", True)
+                st.session_state.configs_selected = []
+                st.rerun()
+        with action_cols[3]:
+            if st.button("📤 Unarchive", key="bulk_unarch_configs"):
+                _bulk_archive(st.session_state.configs_selected, "config", False)
+                st.session_state.configs_selected = []
+                st.rerun()
+        with action_cols[4]:
+            if st.button("Clear", key="clear_config_selection"):
+                st.session_state.configs_selected = []
+                st.rerun()
+
     st.write(f"Found **{len(configs)}** saved configuration(s)")
 
-    # Display configs
+    # Display configs with checkboxes
     for config in configs:
         config_path = config.get("path", "")
         config_name = config.get("name", "Unknown")
@@ -166,53 +200,74 @@ def _show_configs_section(client: str = "all"):
         created_at = config.get("created_at", "Unknown")[:16].replace("T", " ")
         is_favorite = config.get("is_favorite", False)
         is_archived = config.get("is_archived", False)
+        is_selected = config_path in st.session_state.configs_selected
 
         # Show client in expander title if viewing all
         favorite_icon = "⭐ " if is_favorite else ""
         title = f"📋 {favorite_icon}{config_name} - {created_at}"
         if client == "all" and config_client:
             title = f"📋 {favorite_icon}[{config_client}] {config_name} - {created_at}"
+        if is_selected:
+            title += " ✓"
         if is_archived:
             title += " (archived)"
 
-        with st.expander(title):
-            col1, col2 = st.columns(2)
+        # Checkbox + expander layout
+        header_col1, header_col2 = st.columns([0.05, 0.95])
+        with header_col1:
+            selected = st.checkbox(
+                "Select",
+                value=is_selected,
+                key=f"select_config_{config_path}",
+                help="Select for bulk actions",
+                label_visibility="collapsed"
+            )
+            if selected and config_path not in st.session_state.configs_selected:
+                st.session_state.configs_selected.append(config_path)
+                st.rerun()
+            elif not selected and config_path in st.session_state.configs_selected:
+                st.session_state.configs_selected.remove(config_path)
+                st.rerun()
 
-            with col1:
-                st.write(f"**Created:** {created_at}")
-                if config_client:
-                    st.write(f"**Client:** {config_client}")
-                st.write(f"**Channels:** {config.get('n_channels', 'N/A')}")
-                st.write(f"**Controls:** {config.get('n_controls', 'N/A')}")
+        with header_col2:
+            with st.expander(title):
+                col1, col2 = st.columns(2)
 
-            with col2:
-                st.write(f"**Data rows:** {config.get('n_rows', 'N/A')}")
-                st.write(f"**Path:** `{config_path}`")
+                with col1:
+                    st.write(f"**Created:** {created_at}")
+                    if config_client:
+                        st.write(f"**Client:** {config_client}")
+                    st.write(f"**Channels:** {config.get('n_channels', 'N/A')}")
+                    st.write(f"**Controls:** {config.get('n_controls', 'N/A')}")
 
-            # Actions row 1: Load, Favorite, Archive
-            col1, col2, col3, col4 = st.columns(4)
+                with col2:
+                    st.write(f"**Data rows:** {config.get('n_rows', 'N/A')}")
+                    st.write(f"**Path:** `{config_path}`")
 
-            with col1:
-                if st.button(
-                    "📂 Load Config", key=f"load_config_{config_path}", type="primary"
-                ):
-                    _load_config(config_path)
+                # Actions row 1: Load, Favorite, Archive
+                col1, col2, col3, col4 = st.columns(4)
 
-            with col2:
-                fav_label = "☆ Unfavorite" if is_favorite else "⭐ Favorite"
-                if st.button(fav_label, key=f"fav_config_{config_path}"):
-                    ConfigPersistence.set_favorite(config_path, not is_favorite)
-                    st.rerun()
+                with col1:
+                    if st.button(
+                        "📂 Load Config", key=f"load_config_{config_path}", type="primary"
+                    ):
+                        _load_config(config_path)
 
-            with col3:
-                arch_label = "📤 Unarchive" if is_archived else "📦 Archive"
-                if st.button(arch_label, key=f"arch_config_{config_path}"):
-                    ConfigPersistence.set_archived(config_path, not is_archived)
-                    st.rerun()
+                with col2:
+                    fav_label = "☆ Unfavorite" if is_favorite else "⭐ Favorite"
+                    if st.button(fav_label, key=f"fav_config_{config_path}"):
+                        ConfigPersistence.set_favorite(config_path, not is_favorite)
+                        st.rerun()
 
-            with col4:
-                if st.button("🗑️ Delete", key=f"delete_config_{config_path}"):
-                    _delete_path(config_path, "Configuration")
+                with col3:
+                    arch_label = "📤 Unarchive" if is_archived else "📦 Archive"
+                    if st.button(arch_label, key=f"arch_config_{config_path}"):
+                        ConfigPersistence.set_archived(config_path, not is_archived)
+                        st.rerun()
+
+                with col4:
+                    if st.button("🗑️ Delete", key=f"delete_config_{config_path}"):
+                        _delete_path(config_path, "Configuration")
 
 
 def _show_models_section(client: str = "all"):
@@ -220,9 +275,25 @@ def _show_models_section(client: str = "all"):
     st.subheader("Fitted Models")
     st.caption("Models that have been trained and saved")
 
-    # Initialize comparison selection state
-    if "models_to_compare" not in st.session_state:
-        st.session_state.models_to_compare = []
+    # Initialize selection state
+    if "models_selected" not in st.session_state:
+        st.session_state.models_selected = []
+    if "models_mode" not in st.session_state:
+        st.session_state.models_mode = "Compare"
+
+    # Mode toggle
+    mode = st.radio(
+        "Selection mode",
+        options=["Compare", "Bulk Actions"],
+        horizontal=True,
+        key="models_mode_radio",
+        help="Compare: select exactly 2 models to compare. Bulk Actions: select any number for batch operations."
+    )
+    # Sync to session state (radio widget manages its own state)
+    if mode != st.session_state.models_mode:
+        st.session_state.models_mode = mode
+        st.session_state.models_selected = []  # Clear selection on mode change
+        st.rerun()
 
     # Filter controls
     filter_col1, filter_col2 = st.columns(2)
@@ -263,26 +334,58 @@ def _show_models_section(client: str = "all"):
             )
         return
 
-    # Show compare button if 2 models selected
-    n_selected = len(st.session_state.models_to_compare)
-    if n_selected == 2:
-        st.success(f"2 models selected for comparison")
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            if st.button("🔍 Compare Models", type="primary", width="stretch"):
-                st.session_state.active_comparison = st.session_state.models_to_compare.copy()
+    # Action bar based on mode
+    n_selected = len(st.session_state.models_selected)
+
+    if st.session_state.models_mode == "Compare":
+        # Compare mode - require exactly 2 models
+        if n_selected == 2:
+            st.success(f"2 models selected for comparison")
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                if st.button("🔍 Compare Models", type="primary", key="compare_btn"):
+                    st.session_state.active_comparison = st.session_state.models_selected.copy()
+                    st.rerun()
+            with col2:
+                if st.button("Clear Selection", key="clear_compare"):
+                    st.session_state.models_selected = []
+                    st.rerun()
+        elif n_selected == 1:
+            st.info("Select one more model to compare (2 required)")
+        elif n_selected > 2:
+            st.warning(f"{n_selected} models selected. Please select exactly 2 for comparison.")
+            if st.button("Clear Selection", key="clear_compare_excess"):
+                st.session_state.models_selected = []
                 st.rerun()
-        with col2:
-            if st.button("Clear Selection", width="stretch"):
-                st.session_state.models_to_compare = []
-                st.rerun()
-    elif n_selected == 1:
-        st.info("Select one more model to compare (2 required)")
-    elif n_selected > 2:
-        st.warning(f"{n_selected} models selected. Please select exactly 2 for comparison.")
-        if st.button("Clear Selection"):
-            st.session_state.models_to_compare = []
-            st.rerun()
+    else:
+        # Bulk Actions mode
+        if n_selected > 0:
+            st.write(f"**{n_selected} selected**")
+            action_cols = st.columns(5)
+            with action_cols[0]:
+                if st.button("⭐ Favorite", key="bulk_fav_models"):
+                    _bulk_favorite(st.session_state.models_selected, "model", True)
+                    st.session_state.models_selected = []
+                    st.rerun()
+            with action_cols[1]:
+                if st.button("☆ Unfavorite", key="bulk_unfav_models"):
+                    _bulk_favorite(st.session_state.models_selected, "model", False)
+                    st.session_state.models_selected = []
+                    st.rerun()
+            with action_cols[2]:
+                if st.button("📦 Archive", key="bulk_arch_models"):
+                    _bulk_archive(st.session_state.models_selected, "model", True)
+                    st.session_state.models_selected = []
+                    st.rerun()
+            with action_cols[3]:
+                if st.button("📤 Unarchive", key="bulk_unarch_models"):
+                    _bulk_archive(st.session_state.models_selected, "model", False)
+                    st.session_state.models_selected = []
+                    st.rerun()
+            with action_cols[4]:
+                if st.button("Clear", key="clear_model_selection"):
+                    st.session_state.models_selected = []
+                    st.rerun()
 
     st.write(f"Found **{len(models)}** fitted model(s)")
 
@@ -295,8 +398,8 @@ def _show_models_section(client: str = "all"):
         is_favorite = model.get("is_favorite", False)
         is_archived = model.get("is_archived", False)
 
-        # Check if this model is selected for comparison
-        is_selected = model_path in st.session_state.models_to_compare
+        # Check if this model is selected
+        is_selected = model_path in st.session_state.models_selected
 
         # Build expander title
         favorite_icon = "⭐ " if is_favorite else ""
@@ -311,20 +414,20 @@ def _show_models_section(client: str = "all"):
         # Header with checkbox
         header_col1, header_col2 = st.columns([0.05, 0.95])
         with header_col1:
-            # Checkbox for comparison selection
+            # Checkbox for selection
             selected = st.checkbox(
-                "Compare",
+                "Select",
                 value=is_selected,
-                key=f"compare_check_{model_path}",
-                help="Select for comparison",
+                key=f"select_model_{model_path}",
+                help="Select for comparison or bulk actions",
                 label_visibility="collapsed"
             )
             # Update selection state
-            if selected and model_path not in st.session_state.models_to_compare:
-                st.session_state.models_to_compare.append(model_path)
+            if selected and model_path not in st.session_state.models_selected:
+                st.session_state.models_selected.append(model_path)
                 st.rerun()
-            elif not selected and model_path in st.session_state.models_to_compare:
-                st.session_state.models_to_compare.remove(model_path)
+            elif not selected and model_path in st.session_state.models_selected:
+                st.session_state.models_selected.remove(model_path)
                 st.rerun()
 
         with header_col2:
@@ -392,6 +495,20 @@ def _show_models_section(client: str = "all"):
                 # Edit Categories expander
                 with st.expander("Edit Categories", expanded=False):
                     _show_category_editor(model_path, model_path.replace("\\", "_").replace("/", "_"))
+
+
+def _bulk_favorite(paths: list, item_type: str, value: bool):
+    """Set favorite status for multiple items."""
+    persistence = ModelPersistence if item_type == "model" else ConfigPersistence
+    for path in paths:
+        persistence.set_favorite(path, value)
+
+
+def _bulk_archive(paths: list, item_type: str, value: bool):
+    """Set archived status for multiple items."""
+    persistence = ModelPersistence if item_type == "model" else ConfigPersistence
+    for path in paths:
+        persistence.set_archived(path, value)
 
 
 def _save_current_config(name: str):
