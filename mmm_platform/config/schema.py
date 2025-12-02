@@ -463,6 +463,12 @@ class ModelConfig(BaseModel):
     dummy_variables: list[DummyVariableConfig] = Field(default_factory=list)
     month_dummies: Optional[MonthDummyConfig] = Field(None)
 
+    # Base component categories (intercept, trend, seasonality)
+    base_component_categories: dict[str, dict[str, str]] = Field(
+        default_factory=dict,
+        description="Categories for base components keyed by variable name (e.g., 'intercept', 'trend', 'sin_order_1')"
+    )
+
     # Transform configurations
     adstock: AdstockConfig = Field(default_factory=AdstockConfig)
     saturation: SaturationConfig = Field(default_factory=SaturationConfig)

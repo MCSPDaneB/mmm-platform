@@ -835,37 +835,46 @@ def _generate_categories_csv(config: ModelConfig) -> str:
         rows.append(row)
 
     # Add base components (intercept, trend, seasonality)
+    # Read from stored categories or default to empty
+    base_cats = config.base_component_categories if hasattr(config, 'base_component_categories') else {}
+
     # Intercept - always present
+    intercept_cats = base_cats.get("intercept", {})
     rows.append({
         "variable_name": "intercept",
         "variable_type": "base",
         "display_name": "Intercept",
-        **{cat_col: "Base" for cat_col in existing_cat_cols}
+        **{cat_col: intercept_cats.get(cat_col, "") for cat_col in existing_cat_cols}
     })
 
     # Trend (if enabled)
     if config.data.include_trend:
+        trend_cats = base_cats.get("trend", {})
         rows.append({
             "variable_name": "trend",
             "variable_type": "base",
             "display_name": "Trend",
-            **{cat_col: "Base" for cat_col in existing_cat_cols}
+            **{cat_col: trend_cats.get(cat_col, "") for cat_col in existing_cat_cols}
         })
 
     # Fourier/Seasonality terms
     if config.seasonality and config.seasonality.yearly_seasonality:
         for i in range(1, config.seasonality.yearly_seasonality + 1):
+            sin_name = f"sin_order_{i}"
+            cos_name = f"cos_order_{i}"
+            sin_cats = base_cats.get(sin_name, {})
+            cos_cats = base_cats.get(cos_name, {})
             rows.append({
-                "variable_name": f"sin_order_{i}",
+                "variable_name": sin_name,
                 "variable_type": "seasonality",
                 "display_name": f"Seasonality Sin {i}",
-                **{cat_col: "Seasonality" for cat_col in existing_cat_cols}
+                **{cat_col: sin_cats.get(cat_col, "") for cat_col in existing_cat_cols}
             })
             rows.append({
-                "variable_name": f"cos_order_{i}",
+                "variable_name": cos_name,
                 "variable_type": "seasonality",
                 "display_name": f"Seasonality Cos {i}",
-                **{cat_col: "Seasonality" for cat_col in existing_cat_cols}
+                **{cat_col: cos_cats.get(cat_col, "") for cat_col in existing_cat_cols}
             })
 
     if not rows:
@@ -964,6 +973,30 @@ def _parse_categories_csv(csv_content: str, config: ModelConfig) -> tuple[dict, 
                     "new_value": new_val or "(empty)",
                 })
 
+    # Add base components to change detection
+    base_cats = config.base_component_categories if hasattr(config, 'base_component_categories') else {}
+    base_vars = ["intercept"]
+    if config.data.include_trend:
+        base_vars.append("trend")
+    if config.seasonality and config.seasonality.yearly_seasonality:
+        for i in range(1, config.seasonality.yearly_seasonality + 1):
+            base_vars.extend([f"sin_order_{i}", f"cos_order_{i}"])
+
+    for var_name in base_vars:
+        current_cats = base_cats.get(var_name, {})
+        new_cats = new_categories.get(var_name, {})
+        all_cols = set(current_cats.keys()) | set(new_cats.keys())
+        for col in all_cols:
+            old_val = current_cats.get(col, "")
+            new_val = new_cats.get(col, "")
+            if old_val != new_val:
+                changes.append({
+                    "variable": var_name,
+                    "column": col,
+                    "old_value": old_val or "(empty)",
+                    "new_value": new_val or "(empty)",
+                })
+
     return new_categories, added_columns, removed_columns, final_columns, changes
 
 
@@ -999,6 +1032,18 @@ def _apply_categories_from_csv(config: ModelConfig, new_categories: dict, all_ca
     for dummy in config.dummy_variables:
         if dummy.name in new_categories:
             dummy.categories = new_categories[dummy.name]
+
+    # Update base component categories (intercept, trend, seasonality)
+    base_vars = ["intercept"]
+    if config.data.include_trend:
+        base_vars.append("trend")
+    if config.seasonality and config.seasonality.yearly_seasonality:
+        for i in range(1, config.seasonality.yearly_seasonality + 1):
+            base_vars.extend([f"sin_order_{i}", f"cos_order_{i}"])
+
+    for var_name in base_vars:
+        if var_name in new_categories:
+            config.base_component_categories[var_name] = new_categories[var_name]
 
     return config
 
