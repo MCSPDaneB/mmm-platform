@@ -6,11 +6,117 @@ These formats are designed for upload to external visualization platforms.
 
 import pandas as pd
 import numpy as np
-from typing import TYPE_CHECKING, List, Tuple
+from typing import TYPE_CHECKING, List, Tuple, Dict
 
 if TYPE_CHECKING:
     from mmm_platform.model.mmm import MMMWrapper
     from mmm_platform.config.schema import ModelConfig
+
+
+def get_channel_adstock_alphas(wrapper: "MMMWrapper") -> Dict[str, float]:
+    """
+    Get posterior mean adstock alpha for each channel from fitted model.
+
+    Parameters
+    ----------
+    wrapper : MMMWrapper
+        Fitted model wrapper with idata containing posterior samples
+
+    Returns
+    -------
+    Dict[str, float]
+        Dictionary mapping channel names to posterior mean alpha values
+    """
+    idata = wrapper.idata
+    adstock_posterior = idata.posterior["adstock_alpha"]
+
+    # Get channel names in order (paid media + owned media)
+    channel_cols = wrapper.transform_engine.get_effective_channel_columns()
+
+    alphas = {}
+    for idx, ch in enumerate(channel_cols):
+        samples = adstock_posterior.isel(channel=idx).values.flatten()
+        alphas[ch] = float(samples.mean())
+
+    return alphas
+
+
+def apply_adstock_to_weights(
+    granular_df: pd.DataFrame,
+    weight_col: str,
+    date_col: str,
+    entity_col: str,
+    channel_col: str,
+    channel_alphas: Dict[str, float],
+    l_max: int = 8
+) -> pd.DataFrame:
+    """
+    Apply adstock transformation to weight column per entity.
+
+    CRITICAL: Data is sorted chronologically before applying adstock.
+    The carryover effect flows forward in time - past spend affects current period.
+
+    Parameters
+    ----------
+    granular_df : pd.DataFrame
+        DataFrame with granular-level data
+    weight_col : str
+        Column name containing weight values (e.g., spend)
+    date_col : str
+        Column name containing dates
+    entity_col : str
+        Column name containing entity identifiers (composite key)
+    channel_col : str
+        Column name containing model channel mappings
+    channel_alphas : Dict[str, float]
+        Dictionary mapping channel names to adstock alpha values
+    l_max : int, optional
+        Maximum lag for adstock effect (default 8)
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with new column '{weight_col}_adstocked'
+    """
+    df = granular_df.copy()
+
+    # Ensure date column is datetime for proper sorting
+    df[date_col] = pd.to_datetime(df[date_col], dayfirst=True)
+
+    adstocked_col = f"{weight_col}_adstocked"
+    df[adstocked_col] = 0.0
+
+    # Group by entity (each entity gets its own adstock)
+    for entity in df[entity_col].unique():
+        entity_mask = df[entity_col] == entity
+
+        # CRITICAL: Sort by date ascending (oldest first) before adstock
+        entity_data = df.loc[entity_mask].sort_values(date_col, ascending=True)
+
+        if len(entity_data) == 0:
+            continue
+
+        # Get the channel this entity maps to
+        channel = entity_data[channel_col].iloc[0]
+        if channel not in channel_alphas:
+            # No adstock alpha for this channel - use raw weights
+            df.loc[entity_data.index, adstocked_col] = entity_data[weight_col].values
+            continue
+
+        alpha = channel_alphas[channel]
+
+        # Apply geometric adstock to this entity's TIME-ORDERED series
+        # Formula: weights = [alpha^0, alpha^1, ..., alpha^(l_max-1)] normalized
+        weights = np.array([alpha ** i for i in range(l_max)])
+        weights = weights / weights.sum()
+
+        x = entity_data[weight_col].values
+        x_adstocked = np.convolve(x, weights, mode='full')[:len(x)]
+
+        # Assign back using the sorted index (preserves time order mapping)
+        df.loc[entity_data.index, adstocked_col] = x_adstocked
+
+    return df
 
 
 def generate_decomps_stacked(
@@ -710,24 +816,83 @@ def generate_disaggregated_results(
     contribs = wrapper.get_contributions()
     revenue_scale = config.data.revenue_scale
     target_col = config.data.target_column
+    l_max = config.adstock.l_max
 
-    # Convert granular date column to datetime for matching
+    # Get category column names (may be empty)
+    cat_col_names = config.get_category_column_names()
+
+    # Convert granular date column to datetime and NORMALIZE (remove time component)
     granular_df = granular_df.copy()
-    granular_df[date_col] = pd.to_datetime(granular_df[date_col])
+    granular_df[date_col] = pd.to_datetime(granular_df[date_col], dayfirst=True).dt.normalize()
 
     # Helper to create composite key from multiple columns
     def make_composite_key(row):
         return " | ".join(str(row[col]) for col in granular_name_cols)
 
+    # Create composite key column for adstock grouping
+    granular_df["_entity_key"] = granular_df.apply(make_composite_key, axis=1)
+
+    # Get posterior adstock alphas from fitted model
+    channel_alphas = get_channel_adstock_alphas(wrapper)
+
+    # Apply adstock transformation to weights (CRITICAL: time-ordered per entity)
+    granular_df = apply_adstock_to_weights(
+        granular_df=granular_df,
+        weight_col=weight_col,
+        date_col=date_col,
+        entity_col="_entity_key",
+        channel_col=model_channel_col,
+        channel_alphas=channel_alphas,
+        l_max=l_max
+    )
+
+    # Use adstocked weights for proportional allocation
+    adstocked_weight_col = f"{weight_col}_adstocked"
+
     # Get model channel names
     model_channels = [ch.name for ch in config.channels]
 
     rows = []
-    warnings = []
+
+    # Helper to build row with decomp_lvl columns
+    def build_row(date_val, channel_name, granular_name, kpi_value, raw_weight, adstocked_weight, weight_pct, is_mapped):
+        # Get channel config for categories
+        channel_cfg = config.get_channel_by_name(channel_name)
+        if channel_cfg:
+            categories = [channel_cfg.get_category(cat_name) for cat_name in cat_col_names]
+            display_name = channel_cfg.get_display_name()
+        else:
+            categories = []
+            display_name = channel_name
+
+        row = {
+            'date': date_val,
+            'wc_mon': date_val,
+            'brand': brand,
+            'decomp': channel_name,
+        }
+
+        # Add existing category levels (may be 0, 1, 2, or more)
+        for i, cat_val in enumerate(categories):
+            row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
+
+        # Add granular_name as the NEXT level after existing categories
+        next_lvl = len(cat_col_names) + 1
+        row[f'decomp_lvl{next_lvl}'] = granular_name
+
+        # Add KPI and weight columns
+        row[f'kpi_{target_col}'] = kpi_value
+        row['weight'] = raw_weight
+        row['weight_adstocked'] = adstocked_weight
+        row['weight_pct'] = weight_pct
+        row['is_mapped'] = is_mapped
+
+        return row
 
     # Process each date in the model contributions
     for date_val in contribs.index:
-        date_dt = pd.to_datetime(date_val)
+        # Normalize date for matching
+        date_dt = pd.Timestamp(date_val).normalize()
 
         # Get granular data for this date
         date_mask = granular_df[date_col] == date_dt
@@ -747,61 +912,513 @@ def generate_disaggregated_results(
 
             if len(channel_granular) == 0:
                 # No granular mapping for this channel/date - output at channel level
-                rows.append({
-                    'date': date_val,
-                    'wc_mon': date_val,
-                    'brand': brand,
-                    'model_channel': channel_name,
-                    'granular_name': channel_name,  # Use channel name as granular
-                    'weight': 0,
-                    'weight_pct': 1.0,
-                    f'kpi_{target_col}': channel_contrib,
-                    'is_mapped': False,
-                })
+                rows.append(build_row(
+                    date_val=date_val,
+                    channel_name=channel_name,
+                    granular_name=channel_name,  # Use channel name as granular
+                    kpi_value=channel_contrib,
+                    raw_weight=0,
+                    adstocked_weight=0,
+                    weight_pct=1.0,
+                    is_mapped=False
+                ))
                 continue
 
-            # Calculate total weight for this channel/date
-            total_weight = channel_granular[weight_col].sum()
+            # Calculate total ADSTOCKED weight for this channel/date
+            total_weight = channel_granular[adstocked_weight_col].sum()
 
             if total_weight == 0:
                 # Zero total weight - distribute equally
                 n_granular = len(channel_granular)
                 for _, g_row in channel_granular.iterrows():
-                    rows.append({
-                        'date': date_val,
-                        'wc_mon': date_val,
-                        'brand': brand,
-                        'model_channel': channel_name,
-                        'granular_name': make_composite_key(g_row),
-                        'weight': g_row[weight_col],
-                        'weight_pct': 1.0 / n_granular,
-                        f'kpi_{target_col}': channel_contrib / n_granular,
-                        'is_mapped': True,
-                    })
+                    rows.append(build_row(
+                        date_val=date_val,
+                        channel_name=channel_name,
+                        granular_name=make_composite_key(g_row),
+                        kpi_value=channel_contrib / n_granular,
+                        raw_weight=g_row[weight_col],
+                        adstocked_weight=g_row[adstocked_weight_col],
+                        weight_pct=1.0 / n_granular,
+                        is_mapped=True
+                    ))
             else:
-                # Split proportionally by weight
+                # Split proportionally by ADSTOCKED weight
                 for _, g_row in channel_granular.iterrows():
-                    weight = g_row[weight_col]
-                    weight_pct = weight / total_weight
+                    adstocked_wt = g_row[adstocked_weight_col]
+                    weight_pct = adstocked_wt / total_weight
                     granular_contrib = channel_contrib * weight_pct
 
-                    rows.append({
+                    rows.append(build_row(
+                        date_val=date_val,
+                        channel_name=channel_name,
+                        granular_name=make_composite_key(g_row),
+                        kpi_value=granular_contrib,
+                        raw_weight=g_row[weight_col],
+                        adstocked_weight=adstocked_wt,
+                        weight_pct=weight_pct,
+                        is_mapped=True
+                    ))
+
+    return pd.DataFrame(rows)
+
+
+def generate_decomps_stacked_disaggregated(
+    wrapper: "MMMWrapper",
+    config: "ModelConfig",
+    granular_df: pd.DataFrame,
+    granular_name_cols: list[str],
+    date_col: str,
+    model_channel_col: str,
+    weight_col: str,
+    brand: str,
+    force_to_actuals: bool = False
+) -> pd.DataFrame:
+    """
+    Generate disaggregated decomps_stacked export.
+
+    Same format as generate_decomps_stacked but with mapped channels expanded
+    to granular rows. Non-channel components (intercept, trend, etc.) and
+    unmapped channels remain at original level.
+
+    Parameters
+    ----------
+    wrapper : MMMWrapper
+        Fitted model wrapper
+    config : ModelConfig
+        Model configuration
+    granular_df : pd.DataFrame
+        DataFrame with granular-level data containing entity mappings
+    granular_name_cols : list[str]
+        List of column names forming the entity identifier
+    date_col : str
+        Column name containing dates
+    model_channel_col : str
+        Column name containing model channel mappings
+    weight_col : str
+        Column name containing weight values for proportional allocation
+    brand : str
+        Brand name for the export
+    force_to_actuals : bool, optional
+        If True, absorb residuals into intercept
+
+    Returns
+    -------
+    pd.DataFrame
+        Disaggregated decomps stacked with same format as generate_decomps_stacked
+        but granular_name as the next decomp_lvl for mapped channels
+    """
+    contribs = wrapper.get_contributions()
+    revenue_scale = config.data.revenue_scale
+    target_col = config.data.target_column
+    l_max = config.adstock.l_max
+
+    # Get category column names
+    cat_col_names = config.get_category_column_names()
+
+    # Prepare granular data with adstock
+    granular_df = granular_df.copy()
+    granular_df[date_col] = pd.to_datetime(granular_df[date_col], dayfirst=True).dt.normalize()
+
+    def make_composite_key(row):
+        return " | ".join(str(row[col]) for col in granular_name_cols)
+
+    granular_df["_entity_key"] = granular_df.apply(make_composite_key, axis=1)
+
+    # Get posterior adstock alphas and apply
+    channel_alphas = get_channel_adstock_alphas(wrapper)
+    granular_df = apply_adstock_to_weights(
+        granular_df=granular_df,
+        weight_col=weight_col,
+        date_col=date_col,
+        entity_col="_entity_key",
+        channel_col=model_channel_col,
+        channel_alphas=channel_alphas,
+        l_max=l_max
+    )
+    adstocked_weight_col = f"{weight_col}_adstocked"
+
+    # Get model channels that have granular mapping
+    mapped_channels = set(granular_df[model_channel_col].unique())
+
+    # Calculate residuals if forcing to actuals
+    residuals = {}
+    if force_to_actuals:
+        date_col_cfg = config.data.date_column
+        df_indexed = wrapper.df_scaled.set_index(date_col_cfg)
+        for date_val in contribs.index:
+            if date_val in df_indexed.index:
+                actual = df_indexed.loc[date_val, target_col] * revenue_scale
+                fitted = contribs.loc[date_val].sum() * revenue_scale
+                residuals[date_val] = actual - fitted
+            else:
+                residuals[date_val] = 0
+
+    rows = []
+
+    # Helper to get categories for a component
+    def get_component_info(col):
+        channel_cfg = config.get_channel_by_name(col)
+        owned_media_cfg = config.get_owned_media_by_name(col)
+        competitor_cfg = config.get_competitor_by_name(col)
+        control_cfg = config.get_control_by_name(col)
+        dummy_cfg = next((d for d in config.dummy_variables if d.name == col), None)
+
+        if channel_cfg:
+            display_name = channel_cfg.get_display_name()
+            categories = [channel_cfg.get_category(cat_name) for cat_name in cat_col_names]
+        elif owned_media_cfg:
+            display_name = owned_media_cfg.get_display_name()
+            categories = [owned_media_cfg.get_category(cat_name) for cat_name in cat_col_names]
+        elif competitor_cfg:
+            display_name = competitor_cfg.get_display_name()
+            categories = [competitor_cfg.get_category(cat_name) for cat_name in cat_col_names]
+        elif control_cfg:
+            display_name = control_cfg.get_display_name()
+            categories = [control_cfg.get_category(cat_name) for cat_name in cat_col_names]
+        elif dummy_cfg:
+            display_name = dummy_cfg.name
+            categories = [dummy_cfg.categories.get(cat_name, "") for cat_name in cat_col_names]
+        else:
+            # Base component
+            base_col = col.replace("_adstock", "").replace("_inv", "")
+            display_name = col.replace("_", " ").title()
+
+            if config.get_competitor_by_name(base_col):
+                comp_cfg = config.get_competitor_by_name(base_col)
+                display_name = comp_cfg.get_display_name()
+                categories = [comp_cfg.get_category(cat_name) for cat_name in cat_col_names]
+            elif config.get_control_by_name(base_col):
+                ctrl_cfg = config.get_control_by_name(base_col)
+                display_name = ctrl_cfg.get_display_name()
+                categories = [ctrl_cfg.get_category(cat_name) for cat_name in cat_col_names]
+            else:
+                base_cats = config.base_component_categories.get(col, {}) if hasattr(config, 'base_component_categories') else {}
+                if base_cats:
+                    categories = [base_cats.get(cat_name, "") for cat_name in cat_col_names]
+                else:
+                    if col in ['intercept', 'trend', 't']:
+                        base_category = "Base"
+                    elif 'season' in col.lower() or 'fourier' in col.lower() or col.startswith('sin_order') or col.startswith('cos_order'):
+                        base_category = "Seasonality"
+                    else:
+                        base_category = "Other"
+                    categories = [base_category] * len(cat_col_names)
+
+        if not categories:
+            categories = [display_name, display_name]
+
+        return display_name, categories
+
+    # Process each date and component
+    for date_val in contribs.index:
+        date_dt = pd.Timestamp(date_val).normalize()
+        date_mask = granular_df[date_col] == date_dt
+        date_granular = granular_df[date_mask]
+
+        for col in contribs.columns:
+            display_name, categories = get_component_info(col)
+            kpi_value = contribs.loc[date_val, col] * revenue_scale
+
+            if force_to_actuals and col == 'intercept':
+                kpi_value += residuals.get(date_val, 0)
+
+            # Check if this is a mapped channel
+            is_channel = config.get_channel_by_name(col) is not None
+            is_mapped = is_channel and col in mapped_channels
+
+            if is_mapped:
+                # Get granular rows for this channel/date
+                channel_mask = date_granular[model_channel_col] == col
+                channel_granular = date_granular[channel_mask]
+
+                if len(channel_granular) == 0:
+                    # No granular data for this date - output at channel level
+                    row = {
                         'date': date_val,
                         'wc_mon': date_val,
                         'brand': brand,
-                        'model_channel': channel_name,
-                        'granular_name': make_composite_key(g_row),
-                        'weight': weight,
-                        'weight_pct': weight_pct,
-                        f'kpi_{target_col}': granular_contrib,
-                        'is_mapped': True,
-                    })
+                        'decomp': col,
+                    }
+                    for i, cat_val in enumerate(categories):
+                        row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
+                    # Add granular_name as next level (channel name as placeholder)
+                    next_lvl = len(cat_col_names) + 1
+                    row[f'decomp_lvl{next_lvl}'] = col
+                    if len(categories) < 1:
+                        row['decomp_lvl1'] = display_name
+                    if len(categories) < 2:
+                        row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
+                    row[f'kpi_{target_col}'] = kpi_value
+                    rows.append(row)
+                else:
+                    # Split proportionally
+                    total_weight = channel_granular[adstocked_weight_col].sum()
 
-    result_df = pd.DataFrame(rows)
+                    for _, g_row in channel_granular.iterrows():
+                        if total_weight > 0:
+                            weight_pct = g_row[adstocked_weight_col] / total_weight
+                        else:
+                            weight_pct = 1.0 / len(channel_granular)
+                        granular_contrib = kpi_value * weight_pct
+                        granular_name = make_composite_key(g_row)
 
-    # Add any additional columns from granular file that might be useful
-    # (like impressions, clicks, etc. if they exist)
-    return result_df
+                        row = {
+                            'date': date_val,
+                            'wc_mon': date_val,
+                            'brand': brand,
+                            'decomp': col,
+                        }
+                        for i, cat_val in enumerate(categories):
+                            row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
+                        # Add granular_name as next level
+                        next_lvl = len(cat_col_names) + 1
+                        row[f'decomp_lvl{next_lvl}'] = granular_name
+                        if len(categories) < 1:
+                            row['decomp_lvl1'] = display_name
+                        if len(categories) < 2:
+                            row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
+                        row[f'kpi_{target_col}'] = granular_contrib
+                        rows.append(row)
+            else:
+                # Non-mapped: output at original level
+                row = {
+                    'date': date_val,
+                    'wc_mon': date_val,
+                    'brand': brand,
+                    'decomp': col,
+                }
+                for i, cat_val in enumerate(categories):
+                    row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
+                if len(categories) < 1:
+                    row['decomp_lvl1'] = display_name
+                if len(categories) < 2:
+                    row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
+                row[f'kpi_{target_col}'] = kpi_value
+                rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def generate_media_results_disaggregated(
+    wrapper: "MMMWrapper",
+    config: "ModelConfig",
+    granular_df: pd.DataFrame,
+    granular_name_cols: list[str],
+    date_col: str,
+    model_channel_col: str,
+    weight_col: str,
+    include_cols: list[str],
+    brand: str
+) -> pd.DataFrame:
+    """
+    Generate disaggregated media results export.
+
+    Same format as generate_media_results but with mapped channels expanded
+    to granular rows. Includes actual spend/impressions/clicks from granular file.
+
+    Parameters
+    ----------
+    wrapper : MMMWrapper
+        Fitted model wrapper
+    config : ModelConfig
+        Model configuration
+    granular_df : pd.DataFrame
+        DataFrame with granular-level data containing entity mappings
+    granular_name_cols : list[str]
+        List of column names forming the entity identifier
+    date_col : str
+        Column name containing dates
+    model_channel_col : str
+        Column name containing model channel mappings
+    weight_col : str
+        Column name containing weight values for proportional allocation
+    include_cols : list[str]
+        Additional columns to include from granular file (e.g., impressions, clicks)
+    brand : str
+        Brand name for the export
+
+    Returns
+    -------
+    pd.DataFrame
+        Disaggregated media results with same format as generate_media_results
+        but granular_name as the next decomp_lvl for mapped channels
+    """
+    contribs = wrapper.get_contributions()
+    revenue_scale = config.data.revenue_scale
+    spend_scale = config.data.spend_scale
+    target_col = config.data.target_column
+    l_max = config.adstock.l_max
+
+    # Get category column names
+    cat_col_names = config.get_category_column_names()
+
+    # Prepare granular data with adstock
+    granular_df = granular_df.copy()
+    granular_df[date_col] = pd.to_datetime(granular_df[date_col], dayfirst=True).dt.normalize()
+
+    def make_composite_key(row):
+        return " | ".join(str(row[col]) for col in granular_name_cols)
+
+    granular_df["_entity_key"] = granular_df.apply(make_composite_key, axis=1)
+
+    # Get posterior adstock alphas and apply
+    channel_alphas = get_channel_adstock_alphas(wrapper)
+    granular_df = apply_adstock_to_weights(
+        granular_df=granular_df,
+        weight_col=weight_col,
+        date_col=date_col,
+        entity_col="_entity_key",
+        channel_col=model_channel_col,
+        channel_alphas=channel_alphas,
+        l_max=l_max
+    )
+    adstocked_weight_col = f"{weight_col}_adstocked"
+
+    # Get model channels that have granular mapping
+    mapped_channels = set(granular_df[model_channel_col].unique())
+
+    rows = []
+
+    # Process each date and channel
+    for date_idx, date_val in enumerate(contribs.index):
+        date_dt = pd.Timestamp(date_val).normalize()
+        date_mask = granular_df[date_col] == date_dt
+        date_granular = granular_df[date_mask]
+
+        for channel_cfg in config.channels:
+            col = channel_cfg.name
+
+            if col not in contribs.columns:
+                continue
+
+            display_name = channel_cfg.get_display_name()
+            categories = [channel_cfg.get_category(cat_name) for cat_name in cat_col_names]
+            if not categories:
+                categories = [display_name, display_name]
+
+            kpi_value = contribs.loc[date_val, col] * revenue_scale
+
+            # Check if this channel is mapped
+            is_mapped = col in mapped_channels
+
+            if is_mapped:
+                channel_mask = date_granular[model_channel_col] == col
+                channel_granular = date_granular[channel_mask]
+
+                if len(channel_granular) == 0:
+                    # No granular data for this date - output at channel level
+                    # Get spend from model data
+                    if date_idx < len(wrapper.df_scaled):
+                        spend = wrapper.df_scaled.iloc[date_idx][col] * spend_scale
+                    else:
+                        spend = 0
+
+                    row = {
+                        'date': date_val,
+                        'wc_mon': date_val,
+                        'brand': brand,
+                    }
+                    for i, cat_val in enumerate(categories):
+                        row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
+                    next_lvl = len(cat_col_names) + 1
+                    row[f'decomp_lvl{next_lvl}'] = col
+                    if len(categories) < 1:
+                        row['decomp_lvl1'] = display_name
+                    if len(categories) < 2:
+                        row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
+                    row['spend'] = spend
+                    row['impressions'] = 0
+                    row['clicks'] = 0
+                    # Add any include_cols as 0
+                    for inc_col in include_cols:
+                        if inc_col not in ['spend', 'impressions', 'clicks']:
+                            row[inc_col] = 0
+                    row['decomp'] = col
+                    row[f'kpi_{target_col}'] = kpi_value
+                    rows.append(row)
+                else:
+                    # Split proportionally
+                    total_weight = channel_granular[adstocked_weight_col].sum()
+
+                    for _, g_row in channel_granular.iterrows():
+                        if total_weight > 0:
+                            weight_pct = g_row[adstocked_weight_col] / total_weight
+                        else:
+                            weight_pct = 1.0 / len(channel_granular)
+                        granular_contrib = kpi_value * weight_pct
+                        granular_name = make_composite_key(g_row)
+
+                        row = {
+                            'date': date_val,
+                            'wc_mon': date_val,
+                            'brand': brand,
+                        }
+                        for i, cat_val in enumerate(categories):
+                            row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
+                        next_lvl = len(cat_col_names) + 1
+                        row[f'decomp_lvl{next_lvl}'] = granular_name
+                        if len(categories) < 1:
+                            row['decomp_lvl1'] = display_name
+                        if len(categories) < 2:
+                            row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
+
+                        # Use actual values from granular file for spend column
+                        row['spend'] = g_row[weight_col] if weight_col else 0
+
+                        # Get impressions/clicks from include_cols or derived columns
+                        row['impressions'] = 0
+                        row['clicks'] = 0
+                        for inc_col in include_cols:
+                            if inc_col in g_row.index:
+                                row[inc_col] = g_row[inc_col]
+                                # Also map to standard columns if applicable
+                                if 'impr' in inc_col.lower():
+                                    row['impressions'] = g_row[inc_col]
+                                elif 'click' in inc_col.lower():
+                                    row['clicks'] = g_row[inc_col]
+
+                        row['decomp'] = col
+                        row[f'kpi_{target_col}'] = granular_contrib
+                        rows.append(row)
+            else:
+                # Unmapped channel - output at channel level
+                if date_idx < len(wrapper.df_scaled):
+                    spend = wrapper.df_scaled.iloc[date_idx][col] * spend_scale
+                else:
+                    spend = 0
+
+                row = {
+                    'date': date_val,
+                    'wc_mon': date_val,
+                    'brand': brand,
+                }
+                for i, cat_val in enumerate(categories):
+                    row[f'decomp_lvl{i + 1}'] = cat_val if cat_val else display_name
+                if len(categories) < 1:
+                    row['decomp_lvl1'] = display_name
+                if len(categories) < 2:
+                    row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
+                row['spend'] = spend
+
+                # Derive impressions/clicks column names
+                impr_col = col.replace('_spend', '_impr').replace('_Spend', '_impr')
+                clicks_col = col.replace('_spend', '_clicks').replace('_Spend', '_clicks')
+
+                if impr_col in wrapper.df_scaled.columns and date_idx < len(wrapper.df_scaled):
+                    row['impressions'] = wrapper.df_scaled.iloc[date_idx][impr_col]
+                else:
+                    row['impressions'] = 0
+
+                if clicks_col in wrapper.df_scaled.columns and date_idx < len(wrapper.df_scaled):
+                    row['clicks'] = wrapper.df_scaled.iloc[date_idx][clicks_col]
+                else:
+                    row['clicks'] = 0
+
+                row['decomp'] = col
+                row[f'kpi_{target_col}'] = kpi_value
+                rows.append(row)
+
+    return pd.DataFrame(rows)
 
 
 def generate_combined_actual_vs_fitted(

@@ -184,8 +184,9 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
     Returns
     -------
     tuple or None
-        (mapped_df, granular_name_cols, date_col, weight_col) if ready, None otherwise
+        (mapped_df, granular_name_cols, date_col, weight_col, include_cols) if ready, None otherwise
         granular_name_cols is a list of column names forming the entity identifier
+        include_cols is a list of additional column names to include from granular file
     """
     from mmm_platform.model.persistence import (
         load_disaggregation_configs,
@@ -234,6 +235,9 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
                     st.write(f"**Entity columns:** {', '.join(selected_saved_config['granular_name_cols'])}")
                     st.write(f"**Date column:** {selected_saved_config['date_column']}")
                     st.write(f"**Weight column:** {selected_saved_config['weight_column']}")
+                    include_cols_saved = selected_saved_config.get('include_columns', [])
+                    if include_cols_saved:
+                        st.write(f"**Include columns:** {', '.join(include_cols_saved)}")
                     st.write(f"**Mappings:** {len(selected_saved_config['entity_to_channel_mapping'])} entities")
 
     # File upload
@@ -301,6 +305,23 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
                 help="Numeric column to use for proportional allocation (e.g., spend, impressions, attribution)",
                 key=f"granular_weight_col{key_suffix}"
             )
+
+        # Columns to Include multiselect
+        # Exclude already selected columns from options
+        used_cols = set(granular_name_cols + [date_col_granular, weight_col])
+        available_include_cols = [c for c in all_columns if c not in used_cols]
+
+        # Pre-populate from saved config if available
+        default_include_cols = selected_saved_config.get('include_columns', []) if selected_saved_config else []
+        default_include_cols = [c for c in default_include_cols if c in available_include_cols]
+
+        include_cols = st.multiselect(
+            "Columns to Include",
+            options=available_include_cols,
+            default=default_include_cols,
+            help="Additional columns to carry through to output (e.g., impressions, clicks). These will appear in the disaggregated media results.",
+            key=f"granular_include_cols{key_suffix}"
+        )
 
         # Validate entity columns selected
         if not granular_name_cols:
@@ -519,6 +540,7 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
                             "granular_name_cols": granular_name_cols,
                             "date_column": date_col_granular,
                             "weight_column": weight_col,
+                            "include_columns": include_cols,
                             "entity_to_channel_mapping": dict(st.session_state[mapping_key]),
                         }
                         save_disaggregation_config(model_path, new_config)
@@ -528,7 +550,7 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
                         st.warning("Please enter a configuration name")
 
         if mapped_count > 0:
-            return (mapped_df, granular_name_cols, date_col_granular, weight_col)
+            return (mapped_df, granular_name_cols, date_col_granular, weight_col, include_cols)
         else:
             st.warning("No rows are mapped to model channels. Please map at least one entity.")
             return None
@@ -548,7 +570,11 @@ def _show_single_model_export(
     generate_actual_vs_fitted
 ):
     """Show single model export UI."""
-    from mmm_platform.analysis.export import generate_disaggregated_results
+    from mmm_platform.analysis.export import (
+        generate_disaggregated_results,
+        generate_decomps_stacked_disaggregated,
+        generate_media_results_disaggregated
+    )
 
     # Brand input section
     st.subheader("Export Settings")
@@ -607,7 +633,35 @@ def _show_single_model_export(
 
                 # Generate disaggregated results if configured
                 if enable_disagg and disagg_config is not None:
-                    mapped_df, granular_name_cols, date_col, weight_col = disagg_config
+                    mapped_df, granular_name_cols, date_col, weight_col, include_cols = disagg_config
+
+                    # Generate disaggregated decomps_stacked
+                    st.session_state["export_df_decomps_disagg"] = generate_decomps_stacked_disaggregated(
+                        wrapper=wrapper,
+                        config=config,
+                        granular_df=mapped_df,
+                        granular_name_cols=granular_name_cols,
+                        date_col=date_col,
+                        model_channel_col="_model_channel",
+                        weight_col=weight_col,
+                        brand=brand,
+                        force_to_actuals=force_to_actuals
+                    )
+
+                    # Generate disaggregated media_results
+                    st.session_state["export_df_media_disagg"] = generate_media_results_disaggregated(
+                        wrapper=wrapper,
+                        config=config,
+                        granular_df=mapped_df,
+                        granular_name_cols=granular_name_cols,
+                        date_col=date_col,
+                        model_channel_col="_model_channel",
+                        weight_col=weight_col,
+                        include_cols=include_cols,
+                        brand=brand
+                    )
+
+                    # Legacy: also generate the old disaggregated results format
                     st.session_state["export_df_disagg"] = generate_disaggregated_results(
                         wrapper=wrapper,
                         config=config,
@@ -618,7 +672,24 @@ def _show_single_model_export(
                         weight_col=weight_col,
                         brand=brand
                     )
+
+                    # Validate totals match
+                    df_decomps = st.session_state["export_df_decomps"]
+                    df_decomps_disagg = st.session_state["export_df_decomps_disagg"]
+                    target_col = config.data.target_column
+                    kpi_col = f"kpi_{target_col}"
+
+                    # Sum by channel in both
+                    channel_names = [ch.name for ch in config.channels]
+                    for ch in channel_names:
+                        orig_total = df_decomps[df_decomps["decomp"] == ch][kpi_col].sum()
+                        disagg_total = df_decomps_disagg[df_decomps_disagg["decomp"] == ch][kpi_col].sum()
+                        diff = abs(orig_total - disagg_total)
+                        if diff > 0.01:
+                            st.warning(f"Validation warning: {ch} totals differ by {diff:.2f}")
                 else:
+                    st.session_state["export_df_decomps_disagg"] = None
+                    st.session_state["export_df_media_disagg"] = None
                     st.session_state["export_df_disagg"] = None
 
                 st.session_state["export_files_ready"] = True
@@ -650,13 +721,28 @@ def _show_single_model_export(
                 data=csv_decomps,
                 file_name=f"decomps_stacked_{timestamp}.csv",
                 mime="text/csv",
-                width="stretch"
+                key="decomps_download"
             )
 
+            # Disaggregated version (if available)
+            df_decomps_disagg = st.session_state.get("export_df_decomps_disagg")
+            if df_decomps_disagg is not None:
+                csv_decomps_disagg = df_decomps_disagg.to_csv(index=False)
+                st.download_button(
+                    label="Download decomps_stacked_disagg.csv",
+                    data=csv_decomps_disagg,
+                    file_name=f"decomps_stacked_disagg_{timestamp}.csv",
+                    mime="text/csv",
+                    key="decomps_disagg_download",
+                    help="Disaggregated version with granular-level rows"
+                )
+
             with st.expander("Preview (first 10 rows)"):
-                st.dataframe(df_decomps.head(10), width="stretch")
+                st.dataframe(df_decomps.head(10), use_container_width=True)
 
             st.caption(f"{len(df_decomps):,} rows × {len(df_decomps.columns)} columns")
+            if df_decomps_disagg is not None:
+                st.caption(f"Disagg: {len(df_decomps_disagg):,} rows")
 
         # 2. Media Results
         with col2:
@@ -669,13 +755,28 @@ def _show_single_model_export(
                 data=csv_media,
                 file_name=f"mmm_media_results_{timestamp}.csv",
                 mime="text/csv",
-                width="stretch"
+                key="media_download"
             )
 
+            # Disaggregated version (if available)
+            df_media_disagg = st.session_state.get("export_df_media_disagg")
+            if df_media_disagg is not None:
+                csv_media_disagg = df_media_disagg.to_csv(index=False)
+                st.download_button(
+                    label="Download media_results_disagg.csv",
+                    data=csv_media_disagg,
+                    file_name=f"mmm_media_results_disagg_{timestamp}.csv",
+                    mime="text/csv",
+                    key="media_disagg_download",
+                    help="Disaggregated version with granular-level rows and actual spend/impressions/clicks"
+                )
+
             with st.expander("Preview (first 10 rows)"):
-                st.dataframe(df_media.head(10), width="stretch")
+                st.dataframe(df_media.head(10), use_container_width=True)
 
             st.caption(f"{len(df_media):,} rows × {len(df_media.columns)} columns")
+            if df_media_disagg is not None:
+                st.caption(f"Disagg: {len(df_media_disagg):,} rows")
 
         # 3. Actual vs Fitted
         with col3:
@@ -688,32 +789,31 @@ def _show_single_model_export(
                 data=csv_fit,
                 file_name=f"actual_vs_fitted_{timestamp}.csv",
                 mime="text/csv",
-                width="stretch"
+                key="fit_download"
             )
 
             with st.expander("Preview (first 10 rows)"):
-                st.dataframe(df_fit.head(10), width="stretch")
+                st.dataframe(df_fit.head(10), use_container_width=True)
 
             st.caption(f"{len(df_fit):,} rows × {len(df_fit.columns)} columns")
 
-        # Disaggregated results (if generated)
+        # Disaggregation workings (diagnostic file with weight calculations)
         df_disagg = st.session_state.get("export_df_disagg")
         if df_disagg is not None:
-            st.markdown("---")
-            st.markdown("### Disaggregated Results")
-            csv_disagg = df_disagg.to_csv(index=False)
+            with st.expander("Show Disaggregation Workings"):
+                st.caption("Diagnostic file with weight calculations (weight, weight_adstocked, weight_pct, is_mapped)")
+                csv_disagg = df_disagg.to_csv(index=False)
 
-            st.download_button(
-                label="Download disaggregated_results.csv",
-                data=csv_disagg,
-                file_name=f"disaggregated_results_{timestamp}.csv",
-                mime="text/csv",
-            )
+                st.download_button(
+                    label="Download disaggregation_workings.csv",
+                    data=csv_disagg,
+                    file_name=f"disaggregation_workings_{timestamp}.csv",
+                    mime="text/csv",
+                    key="workings_download"
+                )
 
-            with st.expander("Preview (first 20 rows)"):
-                st.dataframe(df_disagg.head(20), width="stretch")
-
-            st.caption(f"{len(df_disagg):,} rows × {len(df_disagg.columns)} columns")
+                st.dataframe(df_disagg.head(20), use_container_width=True)
+                st.caption(f"{len(df_disagg):,} rows × {len(df_disagg.columns)} columns")
 
         # Download All button
         st.markdown("---")
@@ -725,8 +825,13 @@ def _show_single_model_export(
             zf.writestr(f"decomps_stacked_{timestamp}.csv", df_decomps.to_csv(index=False))
             zf.writestr(f"mmm_media_results_{timestamp}.csv", df_media.to_csv(index=False))
             zf.writestr(f"actual_vs_fitted_{timestamp}.csv", df_fit.to_csv(index=False))
+            # Include disaggregated files if available
+            if df_decomps_disagg is not None:
+                zf.writestr(f"decomps_stacked_disagg_{timestamp}.csv", df_decomps_disagg.to_csv(index=False))
+            if df_media_disagg is not None:
+                zf.writestr(f"mmm_media_results_disagg_{timestamp}.csv", df_media_disagg.to_csv(index=False))
             if df_disagg is not None:
-                zf.writestr(f"disaggregated_results_{timestamp}.csv", df_disagg.to_csv(index=False))
+                zf.writestr(f"disaggregation_workings_{timestamp}.csv", df_disagg.to_csv(index=False))
 
         zip_buffer.seek(0)
 
@@ -811,7 +916,11 @@ def _show_combined_model_export(
     generate_combined_actual_vs_fitted
 ):
     """Show combined model export UI for merging 2+ models."""
-    from mmm_platform.analysis.export import generate_disaggregated_results
+    from mmm_platform.analysis.export import (
+        generate_disaggregated_results,
+        generate_decomps_stacked_disaggregated,
+        generate_media_results_disaggregated
+    )
 
     # Model Configuration Section
     st.subheader("Configure Labels")
@@ -939,10 +1048,40 @@ def _show_combined_model_export(
                 st.session_state["combined_df_fit"] = generate_combined_actual_vs_fitted(wrappers_with_labels, brand)
 
                 # Generate disaggregated results for each configured model
+                combined_disagg_decomps = {}
+                combined_disagg_media = {}
                 combined_disagg_results = {}
                 for label, (wrapper, disagg_config) in disagg_configs.items():
-                    mapped_df, granular_name_cols, date_col, weight_col = disagg_config
-                    df_disagg = generate_disaggregated_results(
+                    mapped_df, granular_name_cols, date_col, weight_col, include_cols = disagg_config
+
+                    # Generate disaggregated decomps_stacked
+                    combined_disagg_decomps[label] = generate_decomps_stacked_disaggregated(
+                        wrapper=wrapper,
+                        config=wrapper.config,
+                        granular_df=mapped_df,
+                        granular_name_cols=granular_name_cols,
+                        date_col=date_col,
+                        model_channel_col="_model_channel",
+                        weight_col=weight_col,
+                        brand=brand,
+                        force_to_actuals=force_to_actuals
+                    )
+
+                    # Generate disaggregated media_results
+                    combined_disagg_media[label] = generate_media_results_disaggregated(
+                        wrapper=wrapper,
+                        config=wrapper.config,
+                        granular_df=mapped_df,
+                        granular_name_cols=granular_name_cols,
+                        date_col=date_col,
+                        model_channel_col="_model_channel",
+                        weight_col=weight_col,
+                        include_cols=include_cols,
+                        brand=brand
+                    )
+
+                    # Legacy format
+                    combined_disagg_results[label] = generate_disaggregated_results(
                         wrapper=wrapper,
                         config=wrapper.config,
                         granular_df=mapped_df,
@@ -952,8 +1091,9 @@ def _show_combined_model_export(
                         weight_col=weight_col,
                         brand=brand
                     )
-                    combined_disagg_results[label] = df_disagg
 
+                st.session_state["combined_disagg_decomps"] = combined_disagg_decomps if combined_disagg_decomps else None
+                st.session_state["combined_disagg_media"] = combined_disagg_media if combined_disagg_media else None
                 st.session_state["combined_disagg_results"] = combined_disagg_results if combined_disagg_results else None
 
                 st.session_state["combined_files_ready"] = True
@@ -983,6 +1123,11 @@ def _show_combined_model_export(
         # Three columns for the three export types
         col1, col2, col3 = st.columns(3)
 
+        # Get disaggregated data
+        combined_disagg_decomps = st.session_state.get("combined_disagg_decomps")
+        combined_disagg_media = st.session_state.get("combined_disagg_media")
+        combined_disagg = st.session_state.get("combined_disagg_results")
+
         # 1. Decomps Stacked
         with col1:
             st.markdown("### Decomps Stacked")
@@ -998,8 +1143,21 @@ def _show_combined_model_export(
                 type="primary"
             )
 
+            # Disaggregated decomps (per model)
+            if combined_disagg_decomps:
+                for label, df_dd in combined_disagg_decomps.items():
+                    csv_dd = df_dd.to_csv(index=False)
+                    st.download_button(
+                        label=f"decomps_disagg_{label}.csv",
+                        data=csv_dd,
+                        file_name=f"decomps_stacked_disagg_{label}_{timestamp}.csv",
+                        mime="text/csv",
+                        key=f"combined_decomps_disagg_{label}",
+                        help=f"Disaggregated decomps for {label}"
+                    )
+
             with st.expander("Preview (first 10 rows)"):
-                st.dataframe(df_decomps.head(10), width="stretch")
+                st.dataframe(df_decomps.head(10), use_container_width=True)
 
             st.caption(f"{len(df_decomps):,} rows × {len(df_decomps.columns)} columns")
 
@@ -1018,8 +1176,21 @@ def _show_combined_model_export(
                 type="primary"
             )
 
+            # Disaggregated media (per model)
+            if combined_disagg_media:
+                for label, df_dm in combined_disagg_media.items():
+                    csv_dm = df_dm.to_csv(index=False)
+                    st.download_button(
+                        label=f"media_disagg_{label}.csv",
+                        data=csv_dm,
+                        file_name=f"mmm_media_results_disagg_{label}_{timestamp}.csv",
+                        mime="text/csv",
+                        key=f"combined_media_disagg_{label}",
+                        help=f"Disaggregated media results for {label}"
+                    )
+
             with st.expander("Preview (first 10 rows)"):
-                st.dataframe(df_media.head(10), width="stretch")
+                st.dataframe(df_media.head(10), use_container_width=True)
 
             st.caption(f"{len(df_media):,} rows × {len(df_media.columns)} columns")
 
@@ -1039,32 +1210,29 @@ def _show_combined_model_export(
             )
 
             with st.expander("Preview (first 10 rows)"):
-                st.dataframe(df_fit.head(10), width="stretch")
+                st.dataframe(df_fit.head(10), use_container_width=True)
 
             st.caption(f"{len(df_fit):,} rows × {len(df_fit.columns)} columns")
 
-        # Disaggregated results (if generated)
-        combined_disagg = st.session_state.get("combined_disagg_results")
+        # Disaggregation workings (diagnostic files with weight calculations)
         if combined_disagg:
-            st.markdown("---")
-            st.subheader("Disaggregated Results")
+            with st.expander("Show Disaggregation Workings"):
+                st.caption("Diagnostic files with weight calculations (weight, weight_adstocked, weight_pct, is_mapped)")
 
-            for label, df_disagg in combined_disagg.items():
-                st.markdown(f"### {label}")
-                csv_disagg = df_disagg.to_csv(index=False)
+                for label, df_disagg in combined_disagg.items():
+                    st.markdown(f"**{label}**")
+                    csv_disagg = df_disagg.to_csv(index=False)
 
-                st.download_button(
-                    label=f"Download disaggregated_{label}.csv",
-                    data=csv_disagg,
-                    file_name=f"disaggregated_{label}_{timestamp}.csv",
-                    mime="text/csv",
-                    key=f"combined_disagg_download_{label}"
-                )
+                    st.download_button(
+                        label=f"Download workings_{label}.csv",
+                        data=csv_disagg,
+                        file_name=f"workings_{label}_{timestamp}.csv",
+                        mime="text/csv",
+                        key=f"combined_workings_download_{label}"
+                    )
 
-                with st.expander(f"Preview (first 20 rows)"):
-                    st.dataframe(df_disagg.head(20), width="stretch")
-
-                st.caption(f"{len(df_disagg):,} rows × {len(df_disagg.columns)} columns")
+                    st.dataframe(df_disagg.head(20), use_container_width=True)
+                    st.caption(f"{len(df_disagg):,} rows × {len(df_disagg.columns)} columns")
 
         # Download All button
         st.markdown("---")
@@ -1076,9 +1244,16 @@ def _show_combined_model_export(
             zf.writestr(f"decomps_stacked_combined_{timestamp}.csv", df_decomps.to_csv(index=False))
             zf.writestr(f"mmm_media_results_combined_{timestamp}.csv", df_media.to_csv(index=False))
             zf.writestr(f"actual_vs_fitted_combined_{timestamp}.csv", df_fit.to_csv(index=False))
+            # Include disaggregated files
+            if combined_disagg_decomps:
+                for label, df_dd in combined_disagg_decomps.items():
+                    zf.writestr(f"decomps_stacked_disagg_{label}_{timestamp}.csv", df_dd.to_csv(index=False))
+            if combined_disagg_media:
+                for label, df_dm in combined_disagg_media.items():
+                    zf.writestr(f"mmm_media_results_disagg_{label}_{timestamp}.csv", df_dm.to_csv(index=False))
             if combined_disagg:
                 for label, df_disagg in combined_disagg.items():
-                    zf.writestr(f"disaggregated_{label}_{timestamp}.csv", df_disagg.to_csv(index=False))
+                    zf.writestr(f"workings_{label}_{timestamp}.csv", df_disagg.to_csv(index=False))
 
         zip_buffer.seek(0)
 

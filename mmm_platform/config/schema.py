@@ -109,6 +109,7 @@ class DisaggregationMappingConfig(BaseModel):
     granular_name_cols: list[str] = Field(..., description="Column(s) forming the entity identifier")
     date_column: str = Field(..., description="Date column in granular file")
     weight_column: str = Field(..., description="Weight column for proportional allocation")
+    include_columns: list[str] = Field(default_factory=list, description="Additional columns to include from granular file (e.g., impressions, clicks)")
     entity_to_channel_mapping: dict[str, str] = Field(
         default_factory=dict,
         description="Maps entity identifiers to model channel names"
