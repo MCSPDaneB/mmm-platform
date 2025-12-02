@@ -207,7 +207,7 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
         st.markdown("#### Saved Configurations")
 
         config_options = ["+ Create New"] + [
-            f"{c['name']} ({c['created_at'][:10]})" for c in saved_configs
+            f"{c['name']} ({c['created_at'][:16].replace('T', ' ')})" for c in saved_configs
         ]
 
         selected_option = st.selectbox(
