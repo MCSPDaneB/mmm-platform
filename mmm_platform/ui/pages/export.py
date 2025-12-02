@@ -22,62 +22,153 @@ def show():
         generate_combined_media_results,
         generate_combined_actual_vs_fitted,
     )
-    from mmm_platform.model.persistence import ModelPersistence
+    from mmm_platform.model.persistence import ModelPersistence, list_clients
     from mmm_platform.model.mmm import MMMWrapper
 
     st.title("Export Data")
     st.caption("Generate CSV files for upload to external visualization platforms")
 
-    # Export mode selection
-    st.subheader("Export Mode")
-    export_mode = st.radio(
-        "Select export mode",
-        options=["Single Model", "Combined Models"],
-        horizontal=True,
-        help="Single Model exports data from the current model. Combined Models merges two models with separate KPI columns."
+    # Model Selection Section
+    st.subheader("Select Models")
+
+    # Filter controls
+    filter_col1, filter_col2 = st.columns(2)
+
+    # Client filter
+    clients = list_clients()
+    with filter_col1:
+        if clients:
+            client_options = ["All Clients"] + clients
+            selected_client = st.selectbox(
+                "Filter by Client",
+                options=client_options,
+                key="export_client_filter",
+                help="Show models for a specific client"
+            )
+            client_filter = "all" if selected_client == "All Clients" else selected_client
+        else:
+            st.info("No clients found. Please run some models first.")
+            st.stop()
+
+    with filter_col2:
+        export_fav_filter = st.selectbox(
+            "Filter",
+            options=["All", "Favorites only", "Non-favorites"],
+            key="export_favorite_filter",
+            help="Filter by favorite status"
+        )
+
+    # Get saved models (client-aware)
+    saved_models = ModelPersistence.list_saved_models(client=client_filter)
+
+    # Apply favorites filter
+    if export_fav_filter == "Favorites only":
+        saved_models = [m for m in saved_models if m.get("is_favorite", False)]
+    elif export_fav_filter == "Non-favorites":
+        saved_models = [m for m in saved_models if not m.get("is_favorite", False)]
+
+    # Sort favorites to the top, then by created_at descending (most recent first)
+    saved_models.sort(key=lambda m: (not m.get("is_favorite", False), m.get("created_at", "")), reverse=True)
+
+    if not saved_models:
+        st.warning("No fitted models found. Please run and save at least 1 model first.")
+        st.stop()
+
+    # Create options for multiselect with rich labels
+    model_options = {}
+    for model in saved_models:
+        r2 = model.get("r2")
+        r2_str = f"R²={r2:.3f}" if r2 is not None else "R²=N/A"
+        n_channels = model.get("n_channels", "?")
+        created = model.get("created_at", "")[:10]
+        name = model.get("config_name", "Unknown")
+        model_client = model.get("client", "")
+        is_favorite = model.get("is_favorite", False)
+
+        # Add star icon for favorites
+        fav_icon = "⭐ " if is_favorite else ""
+
+        # Show client in label when viewing all clients
+        if client_filter == "all" and model_client:
+            option_label = f"{fav_icon}[{model_client}] {name} ({created}) - {n_channels} channels, {r2_str}"
+        else:
+            option_label = f"{fav_icon}{name} ({created}) - {n_channels} channels, {r2_str}"
+        model_options[option_label] = {
+            "path": model["path"],
+            "name": name,
+            "client": model_client
+        }
+
+    selected_options = st.multiselect(
+        "Select models to export",
+        options=list(model_options.keys()),
+        default=[],
+        help="Select 1 model for single export, or 2+ models for combined export",
+        key="export_model_multiselect"
     )
+
+    # Handle based on selection count
+    if len(selected_options) == 0:
+        st.info("Please select 1 or more models to export.")
+        st.stop()
 
     st.markdown("---")
 
-    if export_mode == "Single Model":
+    if len(selected_options) == 1:
+        # Single model export
+        model_info = model_options[selected_options[0]]
+        try:
+            with st.spinner("Loading model..."):
+                wrapper = ModelPersistence.load(model_info["path"], MMMWrapper)
+        except Exception as e:
+            st.error(f"Error loading model: {e}")
+            st.stop()
+
         _show_single_model_export(
-            generate_decomps_stacked,
-            generate_media_results,
-            generate_actual_vs_fitted
+            wrapper=wrapper,
+            config=wrapper.config,
+            brand=model_info["client"] or "unknown",
+            generate_decomps_stacked=generate_decomps_stacked,
+            generate_media_results=generate_media_results,
+            generate_actual_vs_fitted=generate_actual_vs_fitted
         )
     else:
+        # Combined model export (2+ models)
+        st.warning(
+            "⚠️ **KPIs must be in the same units to be summable** (e.g., both in revenue £). "
+            "The kpi_total column is the sum of all model contributions."
+        )
+
         _show_combined_model_export(
-            ModelPersistence,
-            MMMWrapper,
-            generate_combined_decomps_stacked,
-            generate_combined_media_results,
-            generate_combined_actual_vs_fitted
+            selected_options=selected_options,
+            model_options=model_options,
+            client_filter=client_filter,
+            ModelPersistence=ModelPersistence,
+            MMMWrapper=MMMWrapper,
+            generate_combined_decomps_stacked=generate_combined_decomps_stacked,
+            generate_combined_media_results=generate_combined_media_results,
+            generate_combined_actual_vs_fitted=generate_combined_actual_vs_fitted
         )
 
 
 def _show_single_model_export(
+    wrapper,
+    config,
+    brand: str,
     generate_decomps_stacked,
     generate_media_results,
     generate_actual_vs_fitted
 ):
-    """Show single model export UI (original functionality)."""
+    """Show single model export UI."""
     from mmm_platform.analysis.export import generate_disaggregated_results
-
-    # Check if model is fitted
-    if not st.session_state.get("model_fitted") or st.session_state.get("current_model") is None:
-        st.warning("Please run the model first to export data.")
-        st.stop()
-
-    wrapper = st.session_state.current_model
-    config = wrapper.config
 
     # Brand input section
     st.subheader("Export Settings")
 
     col1, col2 = st.columns([1, 2])
     with col1:
-        # Get brand from config or prompt user
-        default_brand = config.data.brand if config.data.brand else ""
+        # Get brand from config or use provided default
+        default_brand = config.data.brand if config.data.brand else brand
         brand = st.text_input(
             "Brand Name",
             value=default_brand,
@@ -495,113 +586,20 @@ def _show_single_model_export(
 
 
 def _show_combined_model_export(
+    selected_options,
+    model_options,
+    client_filter,
     ModelPersistence,
     MMMWrapper,
     generate_combined_decomps_stacked,
     generate_combined_media_results,
     generate_combined_actual_vs_fitted
 ):
-    """Show combined model export UI for merging two models."""
-    from mmm_platform.model.persistence import list_clients
+    """Show combined model export UI for merging 2+ models."""
 
-    st.subheader("Combined Model Export")
-
-    # Warning about summability
-    st.warning(
-        "⚠️ **KPIs must be in the same units to be summable** (e.g., both in revenue £). "
-        "The kpi_total column is the sum of both model contributions."
-    )
-
-    # Filter controls
-    filter_col1, filter_col2 = st.columns(2)
-
-    # Client filter (same design as Combined Analysis)
-    clients = list_clients()
-    with filter_col1:
-        if clients:
-            client_options = ["All Clients"] + clients
-            selected_client = st.selectbox(
-                "Filter by Client",
-                options=client_options,
-                key="export_client_filter",
-                help="Show models for a specific client. Client name will be used as brand."
-            )
-            client_filter = "all" if selected_client == "All Clients" else selected_client
-        else:
-            st.error("No clients found. Please run some models first.")
-            st.stop()
-
-    with filter_col2:
-        export_fav_filter = st.selectbox(
-            "Filter",
-            options=["All", "Favorites only", "Non-favorites"],
-            key="export_favorite_filter",
-            help="Filter by favorite status"
-        )
-
-    # Get saved models (client-aware)
-    saved_models = ModelPersistence.list_saved_models(client=client_filter)
-
-    # Apply favorites filter
-    if export_fav_filter == "Favorites only":
-        saved_models = [m for m in saved_models if m.get("is_favorite", False)]
-    elif export_fav_filter == "Non-favorites":
-        saved_models = [m for m in saved_models if not m.get("is_favorite", False)]
-
-    # Sort favorites to the top, then by created_at descending (most recent first)
-    saved_models.sort(key=lambda m: (not m.get("is_favorite", False), m.get("created_at", "")), reverse=True)
-
-    if not saved_models:
-        st.warning("No fitted models found. Please run and save at least 2 models first.")
-        st.stop()
-
-    if len(saved_models) < 2:
-        st.warning(f"At least 2 fitted models are required. Found {len(saved_models)} model(s).")
-        st.stop()
-
-    # Model Selection Section (same design as Combined Analysis)
-    st.markdown("### 1. Select Models")
-
-    # Create options for multiselect with rich labels
-    model_options = {}
-    for model in saved_models:
-        r2 = model.get("r2")
-        r2_str = f"R²={r2:.3f}" if r2 is not None else "R²=N/A"
-        n_channels = model.get("n_channels", "?")
-        created = model.get("created_at", "")[:10]
-        name = model.get("config_name", "Unknown")
-        model_client = model.get("client", "")
-        is_favorite = model.get("is_favorite", False)
-
-        # Add star icon for favorites
-        fav_icon = "⭐ " if is_favorite else ""
-
-        # Show client in label when viewing all clients
-        if client_filter == "all" and model_client:
-            option_label = f"{fav_icon}[{model_client}] {name} ({created}) - {n_channels} channels, {r2_str}"
-        else:
-            option_label = f"{fav_icon}{name} ({created}) - {n_channels} channels, {r2_str}"
-        model_options[option_label] = {
-            "path": model["path"],
-            "name": name,
-            "client": model_client
-        }
-
-    selected_options = st.multiselect(
-        "Select models to combine",
-        options=list(model_options.keys()),
-        default=[],
-        help="Select exactly 2 models to combine for export",
-        key="export_model_multiselect"
-    )
-
-    if len(selected_options) < 2:
-        st.info("Please select exactly 2 models to proceed.")
-        st.stop()
-
-    if len(selected_options) > 2:
-        st.warning("Please select exactly 2 models. You have selected more than 2.")
-        st.stop()
+    # Model Configuration Section
+    st.subheader("Configure Labels")
+    st.caption("Set custom labels for each model (used in column names like kpi_online, kpi_offline)")
 
     # Load models first (so we can get KPI names for default labels)
     try:
@@ -614,10 +612,6 @@ def _show_combined_model_export(
     except Exception as e:
         st.error(f"Error loading models: {e}")
         st.stop()
-
-    # Model Configuration Section (same design as Combined Analysis)
-    st.markdown("### 2. Configure Labels")
-    st.caption("Set custom labels for each model (used in column names like kpi_online, kpi_offline)")
 
     # Build configuration data using KPI name from loaded models as default label
     config_data = []
@@ -686,14 +680,14 @@ def _show_combined_model_export(
         wrappers_with_labels.append((wrapper, row["Label"]))
 
     # Get labels for display
-    label1 = wrappers_with_labels[0][1]
-    label2 = wrappers_with_labels[1][1]
+    label_list = [label for _, label in wrappers_with_labels]
+    label_display = ", ".join([f"kpi_{l}" for l in label_list])
 
     # Export files section
     st.subheader("Platform Export Files")
     st.info(
-        f"These CSV files combine data from both models with separate columns: "
-        f"kpi_{label1}, kpi_{label2}, kpi_total"
+        f"These CSV files combine data from all models with separate columns: "
+        f"{label_display}, kpi_total"
     )
 
     # Generate timestamp for filenames
@@ -706,7 +700,7 @@ def _show_combined_model_export(
     with col1:
         st.markdown("### Decomps Stacked")
         st.markdown(
-            f"All decomposition components with `kpi_{label1}`, `kpi_{label2}`, `kpi_total` columns."
+            f"All decomposition components with {label_display}, `kpi_total` columns."
         )
 
         with st.spinner("Generating combined decomps_stacked..."):
@@ -735,7 +729,7 @@ def _show_combined_model_export(
     with col2:
         st.markdown("### Media Results")
         st.markdown(
-            f"Media channels with `spend`, `kpi_{label1}`, `kpi_{label2}`, `kpi_total`."
+            f"Media channels with `spend`, {label_display}, `kpi_total`."
         )
 
         with st.spinner("Generating combined mmm_media_results..."):
@@ -763,8 +757,9 @@ def _show_combined_model_export(
     # 3. Actual vs Fitted
     with col3:
         st.markdown("### Actual vs Fitted")
+        value_label_display = ", ".join([f"value_{l}" for l in label_list])
         st.markdown(
-            f"Model fit with `value_{label1}`, `value_{label2}`, `value_total` columns."
+            f"Model fit with {value_label_display}, `value_total` columns."
         )
 
         with st.spinner("Generating combined actual_vs_fitted..."):
@@ -835,9 +830,8 @@ def _show_combined_model_export(
         | decomp | Variable name |
         | decomp_lvl1 | Category level 1 |
         | decomp_lvl2 | Category level 2 |
-        | kpi_{label1} | Contribution from Model 1 |
-        | kpi_{label2} | Contribution from Model 2 |
-        | kpi_total | Sum of both model contributions |
+        | kpi_{{label}} | Contribution from each model |
+        | kpi_total | Sum of all model contributions |
 
         ### mmm_media_results.csv (Combined)
 
@@ -849,9 +843,8 @@ def _show_combined_model_export(
         | decomp_lvl1 | Category level 1 |
         | decomp_lvl2 | Category level 2 |
         | spend | Business spend (same for all KPIs) |
-        | kpi_{label1} | Contribution from Model 1 |
-        | kpi_{label2} | Contribution from Model 2 |
-        | kpi_total | Sum of both model contributions |
+        | kpi_{{label}} | Contribution from each model |
+        | kpi_total | Sum of all model contributions |
         | decomp | Channel name |
 
         ### actual_vs_fitted.csv (Combined)
@@ -862,7 +855,6 @@ def _show_combined_model_export(
         | wc_mon | Week commencing Monday |
         | brand | Brand name |
         | actual_fitted | "Actual" or "Fitted" |
-        | value_{label1} | Value from Model 1 |
-        | value_{label2} | Value from Model 2 |
-        | value_total | Sum of both model values |
+        | value_{{label}} | Value from each model |
+        | value_total | Sum of all model values |
         """)
