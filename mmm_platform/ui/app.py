@@ -173,7 +173,9 @@ def show_home():
 
         # Update session state if a valid client selected
         if selected not in ["-- Select a client --", "-- No clients yet --"]:
-            st.session_state.active_client = selected
+            if st.session_state.get("active_client") != selected:
+                st.session_state.active_client = selected
+                st.rerun()  # Force rerun to update sidebar
 
     with col2:
         # Create new client option
