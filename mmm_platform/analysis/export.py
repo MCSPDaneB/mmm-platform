@@ -1421,6 +1421,179 @@ def generate_media_results_disaggregated(
     return pd.DataFrame(rows)
 
 
+def generate_combined_decomps_stacked_disaggregated(
+    wrappers_with_disagg: List[Tuple["MMMWrapper", str, tuple]],
+    brand: str,
+    force_to_actuals: bool = False
+) -> pd.DataFrame:
+    """
+    Generate combined disaggregated decomps_stacked export from multiple models.
+
+    Each model's disaggregated decomps are merged into a single DataFrame with
+    separate KPI columns per model plus a total column.
+
+    Parameters
+    ----------
+    wrappers_with_disagg : List[Tuple[MMMWrapper, str, tuple]]
+        List of (wrapper, label, disagg_config) tuples where disagg_config is
+        (mapped_df, granular_name_cols, date_col, weight_col, include_cols)
+    brand : str
+        Brand name for the export
+    force_to_actuals : bool, optional
+        If True, absorb residuals into intercept
+
+    Returns
+    -------
+    pd.DataFrame
+        Combined disaggregated decomps with columns:
+        date, wc_mon, brand, decomp, decomp_lvl1..N, kpi_{label1}, kpi_{label2}, kpi_total
+    """
+    if len(wrappers_with_disagg) < 2:
+        raise ValueError("At least 2 models required for combined export")
+
+    # Generate disaggregated decomps for each model
+    all_disagg_dfs = []
+    labels = []
+
+    for wrapper, label, disagg_config in wrappers_with_disagg:
+        mapped_df, granular_name_cols, date_col, weight_col, include_cols = disagg_config
+
+        df_disagg = generate_decomps_stacked_disaggregated(
+            wrapper=wrapper,
+            config=wrapper.config,
+            granular_df=mapped_df,
+            granular_name_cols=granular_name_cols,
+            date_col=date_col,
+            model_channel_col="_model_channel",
+            weight_col=weight_col,
+            brand=brand,
+            force_to_actuals=force_to_actuals
+        )
+
+        # Find the KPI column name
+        target_col = wrapper.config.data.target_column
+        kpi_col = f"kpi_{target_col}"
+
+        # Rename KPI column to kpi_{label}
+        df_disagg = df_disagg.rename(columns={kpi_col: f"kpi_{label}"})
+
+        all_disagg_dfs.append(df_disagg)
+        labels.append(label)
+
+    # Identify key columns (everything except kpi_* columns)
+    first_df = all_disagg_dfs[0]
+    key_cols = [c for c in first_df.columns if not c.startswith('kpi_')]
+
+    # Merge all DataFrames on key columns
+    result = all_disagg_dfs[0]
+    for i, df in enumerate(all_disagg_dfs[1:], 1):
+        label = labels[i]
+        # Only keep key columns and the kpi column from subsequent dfs
+        df_subset = df[key_cols + [f"kpi_{label}"]]
+        result = result.merge(df_subset, on=key_cols, how='outer')
+
+    # Fill NaN with 0 for KPI columns (when a model doesn't have a particular row)
+    for label in labels:
+        kpi_col = f"kpi_{label}"
+        if kpi_col in result.columns:
+            result[kpi_col] = result[kpi_col].fillna(0)
+
+    # Calculate kpi_total
+    kpi_cols = [f"kpi_{label}" for label in labels]
+    result['kpi_total'] = result[kpi_cols].sum(axis=1)
+
+    # Sort by date and decomp
+    if 'date' in result.columns:
+        result = result.sort_values(['date', 'decomp'])
+
+    return result
+
+
+def generate_combined_media_results_disaggregated(
+    wrappers_with_disagg: List[Tuple["MMMWrapper", str, tuple]],
+    brand: str
+) -> pd.DataFrame:
+    """
+    Generate combined disaggregated media results export from multiple models.
+
+    Each model's disaggregated media results are merged into a single DataFrame with
+    separate KPI columns per model plus a total column.
+
+    Parameters
+    ----------
+    wrappers_with_disagg : List[Tuple[MMMWrapper, str, tuple]]
+        List of (wrapper, label, disagg_config) tuples where disagg_config is
+        (mapped_df, granular_name_cols, date_col, weight_col, include_cols)
+    brand : str
+        Brand name for the export
+
+    Returns
+    -------
+    pd.DataFrame
+        Combined disaggregated media results with columns:
+        date, wc_mon, brand, decomp_lvl1..N, spend, impressions, clicks, decomp, kpi_{label1}, kpi_{label2}, kpi_total
+    """
+    if len(wrappers_with_disagg) < 2:
+        raise ValueError("At least 2 models required for combined export")
+
+    # Generate disaggregated media results for each model
+    all_disagg_dfs = []
+    labels = []
+
+    for wrapper, label, disagg_config in wrappers_with_disagg:
+        mapped_df, granular_name_cols, date_col, weight_col, include_cols = disagg_config
+
+        df_disagg = generate_media_results_disaggregated(
+            wrapper=wrapper,
+            config=wrapper.config,
+            granular_df=mapped_df,
+            granular_name_cols=granular_name_cols,
+            date_col=date_col,
+            model_channel_col="_model_channel",
+            weight_col=weight_col,
+            include_cols=include_cols,
+            brand=brand
+        )
+
+        # Find the KPI column name
+        target_col = wrapper.config.data.target_column
+        kpi_col = f"kpi_{target_col}"
+
+        # Rename KPI column to kpi_{label}
+        df_disagg = df_disagg.rename(columns={kpi_col: f"kpi_{label}"})
+
+        all_disagg_dfs.append(df_disagg)
+        labels.append(label)
+
+    # Identify key columns (everything except kpi_* columns)
+    first_df = all_disagg_dfs[0]
+    key_cols = [c for c in first_df.columns if not c.startswith('kpi_')]
+
+    # Merge all DataFrames on key columns
+    result = all_disagg_dfs[0]
+    for i, df in enumerate(all_disagg_dfs[1:], 1):
+        label = labels[i]
+        # Only keep key columns and the kpi column from subsequent dfs
+        df_subset = df[key_cols + [f"kpi_{label}"]]
+        result = result.merge(df_subset, on=key_cols, how='outer')
+
+    # Fill NaN with 0 for KPI columns (when a model doesn't have a particular row)
+    for label in labels:
+        kpi_col = f"kpi_{label}"
+        if kpi_col in result.columns:
+            result[kpi_col] = result[kpi_col].fillna(0)
+
+    # Calculate kpi_total
+    kpi_cols = [f"kpi_{label}" for label in labels]
+    result['kpi_total'] = result[kpi_cols].sum(axis=1)
+
+    # Sort by date and decomp
+    if 'date' in result.columns:
+        result = result.sort_values(['date', 'decomp'])
+
+    return result
+
+
 def generate_combined_actual_vs_fitted(
     wrappers_with_labels: List[Tuple["MMMWrapper", str]],
     brand: str

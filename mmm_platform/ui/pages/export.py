@@ -919,7 +919,9 @@ def _show_combined_model_export(
     from mmm_platform.analysis.export import (
         generate_disaggregated_results,
         generate_decomps_stacked_disaggregated,
-        generate_media_results_disaggregated
+        generate_media_results_disaggregated,
+        generate_combined_decomps_stacked_disaggregated,
+        generate_combined_media_results_disaggregated
     )
 
     # Model Configuration Section
@@ -1047,54 +1049,41 @@ def _show_combined_model_export(
                 st.session_state["combined_df_media"] = generate_combined_media_results(wrappers_with_labels, brand)
                 st.session_state["combined_df_fit"] = generate_combined_actual_vs_fitted(wrappers_with_labels, brand)
 
-                # Generate disaggregated results for each configured model
-                combined_disagg_decomps = {}
-                combined_disagg_media = {}
-                combined_disagg_results = {}
-                for label, (wrapper, disagg_config) in disagg_configs.items():
-                    mapped_df, granular_name_cols, date_col, weight_col, include_cols = disagg_config
+                # Generate combined disaggregated results if any models have disagg configs
+                if disagg_configs:
+                    # Build list of (wrapper, label, disagg_config) tuples
+                    wrappers_with_disagg = [
+                        (wrapper, label, disagg_config)
+                        for label, (wrapper, disagg_config) in disagg_configs.items()
+                    ]
 
-                    # Generate disaggregated decomps_stacked
-                    combined_disagg_decomps[label] = generate_decomps_stacked_disaggregated(
-                        wrapper=wrapper,
-                        config=wrapper.config,
-                        granular_df=mapped_df,
-                        granular_name_cols=granular_name_cols,
-                        date_col=date_col,
-                        model_channel_col="_model_channel",
-                        weight_col=weight_col,
-                        brand=brand,
-                        force_to_actuals=force_to_actuals
+                    # Generate combined disaggregated files
+                    st.session_state["combined_df_decomps_disagg"] = generate_combined_decomps_stacked_disaggregated(
+                        wrappers_with_disagg, brand, force_to_actuals
+                    )
+                    st.session_state["combined_df_media_disagg"] = generate_combined_media_results_disaggregated(
+                        wrappers_with_disagg, brand
                     )
 
-                    # Generate disaggregated media_results
-                    combined_disagg_media[label] = generate_media_results_disaggregated(
-                        wrapper=wrapper,
-                        config=wrapper.config,
-                        granular_df=mapped_df,
-                        granular_name_cols=granular_name_cols,
-                        date_col=date_col,
-                        model_channel_col="_model_channel",
-                        weight_col=weight_col,
-                        include_cols=include_cols,
-                        brand=brand
-                    )
-
-                    # Legacy format
-                    combined_disagg_results[label] = generate_disaggregated_results(
-                        wrapper=wrapper,
-                        config=wrapper.config,
-                        granular_df=mapped_df,
-                        granular_name_cols=granular_name_cols,
-                        date_col=date_col,
-                        model_channel_col="_model_channel",
-                        weight_col=weight_col,
-                        brand=brand
-                    )
-
-                st.session_state["combined_disagg_decomps"] = combined_disagg_decomps if combined_disagg_decomps else None
-                st.session_state["combined_disagg_media"] = combined_disagg_media if combined_disagg_media else None
-                st.session_state["combined_disagg_results"] = combined_disagg_results if combined_disagg_results else None
+                    # Generate workings files (per-model for diagnostic purposes)
+                    combined_disagg_results = {}
+                    for label, (wrapper, disagg_config) in disagg_configs.items():
+                        mapped_df, granular_name_cols, date_col, weight_col, include_cols = disagg_config
+                        combined_disagg_results[label] = generate_disaggregated_results(
+                            wrapper=wrapper,
+                            config=wrapper.config,
+                            granular_df=mapped_df,
+                            granular_name_cols=granular_name_cols,
+                            date_col=date_col,
+                            model_channel_col="_model_channel",
+                            weight_col=weight_col,
+                            brand=brand
+                        )
+                    st.session_state["combined_disagg_results"] = combined_disagg_results
+                else:
+                    st.session_state["combined_df_decomps_disagg"] = None
+                    st.session_state["combined_df_media_disagg"] = None
+                    st.session_state["combined_disagg_results"] = None
 
                 st.session_state["combined_files_ready"] = True
                 st.session_state["combined_brand"] = brand
@@ -1123,9 +1112,9 @@ def _show_combined_model_export(
         # Three columns for the three export types
         col1, col2, col3 = st.columns(3)
 
-        # Get disaggregated data
-        combined_disagg_decomps = st.session_state.get("combined_disagg_decomps")
-        combined_disagg_media = st.session_state.get("combined_disagg_media")
+        # Get disaggregated data (now single combined files)
+        df_decomps_disagg = st.session_state.get("combined_df_decomps_disagg")
+        df_media_disagg = st.session_state.get("combined_df_media_disagg")
         combined_disagg = st.session_state.get("combined_disagg_results")
 
         # 1. Decomps Stacked
@@ -1143,23 +1132,24 @@ def _show_combined_model_export(
                 type="primary"
             )
 
-            # Disaggregated decomps (per model)
-            if combined_disagg_decomps:
-                for label, df_dd in combined_disagg_decomps.items():
-                    csv_dd = df_dd.to_csv(index=False)
-                    st.download_button(
-                        label=f"decomps_disagg_{label}.csv",
-                        data=csv_dd,
-                        file_name=f"decomps_stacked_disagg_{label}_{timestamp}.csv",
-                        mime="text/csv",
-                        key=f"combined_decomps_disagg_{label}",
-                        help=f"Disaggregated decomps for {label}"
-                    )
+            # Single combined disaggregated decomps
+            if df_decomps_disagg is not None:
+                csv_decomps_disagg = df_decomps_disagg.to_csv(index=False)
+                st.download_button(
+                    label="Download decomps_stacked_disagg.csv",
+                    data=csv_decomps_disagg,
+                    file_name=f"decomps_stacked_disagg_combined_{timestamp}.csv",
+                    mime="text/csv",
+                    key="combined_decomps_disagg_download",
+                    help="Combined disaggregated decomps with kpi columns per model"
+                )
 
             with st.expander("Preview (first 10 rows)"):
                 st.dataframe(df_decomps.head(10), use_container_width=True)
 
             st.caption(f"{len(df_decomps):,} rows × {len(df_decomps.columns)} columns")
+            if df_decomps_disagg is not None:
+                st.caption(f"Disagg: {len(df_decomps_disagg):,} rows")
 
         # 2. Media Results
         with col2:
@@ -1176,23 +1166,24 @@ def _show_combined_model_export(
                 type="primary"
             )
 
-            # Disaggregated media (per model)
-            if combined_disagg_media:
-                for label, df_dm in combined_disagg_media.items():
-                    csv_dm = df_dm.to_csv(index=False)
-                    st.download_button(
-                        label=f"media_disagg_{label}.csv",
-                        data=csv_dm,
-                        file_name=f"mmm_media_results_disagg_{label}_{timestamp}.csv",
-                        mime="text/csv",
-                        key=f"combined_media_disagg_{label}",
-                        help=f"Disaggregated media results for {label}"
-                    )
+            # Single combined disaggregated media
+            if df_media_disagg is not None:
+                csv_media_disagg = df_media_disagg.to_csv(index=False)
+                st.download_button(
+                    label="Download media_results_disagg.csv",
+                    data=csv_media_disagg,
+                    file_name=f"mmm_media_results_disagg_combined_{timestamp}.csv",
+                    mime="text/csv",
+                    key="combined_media_disagg_download",
+                    help="Combined disaggregated media results with kpi columns per model"
+                )
 
             with st.expander("Preview (first 10 rows)"):
                 st.dataframe(df_media.head(10), use_container_width=True)
 
             st.caption(f"{len(df_media):,} rows × {len(df_media.columns)} columns")
+            if df_media_disagg is not None:
+                st.caption(f"Disagg: {len(df_media_disagg):,} rows")
 
         # 3. Actual vs Fitted
         with col3:
@@ -1244,13 +1235,12 @@ def _show_combined_model_export(
             zf.writestr(f"decomps_stacked_combined_{timestamp}.csv", df_decomps.to_csv(index=False))
             zf.writestr(f"mmm_media_results_combined_{timestamp}.csv", df_media.to_csv(index=False))
             zf.writestr(f"actual_vs_fitted_combined_{timestamp}.csv", df_fit.to_csv(index=False))
-            # Include disaggregated files
-            if combined_disagg_decomps:
-                for label, df_dd in combined_disagg_decomps.items():
-                    zf.writestr(f"decomps_stacked_disagg_{label}_{timestamp}.csv", df_dd.to_csv(index=False))
-            if combined_disagg_media:
-                for label, df_dm in combined_disagg_media.items():
-                    zf.writestr(f"mmm_media_results_disagg_{label}_{timestamp}.csv", df_dm.to_csv(index=False))
+            # Include combined disaggregated files
+            if df_decomps_disagg is not None:
+                zf.writestr(f"decomps_stacked_disagg_combined_{timestamp}.csv", df_decomps_disagg.to_csv(index=False))
+            if df_media_disagg is not None:
+                zf.writestr(f"mmm_media_results_disagg_combined_{timestamp}.csv", df_media_disagg.to_csv(index=False))
+            # Include workings files (per-model diagnostic)
             if combined_disagg:
                 for label, df_disagg in combined_disagg.items():
                     zf.writestr(f"workings_{label}_{timestamp}.csv", df_disagg.to_csv(index=False))
