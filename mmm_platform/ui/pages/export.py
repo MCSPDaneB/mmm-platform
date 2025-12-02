@@ -413,9 +413,9 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
             except Exception as e:
                 st.error(f"Error reading CSV: {e}")
 
-        # Build mapping table data (first 50 for UI display)
+        # Build mapping table data for all entities
         mapping_data = []
-        for granular_val in unique_granular[:50]:
+        for granular_val in unique_granular:
             # Check saved mapping first
             if str(granular_val) in st.session_state[mapping_key]:
                 saved_mapping = st.session_state[mapping_key][str(granular_val)]
@@ -435,10 +435,6 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
                 "Model Channel": saved_mapping,
             })
 
-        if len(unique_granular) > 50:
-            st.info(f"Showing first 50 of {len(unique_granular)} unique entities in the editor. "
-                    "Use the CSV download/upload for bulk mapping of all entities.")
-
         mapping_df = pd.DataFrame(mapping_data)
 
         # Wrap data_editor in form to prevent rerender on each change
@@ -455,6 +451,7 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
                 },
                 hide_index=True,
                 use_container_width=True,
+                height=400,
                 key=f"granular_mapping_editor{key_suffix}",
             )
 
