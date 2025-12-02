@@ -65,11 +65,12 @@ def generate_decomps_stacked(
     rows = []
     for date_val in contribs.index:
         for col in contribs.columns:
-            # Determine if channel, owned media, competitor, control, or base component
+            # Determine if channel, owned media, competitor, control, dummy, or base component
             channel_cfg = config.get_channel_by_name(col)
             owned_media_cfg = config.get_owned_media_by_name(col)
             competitor_cfg = config.get_competitor_by_name(col)
             control_cfg = config.get_control_by_name(col)
+            dummy_cfg = next((d for d in config.dummy_variables if d.name == col), None)
 
             # Get display name and categories
             if channel_cfg:
@@ -84,6 +85,9 @@ def generate_decomps_stacked(
             elif control_cfg:
                 display_name = control_cfg.get_display_name()
                 categories = [control_cfg.get_category(cat_name) for cat_name in cat_col_names]
+            elif dummy_cfg:
+                display_name = dummy_cfg.name  # DummyVariableConfig doesn't have display_name
+                categories = [dummy_cfg.categories.get(cat_name, "") for cat_name in cat_col_names]
             else:
                 # Base component (intercept, trend, seasonality, etc.)
                 # Also handle adstock-transformed columns
@@ -100,14 +104,19 @@ def generate_decomps_stacked(
                     display_name = ctrl_cfg.get_display_name()
                     categories = [ctrl_cfg.get_category(cat_name) for cat_name in cat_col_names]
                 else:
-                    # Classify base components
-                    if col in ['intercept', 'trend', 't']:
-                        base_category = "Base"
-                    elif 'season' in col.lower() or 'fourier' in col.lower():
-                        base_category = "Seasonality"
+                    # Base component - read from config.base_component_categories if available
+                    base_cats = config.base_component_categories.get(col, {}) if hasattr(config, 'base_component_categories') else {}
+                    if base_cats:
+                        categories = [base_cats.get(cat_name, "") for cat_name in cat_col_names]
                     else:
-                        base_category = "Other"
-                    categories = [base_category] * len(cat_col_names)
+                        # Fallback to defaults if no saved categories
+                        if col in ['intercept', 'trend', 't']:
+                            base_category = "Base"
+                        elif 'season' in col.lower() or 'fourier' in col.lower() or col.startswith('sin_order') or col.startswith('cos_order'):
+                            base_category = "Seasonality"
+                        else:
+                            base_category = "Other"
+                        categories = [base_category] * len(cat_col_names)
 
             # If no category columns defined, use display_name as default
             if not categories:
@@ -409,6 +418,7 @@ def generate_combined_decomps_stacked(
                 owned_media_cfg = cfg.get_owned_media_by_name(col)
                 competitor_cfg = cfg.get_competitor_by_name(col)
                 control_cfg = cfg.get_control_by_name(col)
+                dummy_cfg = next((d for d in cfg.dummy_variables if d.name == col), None)
 
                 if channel_cfg:
                     display_name = channel_cfg.get_display_name()
@@ -426,6 +436,10 @@ def generate_combined_decomps_stacked(
                     display_name = control_cfg.get_display_name()
                     categories = [control_cfg.get_category(cat_name) for cat_name in cat_col_names]
                     break
+                elif dummy_cfg:
+                    display_name = dummy_cfg.name  # DummyVariableConfig doesn't have display_name
+                    categories = [dummy_cfg.categories.get(cat_name, "") for cat_name in cat_col_names]
+                    break
                 else:
                     # Check for transformed versions of known variables
                     base_col = col.replace("_adstock", "").replace("_inv", "")
@@ -441,14 +455,20 @@ def generate_combined_decomps_stacked(
                         categories = [ctrl_cfg.get_category(cat_name) for cat_name in cat_col_names]
                         break
                     else:
-                        # Base component
-                        if col in ['intercept', 'trend', 't']:
-                            base_category = "Base"
-                        elif 'season' in col.lower() or 'fourier' in col.lower():
-                            base_category = "Seasonality"
+                        # Base component - read from config.base_component_categories if available
+                        base_cats = cfg.base_component_categories.get(col, {}) if hasattr(cfg, 'base_component_categories') else {}
+                        if base_cats:
+                            categories = [base_cats.get(cat_name, "") for cat_name in cat_col_names]
+                            break
                         else:
-                            base_category = "Other"
-                        categories = [base_category] * len(cat_col_names)
+                            # Fallback to defaults if no saved categories
+                            if col in ['intercept', 'trend', 't']:
+                                base_category = "Base"
+                            elif 'season' in col.lower() or 'fourier' in col.lower() or col.startswith('sin_order') or col.startswith('cos_order'):
+                                base_category = "Seasonality"
+                            else:
+                                base_category = "Other"
+                            categories = [base_category] * len(cat_col_names)
 
             # If no category columns defined, use display_name
             if not categories:
@@ -638,6 +658,145 @@ def generate_combined_media_results(
             rows.append(row)
 
     return pd.DataFrame(rows)
+
+
+def generate_disaggregated_results(
+    wrapper: "MMMWrapper",
+    config: "ModelConfig",
+    granular_df: pd.DataFrame,
+    granular_name_col: str,
+    date_col: str,
+    model_channel_col: str,
+    weight_col: str,
+    brand: str
+) -> pd.DataFrame:
+    """
+    Generate disaggregated results by splitting model contributions to granular level.
+
+    Takes aggregated model results and splits them proportionally based on weights
+    from a granular mapping file.
+
+    Parameters
+    ----------
+    wrapper : MMMWrapper
+        Fitted model wrapper
+    config : ModelConfig
+        Model configuration
+    granular_df : pd.DataFrame
+        DataFrame with granular-level data containing:
+        - granular name column (e.g., placement names)
+        - date column
+        - model channel mapping column (maps to existing model channels)
+        - weight column (numeric values for proportional splitting)
+    granular_name_col : str
+        Column name containing granular identifiers (e.g., "placement_name")
+    date_col : str
+        Column name containing dates
+    model_channel_col : str
+        Column name containing model channel mappings
+    weight_col : str
+        Column name containing weight values for proportional allocation
+    brand : str
+        Brand name for the export
+
+    Returns
+    -------
+    pd.DataFrame
+        Disaggregated results with columns:
+        date, wc_mon, brand, model_channel, granular_name, weight, weight_pct,
+        contribution, spend (if weight_col is spend-like), roi (if applicable)
+    """
+    contribs = wrapper.get_contributions()
+    revenue_scale = config.data.revenue_scale
+    target_col = config.data.target_column
+
+    # Convert granular date column to datetime for matching
+    granular_df = granular_df.copy()
+    granular_df[date_col] = pd.to_datetime(granular_df[date_col])
+
+    # Get model channel names
+    model_channels = [ch.name for ch in config.channels]
+
+    rows = []
+    warnings = []
+
+    # Process each date in the model contributions
+    for date_val in contribs.index:
+        date_dt = pd.to_datetime(date_val)
+
+        # Get granular data for this date
+        date_mask = granular_df[date_col] == date_dt
+        date_granular = granular_df[date_mask]
+
+        # Process each model channel
+        for channel_name in model_channels:
+            if channel_name not in contribs.columns:
+                continue
+
+            # Get channel contribution for this date
+            channel_contrib = contribs.loc[date_val, channel_name] * revenue_scale
+
+            # Get granular rows mapped to this channel
+            channel_mask = date_granular[model_channel_col] == channel_name
+            channel_granular = date_granular[channel_mask]
+
+            if len(channel_granular) == 0:
+                # No granular mapping for this channel/date - output at channel level
+                rows.append({
+                    'date': date_val,
+                    'wc_mon': date_val,
+                    'brand': brand,
+                    'model_channel': channel_name,
+                    'granular_name': channel_name,  # Use channel name as granular
+                    'weight': 0,
+                    'weight_pct': 1.0,
+                    f'kpi_{target_col}': channel_contrib,
+                    'is_mapped': False,
+                })
+                continue
+
+            # Calculate total weight for this channel/date
+            total_weight = channel_granular[weight_col].sum()
+
+            if total_weight == 0:
+                # Zero total weight - distribute equally
+                n_granular = len(channel_granular)
+                for _, g_row in channel_granular.iterrows():
+                    rows.append({
+                        'date': date_val,
+                        'wc_mon': date_val,
+                        'brand': brand,
+                        'model_channel': channel_name,
+                        'granular_name': g_row[granular_name_col],
+                        'weight': g_row[weight_col],
+                        'weight_pct': 1.0 / n_granular,
+                        f'kpi_{target_col}': channel_contrib / n_granular,
+                        'is_mapped': True,
+                    })
+            else:
+                # Split proportionally by weight
+                for _, g_row in channel_granular.iterrows():
+                    weight = g_row[weight_col]
+                    weight_pct = weight / total_weight
+                    granular_contrib = channel_contrib * weight_pct
+
+                    rows.append({
+                        'date': date_val,
+                        'wc_mon': date_val,
+                        'brand': brand,
+                        'model_channel': channel_name,
+                        'granular_name': g_row[granular_name_col],
+                        'weight': weight,
+                        'weight_pct': weight_pct,
+                        f'kpi_{target_col}': granular_contrib,
+                        'is_mapped': True,
+                    })
+
+    result_df = pd.DataFrame(rows)
+
+    # Add any additional columns from granular file that might be useful
+    # (like impressions, clicks, etc. if they exist)
+    return result_df
 
 
 def generate_combined_actual_vs_fitted(
