@@ -471,7 +471,7 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
                     ),
                 },
                 hide_index=True,
-                use_container_width=True,
+                width="stretch",
                 height=400,
                 key=f"granular_mapping_editor{key_suffix}",
             )
@@ -738,7 +738,7 @@ def _show_single_model_export(
                 )
 
             with st.expander("Preview (first 10 rows)"):
-                st.dataframe(df_decomps.head(10), use_container_width=True)
+                st.dataframe(df_decomps.head(10), width="stretch")
 
             st.caption(f"{len(df_decomps):,} rows × {len(df_decomps.columns)} columns")
             if df_decomps_disagg is not None:
@@ -772,7 +772,7 @@ def _show_single_model_export(
                 )
 
             with st.expander("Preview (first 10 rows)"):
-                st.dataframe(df_media.head(10), use_container_width=True)
+                st.dataframe(df_media.head(10), width="stretch")
 
             st.caption(f"{len(df_media):,} rows × {len(df_media.columns)} columns")
             if df_media_disagg is not None:
@@ -793,7 +793,7 @@ def _show_single_model_export(
             )
 
             with st.expander("Preview (first 10 rows)"):
-                st.dataframe(df_fit.head(10), use_container_width=True)
+                st.dataframe(df_fit.head(10), width="stretch")
 
             st.caption(f"{len(df_fit):,} rows × {len(df_fit.columns)} columns")
 
@@ -812,7 +812,7 @@ def _show_single_model_export(
                     key="workings_download"
                 )
 
-                st.dataframe(df_disagg.head(20), use_container_width=True)
+                st.dataframe(df_disagg.head(20), width="stretch")
                 st.caption(f"{len(df_disagg):,} rows × {len(df_disagg.columns)} columns")
 
         # Download All button
@@ -1145,7 +1145,7 @@ def _show_combined_model_export(
                 )
 
             with st.expander("Preview (first 10 rows)"):
-                st.dataframe(df_decomps.head(10), use_container_width=True)
+                st.dataframe(df_decomps.head(10), width="stretch")
 
             st.caption(f"{len(df_decomps):,} rows × {len(df_decomps.columns)} columns")
             if df_decomps_disagg is not None:
@@ -1179,7 +1179,7 @@ def _show_combined_model_export(
                 )
 
             with st.expander("Preview (first 10 rows)"):
-                st.dataframe(df_media.head(10), use_container_width=True)
+                st.dataframe(df_media.head(10), width="stretch")
 
             st.caption(f"{len(df_media):,} rows × {len(df_media.columns)} columns")
             if df_media_disagg is not None:
@@ -1201,7 +1201,7 @@ def _show_combined_model_export(
             )
 
             with st.expander("Preview (first 10 rows)"):
-                st.dataframe(df_fit.head(10), use_container_width=True)
+                st.dataframe(df_fit.head(10), width="stretch")
 
             st.caption(f"{len(df_fit):,} rows × {len(df_fit.columns)} columns")
 
@@ -1222,7 +1222,7 @@ def _show_combined_model_export(
                         key=f"combined_workings_download_{label}"
                     )
 
-                    st.dataframe(df_disagg.head(20), use_container_width=True)
+                    st.dataframe(df_disagg.head(20), width="stretch")
                     st.caption(f"{len(df_disagg):,} rows × {len(df_disagg.columns)} columns")
 
         # Download All button
