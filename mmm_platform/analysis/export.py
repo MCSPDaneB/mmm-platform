@@ -224,10 +224,25 @@ def generate_media_results(
             if len(categories) < 2:
                 row['decomp_lvl2'] = row.get('decomp_lvl1', display_name)
 
-            # Add spend and placeholder metrics
+            # Add spend and derived metrics
             row['spend'] = spend
-            row['impressions'] = 0  # Placeholder - to be added later
-            row['clicks'] = 0  # Placeholder - to be added later
+
+            # Derive impressions/clicks column names from spend column
+            impr_col = col.replace('_spend', '_impr').replace('_Spend', '_impr')
+            clicks_col = col.replace('_spend', '_clicks').replace('_Spend', '_clicks')
+
+            # Get impressions value (if column exists)
+            if impr_col in wrapper.df_scaled.columns and date_idx < len(wrapper.df_scaled):
+                row['impressions'] = wrapper.df_scaled.iloc[date_idx][impr_col]
+            else:
+                row['impressions'] = 0
+
+            # Get clicks value (if column exists)
+            if clicks_col in wrapper.df_scaled.columns and date_idx < len(wrapper.df_scaled):
+                row['clicks'] = wrapper.df_scaled.iloc[date_idx][clicks_col]
+            else:
+                row['clicks'] = 0
+
             row['decomp'] = col
 
             # Add KPI value
@@ -596,9 +611,29 @@ def generate_combined_media_results(
             row['kpi_total'] = kpi_total
             row['decomp'] = col
 
-            # Placeholders
+            # Derive impressions/clicks column names from spend column
+            impr_col = col.replace('_spend', '_impr').replace('_Spend', '_impr')
+            clicks_col = col.replace('_spend', '_clicks').replace('_Spend', '_clicks')
+
+            # Get impressions and clicks from first model that has these columns
             row['impressions'] = 0
             row['clicks'] = 0
+            for df_scaled in all_scaled_dfs:
+                if impr_col in df_scaled.columns:
+                    date_col_name = all_configs[all_scaled_dfs.index(df_scaled)].data.date_column
+                    if date_col_name in df_scaled.columns:
+                        mask = df_scaled[date_col_name] == date_val
+                        if mask.any():
+                            row['impressions'] = df_scaled.loc[mask, impr_col].iloc[0]
+                            break
+            for df_scaled in all_scaled_dfs:
+                if clicks_col in df_scaled.columns:
+                    date_col_name = all_configs[all_scaled_dfs.index(df_scaled)].data.date_column
+                    if date_col_name in df_scaled.columns:
+                        mask = df_scaled[date_col_name] == date_val
+                        if mask.any():
+                            row['clicks'] = df_scaled.loc[mask, clicks_col].iloc[0]
+                            break
 
             rows.append(row)
 
