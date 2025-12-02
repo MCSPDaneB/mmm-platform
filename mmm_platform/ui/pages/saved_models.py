@@ -119,8 +119,35 @@ def _show_configs_section(client: str = "all"):
             if st.button("Save Configuration", key="save_config_btn", type="primary"):
                 _save_current_config(config_name)
 
+    # Filter controls
+    filter_col1, filter_col2 = st.columns(2)
+    with filter_col1:
+        show_archived_configs = st.checkbox(
+            "Show archived",
+            value=False,
+            key="show_archived_configs",
+            help="Show archived configurations"
+        )
+    with filter_col2:
+        config_filter = st.selectbox(
+            "Filter",
+            options=["All", "Favorites only", "Non-favorites"],
+            key="config_favorite_filter",
+            help="Filter by favorite status"
+        )
+
     # List saved configs (filtered by client)
     configs = ConfigPersistence.list_saved_configs(client=client)
+
+    # Apply archive filter
+    if not show_archived_configs:
+        configs = [c for c in configs if not c.get("is_archived", False)]
+
+    # Apply favorites filter
+    if config_filter == "Favorites only":
+        configs = [c for c in configs if c.get("is_favorite", False)]
+    elif config_filter == "Non-favorites":
+        configs = [c for c in configs if not c.get("is_favorite", False)]
 
     if not configs:
         if client != "all":
@@ -137,11 +164,16 @@ def _show_configs_section(client: str = "all"):
         config_name = config.get("name", "Unknown")
         config_client = config.get("client", "")
         created_at = config.get("created_at", "Unknown")[:16].replace("T", " ")
+        is_favorite = config.get("is_favorite", False)
+        is_archived = config.get("is_archived", False)
 
         # Show client in expander title if viewing all
-        title = f"📋 {config_name} - {created_at}"
+        favorite_icon = "⭐ " if is_favorite else ""
+        title = f"📋 {favorite_icon}{config_name} - {created_at}"
         if client == "all" and config_client:
-            title = f"📋 [{config_client}] {config_name} - {created_at}"
+            title = f"📋 {favorite_icon}[{config_client}] {config_name} - {created_at}"
+        if is_archived:
+            title += " (archived)"
 
         with st.expander(title):
             col1, col2 = st.columns(2)
@@ -157,8 +189,8 @@ def _show_configs_section(client: str = "all"):
                 st.write(f"**Data rows:** {config.get('n_rows', 'N/A')}")
                 st.write(f"**Path:** `{config_path}`")
 
-            # Actions
-            col1, col2, col3 = st.columns(3)
+            # Actions row 1: Load, Favorite, Archive
+            col1, col2, col3, col4 = st.columns(4)
 
             with col1:
                 if st.button(
@@ -167,9 +199,18 @@ def _show_configs_section(client: str = "all"):
                     _load_config(config_path)
 
             with col2:
-                pass  # Placeholder for future actions
+                fav_label = "☆ Unfavorite" if is_favorite else "⭐ Favorite"
+                if st.button(fav_label, key=f"fav_config_{config_path}"):
+                    ConfigPersistence.set_favorite(config_path, not is_favorite)
+                    st.rerun()
 
             with col3:
+                arch_label = "📤 Unarchive" if is_archived else "📦 Archive"
+                if st.button(arch_label, key=f"arch_config_{config_path}"):
+                    ConfigPersistence.set_archived(config_path, not is_archived)
+                    st.rerun()
+
+            with col4:
                 if st.button("🗑️ Delete", key=f"delete_config_{config_path}"):
                     _delete_path(config_path, "Configuration")
 
@@ -183,8 +224,35 @@ def _show_models_section(client: str = "all"):
     if "models_to_compare" not in st.session_state:
         st.session_state.models_to_compare = []
 
+    # Filter controls
+    filter_col1, filter_col2 = st.columns(2)
+    with filter_col1:
+        show_archived_models = st.checkbox(
+            "Show archived",
+            value=False,
+            key="show_archived_models",
+            help="Show archived models"
+        )
+    with filter_col2:
+        model_filter = st.selectbox(
+            "Filter",
+            options=["All", "Favorites only", "Non-favorites"],
+            key="model_favorite_filter",
+            help="Filter by favorite status"
+        )
+
     # List saved models (filtered by client)
     models = ModelPersistence.list_saved_models(client=client)
+
+    # Apply archive filter
+    if not show_archived_models:
+        models = [m for m in models if not m.get("is_archived", False)]
+
+    # Apply favorites filter
+    if model_filter == "Favorites only":
+        models = [m for m in models if m.get("is_favorite", False)]
+    elif model_filter == "Non-favorites":
+        models = [m for m in models if not m.get("is_favorite", False)]
 
     if not models:
         if client != "all":
@@ -224,16 +292,21 @@ def _show_models_section(client: str = "all"):
         model_name = model.get("config_name", "Unknown")
         model_client = model.get("client", "")
         created_at = model.get("created_at", "Unknown")[:16].replace("T", " ")
+        is_favorite = model.get("is_favorite", False)
+        is_archived = model.get("is_archived", False)
 
         # Check if this model is selected for comparison
         is_selected = model_path in st.session_state.models_to_compare
 
         # Build expander title
-        title = f"📦 {model_name} - {created_at}"
+        favorite_icon = "⭐ " if is_favorite else ""
+        title = f"📦 {favorite_icon}{model_name} - {created_at}"
         if client == "all" and model_client:
-            title = f"📦 [{model_client}] {model_name} - {created_at}"
+            title = f"📦 {favorite_icon}[{model_client}] {model_name} - {created_at}"
         if is_selected:
             title += " ✓"
+        if is_archived:
+            title += " (archived)"
 
         # Header with checkbox
         header_col1, header_col2 = st.columns([0.05, 0.95])
@@ -284,7 +357,7 @@ def _show_models_section(client: str = "all"):
                     if duration:
                         st.write(f"**Fit Time:** {duration:.0f}s")
 
-                # Actions
+                # Actions row 1
                 col1, col2, col3 = st.columns(3)
 
                 with col1:
@@ -300,6 +373,21 @@ def _show_models_section(client: str = "all"):
                 with col3:
                     if st.button("🗑️ Delete", key=f"delete_model_{model_path}"):
                         _delete_path(model_path, "Model")
+
+                # Actions row 2: Favorite, Archive
+                col1, col2, col3 = st.columns(3)
+
+                with col1:
+                    fav_label = "☆ Unfavorite" if is_favorite else "⭐ Favorite"
+                    if st.button(fav_label, key=f"fav_model_{model_path}"):
+                        ModelPersistence.set_favorite(model_path, not is_favorite)
+                        st.rerun()
+
+                with col2:
+                    arch_label = "📤 Unarchive" if is_archived else "📦 Archive"
+                    if st.button(arch_label, key=f"arch_model_{model_path}"):
+                        ModelPersistence.set_archived(model_path, not is_archived)
+                        st.rerun()
 
                 # Edit Categories expander
                 with st.expander("Edit Categories", expanded=False):

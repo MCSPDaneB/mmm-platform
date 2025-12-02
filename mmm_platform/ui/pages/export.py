@@ -307,23 +307,44 @@ def _show_combined_model_export(
         "The kpi_total column is the sum of both model contributions."
     )
 
+    # Filter controls
+    filter_col1, filter_col2 = st.columns(2)
+
     # Client filter (same design as Combined Analysis)
     clients = list_clients()
-    if clients:
-        client_options = ["All Clients"] + clients
-        selected_client = st.selectbox(
-            "Filter by Client",
-            options=client_options,
-            key="export_client_filter",
-            help="Show models for a specific client. Client name will be used as brand."
+    with filter_col1:
+        if clients:
+            client_options = ["All Clients"] + clients
+            selected_client = st.selectbox(
+                "Filter by Client",
+                options=client_options,
+                key="export_client_filter",
+                help="Show models for a specific client. Client name will be used as brand."
+            )
+            client_filter = "all" if selected_client == "All Clients" else selected_client
+        else:
+            st.error("No clients found. Please run some models first.")
+            st.stop()
+
+    with filter_col2:
+        export_fav_filter = st.selectbox(
+            "Filter",
+            options=["All", "Favorites only", "Non-favorites"],
+            key="export_favorite_filter",
+            help="Filter by favorite status"
         )
-        client_filter = "all" if selected_client == "All Clients" else selected_client
-    else:
-        st.error("No clients found. Please run some models first.")
-        st.stop()
 
     # Get saved models (client-aware)
     saved_models = ModelPersistence.list_saved_models(client=client_filter)
+
+    # Apply favorites filter
+    if export_fav_filter == "Favorites only":
+        saved_models = [m for m in saved_models if m.get("is_favorite", False)]
+    elif export_fav_filter == "Non-favorites":
+        saved_models = [m for m in saved_models if not m.get("is_favorite", False)]
+
+    # Sort favorites to the top, then by created_at descending (most recent first)
+    saved_models.sort(key=lambda m: (not m.get("is_favorite", False), m.get("created_at", "")), reverse=True)
 
     if not saved_models:
         st.warning("No fitted models found. Please run and save at least 2 models first.")
@@ -345,12 +366,16 @@ def _show_combined_model_export(
         created = model.get("created_at", "")[:10]
         name = model.get("config_name", "Unknown")
         model_client = model.get("client", "")
+        is_favorite = model.get("is_favorite", False)
+
+        # Add star icon for favorites
+        fav_icon = "⭐ " if is_favorite else ""
 
         # Show client in label when viewing all clients
         if client_filter == "all" and model_client:
-            option_label = f"[{model_client}] {name} ({created}) - {n_channels} channels, {r2_str}"
+            option_label = f"{fav_icon}[{model_client}] {name} ({created}) - {n_channels} channels, {r2_str}"
         else:
-            option_label = f"{name} ({created}) - {n_channels} channels, {r2_str}"
+            option_label = f"{fav_icon}{name} ({created}) - {n_channels} channels, {r2_str}"
         model_options[option_label] = {
             "path": model["path"],
             "name": name,

@@ -164,6 +164,8 @@ class ModelPersistence:
             "r2": fit_stats.get("r2"),
             "mape": fit_stats.get("mape"),
             "rmse": fit_stats.get("rmse"),
+            "is_archived": False,
+            "is_favorite": False,
         }
 
         with open(path / cls.METADATA_FILE, "w") as f:
@@ -427,6 +429,58 @@ class ModelPersistence:
         )
         return hashlib.md5(config_str.encode()).hexdigest()[:12]
 
+    @classmethod
+    def set_archived(cls, path: Union[str, Path], archived: bool) -> None:
+        """
+        Set the archived status of a saved model.
+
+        Parameters
+        ----------
+        path : Union[str, Path]
+            Path to the saved model directory.
+        archived : bool
+            Whether the model is archived.
+        """
+        path = Path(path)
+        metadata_file = path / cls.METADATA_FILE
+
+        if not metadata_file.exists():
+            raise FileNotFoundError(f"Metadata file not found: {metadata_file}")
+
+        with open(metadata_file, "r") as f:
+            metadata = json.load(f)
+
+        metadata["is_archived"] = archived
+
+        with open(metadata_file, "w") as f:
+            json.dump(metadata, f, indent=2)
+
+    @classmethod
+    def set_favorite(cls, path: Union[str, Path], favorite: bool) -> None:
+        """
+        Set the favorite status of a saved model.
+
+        Parameters
+        ----------
+        path : Union[str, Path]
+            Path to the saved model directory.
+        favorite : bool
+            Whether the model is a favorite.
+        """
+        path = Path(path)
+        metadata_file = path / cls.METADATA_FILE
+
+        if not metadata_file.exists():
+            raise FileNotFoundError(f"Metadata file not found: {metadata_file}")
+
+        with open(metadata_file, "r") as f:
+            metadata = json.load(f)
+
+        metadata["is_favorite"] = favorite
+
+        with open(metadata_file, "w") as f:
+            json.dump(metadata, f, indent=2)
+
 
 class ConfigPersistence:
     """
@@ -505,6 +559,8 @@ class ConfigPersistence:
             "n_channels": len(config.channels) if config and config.channels else 0,
             "n_controls": len(config.controls) if config and config.controls else 0,
             "n_rows": len(data) if data is not None else 0,
+            "is_archived": False,
+            "is_favorite": False,
         }
 
         with open(config_dir / cls.METADATA_FILE, "w") as f:
@@ -665,6 +721,58 @@ class ConfigPersistence:
                         logger.warning(f"Could not read metadata from {subdir}: {e}")
 
         return configs
+
+    @classmethod
+    def set_archived(cls, path: Union[str, Path], archived: bool) -> None:
+        """
+        Set the archived status of a saved config.
+
+        Parameters
+        ----------
+        path : Union[str, Path]
+            Path to the saved config directory.
+        archived : bool
+            Whether the config is archived.
+        """
+        path = Path(path)
+        metadata_file = path / cls.METADATA_FILE
+
+        if not metadata_file.exists():
+            raise FileNotFoundError(f"Metadata file not found: {metadata_file}")
+
+        with open(metadata_file, "r") as f:
+            metadata = json.load(f)
+
+        metadata["is_archived"] = archived
+
+        with open(metadata_file, "w") as f:
+            json.dump(metadata, f, indent=2)
+
+    @classmethod
+    def set_favorite(cls, path: Union[str, Path], favorite: bool) -> None:
+        """
+        Set the favorite status of a saved config.
+
+        Parameters
+        ----------
+        path : Union[str, Path]
+            Path to the saved config directory.
+        favorite : bool
+            Whether the config is a favorite.
+        """
+        path = Path(path)
+        metadata_file = path / cls.METADATA_FILE
+
+        if not metadata_file.exists():
+            raise FileNotFoundError(f"Metadata file not found: {metadata_file}")
+
+        with open(metadata_file, "r") as f:
+            metadata = json.load(f)
+
+        metadata["is_favorite"] = favorite
+
+        with open(metadata_file, "w") as f:
+            json.dump(metadata, f, indent=2)
 
 
 def restore_config_to_session(config: Any, data: pd.DataFrame, session_state: dict) -> dict:
