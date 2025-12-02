@@ -386,12 +386,19 @@ def _show_single_model_export(
         st.warning("Please enter a brand name to enable exports.")
         st.stop()
 
-    # Force to actuals checkbox
+    # Export options
     force_to_actuals = st.checkbox(
         "Force decomposition to actuals",
         value=False,
         help="Absorb residuals into intercept so decomposition sums to actual values instead of fitted",
         key="single_force_to_actuals"
+    )
+
+    enable_disagg = st.checkbox(
+        "Enable disaggregation",
+        value=False,
+        help="Split model results to granular level (e.g., placements) using proportional weighting",
+        key="enable_disaggregation"
     )
 
     st.markdown("---")
@@ -528,22 +535,14 @@ def _show_single_model_export(
     except Exception as e:
         st.error(f"Error creating ZIP: {e}")
 
-    # Disaggregation Section
-    st.markdown("---")
-    st.subheader("Disaggregate to Granular Level")
-    st.caption(
-        "Split model results to a more granular level (e.g., placements, campaigns) "
-        "using proportional weighting from an uploaded file."
-    )
-
-    enable_disagg = st.checkbox(
-        "Enable disaggregation",
-        value=False,
-        help="Upload a granular mapping file to split model results proportionally",
-        key="enable_disaggregation"
-    )
-
+    # Disaggregation Section (only if enabled)
     if enable_disagg:
+        st.markdown("---")
+        st.subheader("Disaggregation Settings")
+        st.caption(
+            "Split model results to a more granular level (e.g., placements, campaigns) "
+            "using proportional weighting from an uploaded file."
+        )
         _show_disaggregation_ui(wrapper, config, brand, key_suffix="")
 
     # File format documentation
@@ -683,12 +682,21 @@ def _show_combined_model_export(
         # Use client from first selected model
         brand = model_options[selected_options[0]]["client"] or "unknown"
 
-    # Force to actuals checkbox
+    # Export options
+    st.subheader("Export Settings")
+
     force_to_actuals = st.checkbox(
         "Force decomposition to actuals",
         value=False,
         help="Absorb residuals into intercept so decomposition sums to actual values instead of fitted",
         key="combined_force_to_actuals"
+    )
+
+    enable_disagg = st.checkbox(
+        "Enable disaggregation",
+        value=False,
+        help="Split each model's results to granular level (e.g., placements) using proportional weighting",
+        key="combined_enable_disaggregation"
     )
 
     st.markdown("---")
@@ -837,22 +845,23 @@ def _show_combined_model_export(
     except Exception as e:
         st.error(f"Error creating ZIP: {e}")
 
-    # Disaggregation Section - per model
-    st.markdown("---")
-    st.subheader("Disaggregate to Granular Level")
-    st.caption(
-        "Split each model's results independently to granular level (e.g., placements, campaigns) "
-        "using proportional weighting from uploaded files."
-    )
+    # Disaggregation Section - per model (only if enabled)
+    if enable_disagg:
+        st.markdown("---")
+        st.subheader("Disaggregation Settings")
+        st.caption(
+            "Split each model's results independently to granular level (e.g., placements, campaigns) "
+            "using proportional weighting from uploaded files."
+        )
 
-    for idx, (wrapper, label) in enumerate(wrappers_with_labels):
-        with st.expander(f"Disaggregation for {label}", expanded=False):
-            _show_disaggregation_ui(
-                wrapper=wrapper,
-                config=wrapper.config,
-                brand=brand,
-                key_suffix=f"_{idx}_{label}"
-            )
+        for idx, (wrapper, label) in enumerate(wrappers_with_labels):
+            with st.expander(f"Disaggregation for {label}", expanded=False):
+                _show_disaggregation_ui(
+                    wrapper=wrapper,
+                    config=wrapper.config,
+                    brand=brand,
+                    key_suffix=f"_{idx}_{label}"
+                )
 
     # File format documentation for combined exports
     st.markdown("---")
