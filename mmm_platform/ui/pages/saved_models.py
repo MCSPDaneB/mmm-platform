@@ -828,7 +828,7 @@ def _generate_categories_csv(config: ModelConfig) -> str:
         row = {
             "variable_name": dummy.name,
             "variable_type": "dummy",
-            "display_name": dummy.display_name or dummy.name,
+            "display_name": dummy.name,  # DummyVariableConfig doesn't have display_name
         }
         for cat_col in existing_cat_cols:
             row[cat_col] = dummy.categories.get(cat_col, "")
