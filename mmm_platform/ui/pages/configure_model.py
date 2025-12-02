@@ -175,9 +175,15 @@ def show():
             # Client selection
             clients = list_clients()
             client_options = ["(Select or create new)"] + clients
-            saved_client = saved_data.get("client", "(Select or create new)")
+
+            # Default: saved_client > session active_client > "(Select or create new)"
+            saved_client = saved_data.get("client")
+            active_client = st.session_state.get("active_client")
+
             if saved_client and saved_client in clients:
                 client_index = client_options.index(saved_client)
+            elif active_client and active_client in clients:
+                client_index = client_options.index(active_client)
             else:
                 client_index = 0
 
@@ -195,12 +201,15 @@ def show():
                     # Create the client folder
                     get_client_configs_dir(new_client)
                     st.session_state.config_state["client"] = new_client
+                    st.session_state.active_client = new_client  # Also update session
                     st.success(f"Client '{new_client}' created!")
                     st.rerun()
 
             # Determine final client value
             if selected_client != "(Select or create new)":
                 client_value = selected_client
+                # Update session state to keep in sync
+                st.session_state.active_client = selected_client
             elif new_client:
                 client_value = new_client
             else:

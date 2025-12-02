@@ -33,12 +33,28 @@ def show():
     clients = list_clients()
     if clients:
         client_options = ["All Clients"] + clients
+
+        # Default to session's active client if set
+        active_client = st.session_state.get("active_client")
+        if active_client and active_client in clients:
+            default_index = clients.index(active_client) + 1  # +1 for "All Clients"
+        else:
+            default_index = 0
+
         selected_client = st.selectbox(
             "Filter by Client",
             options=client_options,
+            index=default_index,
             key="combined_analysis_client_filter",
             help="Show models for a specific client"
         )
+
+        # Update session state when user changes selection
+        if selected_client == "All Clients":
+            st.session_state.active_client = None
+        else:
+            st.session_state.active_client = selected_client
+
         client_filter = "all" if selected_client == "All Clients" else selected_client
     else:
         client_filter = "all"

@@ -20,6 +20,7 @@ def init_session_state():
         st.session_state.current_config = None
         st.session_state.current_model = None
         st.session_state.model_fitted = False
+        st.session_state.active_client = None  # Session-wide client selection
 
 
 def main():
@@ -53,6 +54,34 @@ def main():
     # Sidebar navigation
     st.sidebar.title("📊 MMM Platform")
     st.sidebar.markdown("---")
+
+    # Client selector in sidebar
+    from mmm_platform.model.persistence import list_clients
+    clients = list_clients()
+
+    if clients:
+        client_options = ["All Clients"] + clients
+        # Get current index based on active_client
+        current_client = st.session_state.get("active_client")
+        if current_client and current_client in clients:
+            default_index = clients.index(current_client) + 1  # +1 for "All Clients"
+        else:
+            default_index = 0
+
+        selected_client = st.sidebar.selectbox(
+            "🏢 Client",
+            options=client_options,
+            index=default_index,
+            key="sidebar_client_selector"
+        )
+
+        # Update session state
+        if selected_client == "All Clients":
+            st.session_state.active_client = None
+        else:
+            st.session_state.active_client = selected_client
+
+        st.sidebar.markdown("---")
 
     # Navigation
     page = st.sidebar.radio(
@@ -113,7 +142,65 @@ def main():
 
 def show_home():
     """Show the home page."""
+    from mmm_platform.model.persistence import list_clients, get_client_configs_dir
+
     st.title("Marketing Mix Modeling Platform")
+
+    # Client selection section
+    st.subheader("🏢 Select Client")
+    st.caption("Which client are we working on today?")
+
+    clients = list_clients()
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        client_options = ["-- Select a client --"] + clients if clients else ["-- No clients yet --"]
+        current_client = st.session_state.get("active_client")
+
+        # Find default index
+        if current_client and current_client in clients:
+            default_index = clients.index(current_client) + 1
+        else:
+            default_index = 0
+
+        selected = st.selectbox(
+            "Client",
+            options=client_options,
+            index=default_index,
+            label_visibility="collapsed",
+            key="home_client_selector"
+        )
+
+        # Update session state if a valid client selected
+        if selected not in ["-- Select a client --", "-- No clients yet --"]:
+            st.session_state.active_client = selected
+
+    with col2:
+        # Create new client option
+        with st.expander("➕ Create New Client"):
+            new_client = st.text_input(
+                "New client name",
+                placeholder="e.g., acme_corp",
+                key="home_new_client"
+            )
+            if st.button("Create", key="home_create_client_btn"):
+                if new_client and new_client.strip():
+                    new_client = new_client.strip().lower().replace(" ", "_")
+                    # Create the client directory
+                    get_client_configs_dir(new_client)
+                    st.session_state.active_client = new_client
+                    st.success(f"Created client: {new_client}")
+                    st.rerun()
+                else:
+                    st.warning("Please enter a client name")
+
+    # Show active client status
+    if st.session_state.get("active_client"):
+        st.success(f"Working with: **{st.session_state.active_client}**")
+    else:
+        st.info("No client selected. Select a client above or choose 'All Clients' in the sidebar to view everything.")
+
+    st.markdown("---")
 
     st.markdown("""
     Welcome to the **MMM Platform** - a comprehensive tool for building and analyzing
