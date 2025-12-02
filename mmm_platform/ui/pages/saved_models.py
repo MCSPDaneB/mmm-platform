@@ -823,6 +823,51 @@ def _generate_categories_csv(config: ModelConfig) -> str:
             row[cat_col] = ctrl.categories.get(cat_col, "")
         rows.append(row)
 
+    # Add dummy variables
+    for dummy in config.dummy_variables:
+        row = {
+            "variable_name": dummy.name,
+            "variable_type": "dummy",
+            "display_name": dummy.display_name or dummy.name,
+        }
+        for cat_col in existing_cat_cols:
+            row[cat_col] = dummy.categories.get(cat_col, "")
+        rows.append(row)
+
+    # Add base components (intercept, trend, seasonality)
+    # Intercept - always present
+    rows.append({
+        "variable_name": "intercept",
+        "variable_type": "base",
+        "display_name": "Intercept",
+        **{cat_col: "Base" for cat_col in existing_cat_cols}
+    })
+
+    # Trend (if enabled)
+    if config.data.include_trend:
+        rows.append({
+            "variable_name": "trend",
+            "variable_type": "base",
+            "display_name": "Trend",
+            **{cat_col: "Base" for cat_col in existing_cat_cols}
+        })
+
+    # Fourier/Seasonality terms
+    if config.seasonality and config.seasonality.yearly_seasonality:
+        for i in range(1, config.seasonality.yearly_seasonality + 1):
+            rows.append({
+                "variable_name": f"sin_order_{i}",
+                "variable_type": "seasonality",
+                "display_name": f"Seasonality Sin {i}",
+                **{cat_col: "Seasonality" for cat_col in existing_cat_cols}
+            })
+            rows.append({
+                "variable_name": f"cos_order_{i}",
+                "variable_type": "seasonality",
+                "display_name": f"Seasonality Cos {i}",
+                **{cat_col: "Seasonality" for cat_col in existing_cat_cols}
+            })
+
     if not rows:
         # Empty config - return template with just headers
         return "variable_name,variable_type,display_name\n"
@@ -897,7 +942,8 @@ def _parse_categories_csv(csv_content: str, config: ModelConfig) -> tuple[dict, 
         [(ch, "channel") for ch in config.channels] +
         [(om, "owned_media") for om in config.owned_media] +
         [(comp, "competitor") for comp in config.competitors] +
-        [(ctrl, "control") for ctrl in config.controls]
+        [(ctrl, "control") for ctrl in config.controls] +
+        [(dummy, "dummy") for dummy in config.dummy_variables]
     )
 
     for var_config, var_type in all_vars:
@@ -948,6 +994,11 @@ def _apply_categories_from_csv(config: ModelConfig, new_categories: dict, all_ca
     for ctrl in config.controls:
         if ctrl.name in new_categories:
             ctrl.categories = new_categories[ctrl.name]
+
+    # Update dummy variables
+    for dummy in config.dummy_variables:
+        if dummy.name in new_categories:
+            dummy.categories = new_categories[dummy.name]
 
     return config
 
