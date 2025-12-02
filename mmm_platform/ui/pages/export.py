@@ -151,6 +151,214 @@ def show():
         )
 
 
+def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
+    """
+    Show disaggregation UI for a single model.
+
+    Parameters
+    ----------
+    wrapper : MMMWrapper
+        The fitted model wrapper
+    config : ModelConfig
+        The model configuration
+    brand : str
+        Brand name for exports
+    key_suffix : str
+        Suffix to add to all widget keys (for multiple instances)
+    """
+    from mmm_platform.analysis.export import generate_disaggregated_results
+
+    # File upload
+    granular_file = st.file_uploader(
+        "Upload granular mapping file",
+        type=["csv", "xlsx"],
+        help="CSV or Excel file with granular-level data (e.g., placement-level spend/attribution)",
+        key=f"granular_file_uploader{key_suffix}"
+    )
+
+    if granular_file is not None:
+        # Load the file
+        try:
+            if granular_file.name.endswith('.csv'):
+                granular_df = pd.read_csv(granular_file)
+            else:
+                granular_df = pd.read_excel(granular_file)
+
+            st.success(f"Loaded {len(granular_df):,} rows × {len(granular_df.columns)} columns")
+
+            # Get all columns for mapping
+            all_columns = granular_df.columns.tolist()
+            numeric_columns = granular_df.select_dtypes(include=['number']).columns.tolist()
+
+            # Get model channel names for dropdown
+            model_channels = [ch.name for ch in config.channels]
+
+            # Column mapping UI
+            st.markdown("#### Column Mapping")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                granular_name_col = st.selectbox(
+                    "Granular Name Column",
+                    options=all_columns,
+                    help="Column containing granular identifiers (e.g., placement_name, campaign_name)",
+                    key=f"granular_name_col{key_suffix}"
+                )
+
+                date_col_granular = st.selectbox(
+                    "Date Column",
+                    options=all_columns,
+                    help="Column containing dates",
+                    key=f"granular_date_col{key_suffix}"
+                )
+
+            with col2:
+                weight_col = st.selectbox(
+                    "Weight Column",
+                    options=numeric_columns if numeric_columns else all_columns,
+                    help="Numeric column to use for proportional allocation (e.g., spend, impressions, attribution)",
+                    key=f"granular_weight_col{key_suffix}"
+                )
+
+            # Model channel mapping
+            st.markdown("#### Map Granular Names to Model Channels")
+            st.caption(
+                "For each unique value in your granular file, select which model channel it maps to. "
+                "Leave as '-- Not Mapped --' to exclude from disaggregation."
+            )
+
+            # Get unique granular values that need mapping
+            unique_granular = granular_df[granular_name_col].unique().tolist()
+
+            # Create mapping DataFrame
+            mapping_options = ["-- Not Mapped --"] + model_channels
+
+            # Check for existing mapping in session state (unique per model)
+            mapping_key = f"granular_mapping{key_suffix}"
+            if mapping_key not in st.session_state:
+                st.session_state[mapping_key] = {}
+
+            # Build mapping table data
+            mapping_data = []
+            for granular_val in unique_granular[:50]:  # Limit to first 50 for performance
+                # Try to auto-match by checking if granular name contains channel name
+                auto_match = "-- Not Mapped --"
+                for ch in model_channels:
+                    if ch.lower() in str(granular_val).lower() or str(granular_val).lower() in ch.lower():
+                        auto_match = ch
+                        break
+
+                saved_mapping = st.session_state[mapping_key].get(str(granular_val), auto_match)
+                mapping_data.append({
+                    "Granular Name": str(granular_val),
+                    "Model Channel": saved_mapping,
+                })
+
+            if len(unique_granular) > 50:
+                st.warning(f"Showing first 50 of {len(unique_granular)} unique granular values. "
+                          "All values will be processed based on exact matches to mapped values.")
+
+            mapping_df = pd.DataFrame(mapping_data)
+
+            edited_mapping = st.data_editor(
+                mapping_df,
+                column_config={
+                    "Granular Name": st.column_config.TextColumn("Granular Name", disabled=True),
+                    "Model Channel": st.column_config.SelectboxColumn(
+                        "Model Channel",
+                        options=mapping_options,
+                        help="Select which model channel this maps to"
+                    ),
+                },
+                hide_index=True,
+                width="stretch",
+                key=f"granular_mapping_editor{key_suffix}",
+            )
+
+            # Save mapping to session state
+            for _, row in edited_mapping.iterrows():
+                st.session_state[mapping_key][row["Granular Name"]] = row["Model Channel"]
+
+            # Apply mapping to granular DataFrame
+            granular_df["_model_channel"] = granular_df[granular_name_col].map(
+                lambda x: st.session_state[mapping_key].get(str(x), "-- Not Mapped --")
+            )
+
+            # Filter out unmapped rows
+            mapped_df = granular_df[granular_df["_model_channel"] != "-- Not Mapped --"].copy()
+
+            # Show mapping summary
+            st.markdown("#### Mapping Summary")
+            mapped_count = len(mapped_df)
+            total_count = len(granular_df)
+            mapped_channels = mapped_df["_model_channel"].nunique()
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Mapped Rows", f"{mapped_count:,} / {total_count:,}")
+            with col2:
+                st.metric("Mapped Channels", f"{mapped_channels} / {len(model_channels)}")
+            with col3:
+                unmapped_channels = set(model_channels) - set(mapped_df["_model_channel"].unique())
+                st.metric("Unmapped Channels", len(unmapped_channels))
+
+            if unmapped_channels:
+                with st.expander("Unmapped Model Channels"):
+                    st.write("These channels have no granular mapping and will be output at channel level:")
+                    for ch in sorted(unmapped_channels):
+                        st.write(f"- {ch}")
+
+            # Generate and download disaggregated results
+            if mapped_count > 0:
+                st.markdown("---")
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+                if st.button("Generate Disaggregated Export", type="primary", key=f"generate_disagg_btn{key_suffix}"):
+                    with st.spinner("Generating disaggregated results..."):
+                        try:
+                            df_disagg = generate_disaggregated_results(
+                                wrapper=wrapper,
+                                config=config,
+                                granular_df=mapped_df,
+                                granular_name_col=granular_name_col,
+                                date_col=date_col_granular,
+                                model_channel_col="_model_channel",
+                                weight_col=weight_col,
+                                brand=brand
+                            )
+
+                            result_key = f"disagg_result{key_suffix}"
+                            st.session_state[result_key] = df_disagg
+
+                            st.success(f"Generated {len(df_disagg):,} rows")
+
+                        except Exception as e:
+                            st.error(f"Error generating disaggregated results: {e}")
+
+                # Show results and download if generated
+                result_key = f"disagg_result{key_suffix}"
+                if result_key in st.session_state and st.session_state[result_key] is not None:
+                    df_disagg = st.session_state[result_key]
+
+                    with st.expander("Preview (first 20 rows)", expanded=True):
+                        st.dataframe(df_disagg.head(20), width="stretch")
+
+                    csv_disagg = df_disagg.to_csv(index=False)
+                    st.download_button(
+                        label="Download disaggregated_results.csv",
+                        data=csv_disagg,
+                        file_name=f"disaggregated_results{key_suffix}_{timestamp}.csv",
+                        mime="text/csv",
+                        key=f"download_disagg_btn{key_suffix}"
+                    )
+            else:
+                st.warning("No rows are mapped to model channels. Please map at least one granular value.")
+
+        except Exception as e:
+            st.error(f"Error loading file: {e}")
+
+
 def _show_single_model_export(
     wrapper,
     config,
@@ -160,8 +368,6 @@ def _show_single_model_export(
     generate_actual_vs_fitted
 ):
     """Show single model export UI."""
-    from mmm_platform.analysis.export import generate_disaggregated_results
-
     # Brand input section
     st.subheader("Export Settings")
 
@@ -338,192 +544,7 @@ def _show_single_model_export(
     )
 
     if enable_disagg:
-        # File upload
-        granular_file = st.file_uploader(
-            "Upload granular mapping file",
-            type=["csv", "xlsx"],
-            help="CSV or Excel file with granular-level data (e.g., placement-level spend/attribution)",
-            key="granular_file_uploader"
-        )
-
-        if granular_file is not None:
-            # Load the file
-            try:
-                if granular_file.name.endswith('.csv'):
-                    granular_df = pd.read_csv(granular_file)
-                else:
-                    granular_df = pd.read_excel(granular_file)
-
-                st.success(f"Loaded {len(granular_df):,} rows × {len(granular_df.columns)} columns")
-
-                # Get all columns for mapping
-                all_columns = granular_df.columns.tolist()
-                numeric_columns = granular_df.select_dtypes(include=['number']).columns.tolist()
-
-                # Get model channel names for dropdown
-                model_channels = [ch.name for ch in config.channels]
-
-                # Column mapping UI
-                st.markdown("#### Column Mapping")
-
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    granular_name_col = st.selectbox(
-                        "Granular Name Column",
-                        options=all_columns,
-                        help="Column containing granular identifiers (e.g., placement_name, campaign_name)",
-                        key="granular_name_col"
-                    )
-
-                    date_col_granular = st.selectbox(
-                        "Date Column",
-                        options=all_columns,
-                        help="Column containing dates",
-                        key="granular_date_col"
-                    )
-
-                with col2:
-                    weight_col = st.selectbox(
-                        "Weight Column",
-                        options=numeric_columns if numeric_columns else all_columns,
-                        help="Numeric column to use for proportional allocation (e.g., spend, impressions, attribution)",
-                        key="granular_weight_col"
-                    )
-
-                # Model channel mapping
-                st.markdown("#### Map Granular Names to Model Channels")
-                st.caption(
-                    "For each unique value in your granular file, select which model channel it maps to. "
-                    "Leave as '-- Not Mapped --' to exclude from disaggregation."
-                )
-
-                # Get unique granular values that need mapping
-                unique_granular = granular_df[granular_name_col].unique().tolist()
-
-                # Create mapping DataFrame
-                mapping_options = ["-- Not Mapped --"] + model_channels
-
-                # Check for existing mapping in session state
-                if "granular_mapping" not in st.session_state:
-                    st.session_state.granular_mapping = {}
-
-                # Build mapping table data
-                mapping_data = []
-                for granular_val in unique_granular[:50]:  # Limit to first 50 for performance
-                    # Try to auto-match by checking if granular name contains channel name
-                    auto_match = "-- Not Mapped --"
-                    for ch in model_channels:
-                        if ch.lower() in str(granular_val).lower() or str(granular_val).lower() in ch.lower():
-                            auto_match = ch
-                            break
-
-                    saved_mapping = st.session_state.granular_mapping.get(str(granular_val), auto_match)
-                    mapping_data.append({
-                        "Granular Name": str(granular_val),
-                        "Model Channel": saved_mapping,
-                    })
-
-                if len(unique_granular) > 50:
-                    st.warning(f"Showing first 50 of {len(unique_granular)} unique granular values. "
-                              "All values will be processed based on exact matches to mapped values.")
-
-                mapping_df = pd.DataFrame(mapping_data)
-
-                edited_mapping = st.data_editor(
-                    mapping_df,
-                    column_config={
-                        "Granular Name": st.column_config.TextColumn("Granular Name", disabled=True),
-                        "Model Channel": st.column_config.SelectboxColumn(
-                            "Model Channel",
-                            options=mapping_options,
-                            help="Select which model channel this maps to"
-                        ),
-                    },
-                    hide_index=True,
-                    width="stretch",
-                    key="granular_mapping_editor",
-                )
-
-                # Save mapping to session state
-                for _, row in edited_mapping.iterrows():
-                    st.session_state.granular_mapping[row["Granular Name"]] = row["Model Channel"]
-
-                # Apply mapping to granular DataFrame
-                granular_df["_model_channel"] = granular_df[granular_name_col].map(
-                    lambda x: st.session_state.granular_mapping.get(str(x), "-- Not Mapped --")
-                )
-
-                # Filter out unmapped rows
-                mapped_df = granular_df[granular_df["_model_channel"] != "-- Not Mapped --"].copy()
-
-                # Show mapping summary
-                st.markdown("#### Mapping Summary")
-                mapped_count = len(mapped_df)
-                total_count = len(granular_df)
-                mapped_channels = mapped_df["_model_channel"].nunique()
-
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Mapped Rows", f"{mapped_count:,} / {total_count:,}")
-                with col2:
-                    st.metric("Mapped Channels", f"{mapped_channels} / {len(model_channels)}")
-                with col3:
-                    unmapped_channels = set(model_channels) - set(mapped_df["_model_channel"].unique())
-                    st.metric("Unmapped Channels", len(unmapped_channels))
-
-                if unmapped_channels:
-                    with st.expander("Unmapped Model Channels"):
-                        st.write("These channels have no granular mapping and will be output at channel level:")
-                        for ch in sorted(unmapped_channels):
-                            st.write(f"- {ch}")
-
-                # Generate and download disaggregated results
-                if mapped_count > 0:
-                    st.markdown("---")
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-                    if st.button("Generate Disaggregated Export", type="primary", key="generate_disagg_btn"):
-                        with st.spinner("Generating disaggregated results..."):
-                            try:
-                                df_disagg = generate_disaggregated_results(
-                                    wrapper=wrapper,
-                                    config=config,
-                                    granular_df=mapped_df,
-                                    granular_name_col=granular_name_col,
-                                    date_col=date_col_granular,
-                                    model_channel_col="_model_channel",
-                                    weight_col=weight_col,
-                                    brand=brand
-                                )
-
-                                st.session_state.disagg_result = df_disagg
-
-                                st.success(f"Generated {len(df_disagg):,} rows")
-
-                            except Exception as e:
-                                st.error(f"Error generating disaggregated results: {e}")
-
-                    # Show results and download if generated
-                    if "disagg_result" in st.session_state and st.session_state.disagg_result is not None:
-                        df_disagg = st.session_state.disagg_result
-
-                        with st.expander("Preview (first 20 rows)", expanded=True):
-                            st.dataframe(df_disagg.head(20), width="stretch")
-
-                        csv_disagg = df_disagg.to_csv(index=False)
-                        st.download_button(
-                            label="Download disaggregated_results.csv",
-                            data=csv_disagg,
-                            file_name=f"disaggregated_results_{timestamp}.csv",
-                            mime="text/csv",
-                            key="download_disagg_btn"
-                        )
-                else:
-                    st.warning("No rows are mapped to model channels. Please map at least one granular value.")
-
-            except Exception as e:
-                st.error(f"Error loading file: {e}")
+        _show_disaggregation_ui(wrapper, config, brand, key_suffix="")
 
     # File format documentation
     st.markdown("---")
@@ -815,6 +836,23 @@ def _show_combined_model_export(
 
     except Exception as e:
         st.error(f"Error creating ZIP: {e}")
+
+    # Disaggregation Section - per model
+    st.markdown("---")
+    st.subheader("Disaggregate to Granular Level")
+    st.caption(
+        "Split each model's results independently to granular level (e.g., placements, campaigns) "
+        "using proportional weighting from uploaded files."
+    )
+
+    for idx, (wrapper, label) in enumerate(wrappers_with_labels):
+        with st.expander(f"Disaggregation for {label}", expanded=False):
+            _show_disaggregation_ui(
+                wrapper=wrapper,
+                config=wrapper.config,
+                brand=brand,
+                key_suffix=f"_{idx}_{label}"
+            )
 
     # File format documentation for combined exports
     st.markdown("---")
