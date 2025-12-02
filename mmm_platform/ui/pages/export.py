@@ -336,9 +336,73 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
             else:
                 st.session_state[mapping_key] = {}
 
-        # Build mapping table data
+        # CSV Download/Upload for bulk mapping
+        st.markdown("**Bulk Mapping Options**")
+        csv_col1, csv_col2 = st.columns(2)
+
+        with csv_col1:
+            # Build template with ALL entities (not just first 50)
+            template_data = []
+            for granular_val in unique_granular:
+                current_mapping = st.session_state[mapping_key].get(str(granular_val), "-- Not Mapped --")
+                # Auto-match if not already mapped
+                if current_mapping == "-- Not Mapped --" or current_mapping not in mapping_options:
+                    for ch in model_channels:
+                        if ch.lower() in str(granular_val).lower() or str(granular_val).lower() in ch.lower():
+                            current_mapping = ch
+                            break
+                    else:
+                        current_mapping = "-- Not Mapped --"
+                template_data.append({
+                    "entity": str(granular_val),
+                    "model_channel": current_mapping
+                })
+
+            template_df = pd.DataFrame(template_data)
+            st.download_button(
+                "Download Mapping Template",
+                data=template_df.to_csv(index=False),
+                file_name="mapping_template.csv",
+                mime="text/csv",
+                key=f"download_mapping_template{key_suffix}",
+                help=f"Download CSV with all {len(unique_granular)} entities for bulk editing"
+            )
+
+        with csv_col2:
+            uploaded_mapping = st.file_uploader(
+                "Upload Mapping CSV",
+                type=["csv"],
+                key=f"mapping_upload{key_suffix}",
+                help="Upload completed mapping CSV (columns: entity, model_channel)"
+            )
+
+        if uploaded_mapping is not None:
+            try:
+                mapping_csv = pd.read_csv(uploaded_mapping)
+                if "entity" in mapping_csv.columns and "model_channel" in mapping_csv.columns:
+                    imported_count = 0
+                    invalid_channels = []
+                    for _, row in mapping_csv.iterrows():
+                        entity = str(row["entity"])
+                        channel = str(row["model_channel"])
+                        if channel in mapping_options:
+                            st.session_state[mapping_key][entity] = channel
+                            imported_count += 1
+                        elif channel and channel != "nan":
+                            invalid_channels.append(channel)
+
+                    if imported_count > 0:
+                        st.success(f"Imported {imported_count} mappings from CSV")
+                    if invalid_channels:
+                        st.warning(f"Skipped invalid channels: {set(invalid_channels)}")
+                else:
+                    st.error("CSV must have 'entity' and 'model_channel' columns")
+            except Exception as e:
+                st.error(f"Error reading CSV: {e}")
+
+        # Build mapping table data (first 50 for UI display)
         mapping_data = []
-        for granular_val in unique_granular[:50]:  # Limit to first 50 for performance
+        for granular_val in unique_granular[:50]:
             # Check saved mapping first
             if str(granular_val) in st.session_state[mapping_key]:
                 saved_mapping = st.session_state[mapping_key][str(granular_val)]
@@ -359,29 +423,35 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
             })
 
         if len(unique_granular) > 50:
-            st.warning(f"Showing first 50 of {len(unique_granular)} unique entities. "
-                      "All values will be processed based on exact matches to mapped values.")
+            st.info(f"Showing first 50 of {len(unique_granular)} unique entities in the editor. "
+                    "Use the CSV download/upload for bulk mapping of all entities.")
 
         mapping_df = pd.DataFrame(mapping_data)
 
-        edited_mapping = st.data_editor(
-            mapping_df,
-            column_config={
-                "Entity": st.column_config.TextColumn("Entity", disabled=True),
-                "Model Channel": st.column_config.SelectboxColumn(
-                    "Model Channel",
-                    options=mapping_options,
-                    help="Select which model channel this maps to"
-                ),
-            },
-            hide_index=True,
-            width="stretch",
-            key=f"granular_mapping_editor{key_suffix}",
-        )
+        # Wrap data_editor in form to prevent rerender on each change
+        with st.form(key=f"mapping_form{key_suffix}"):
+            edited_mapping = st.data_editor(
+                mapping_df,
+                column_config={
+                    "Entity": st.column_config.TextColumn("Entity", disabled=True),
+                    "Model Channel": st.column_config.SelectboxColumn(
+                        "Model Channel",
+                        options=mapping_options,
+                        help="Select which model channel this maps to"
+                    ),
+                },
+                hide_index=True,
+                use_container_width=True,
+                key=f"granular_mapping_editor{key_suffix}",
+            )
 
-        # Save mapping to session state
-        for _, row in edited_mapping.iterrows():
-            st.session_state[mapping_key][row["Entity"]] = row["Model Channel"]
+            apply_btn = st.form_submit_button("Apply Mappings", type="primary")
+
+        # Save mapping to session state only when form is submitted
+        if apply_btn:
+            for _, row in edited_mapping.iterrows():
+                st.session_state[mapping_key][row["Entity"]] = row["Model Channel"]
+            st.rerun()
 
         # Create composite key column in granular_df for mapping
         granular_df["_composite_key"] = granular_df.apply(make_composite_key, axis=1)
