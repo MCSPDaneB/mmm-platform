@@ -1565,15 +1565,21 @@ def generate_combined_media_results_disaggregated(
         all_disagg_dfs.append(df_disagg)
         labels.append(label)
 
-    # Identify key columns (everything except kpi_* columns)
+    # Identify key columns for merging (exclude value columns that should be taken from first df only)
     first_df = all_disagg_dfs[0]
-    key_cols = [c for c in first_df.columns if not c.startswith('kpi_')]
+    # These columns have the same value across all models (from same granular file)
+    # So they should NOT be merge keys - just take them from first df
+    value_cols = {'spend', 'impressions', 'clicks'}
+    # Also exclude any kpi columns and include_cols that might have been added
+    all_cols_to_exclude = value_cols | {c for c in first_df.columns if c.startswith('kpi_')}
+    key_cols = [c for c in first_df.columns if c not in all_cols_to_exclude]
 
     # Merge all DataFrames on key columns
     result = all_disagg_dfs[0]
     for i, df in enumerate(all_disagg_dfs[1:], 1):
         label = labels[i]
         # Only keep key columns and the kpi column from subsequent dfs
+        # Don't include spend/impressions/clicks - those are identical and come from first df
         df_subset = df[key_cols + [f"kpi_{label}"]]
         result = result.merge(df_subset, on=key_cols, how='outer')
 
