@@ -1709,26 +1709,45 @@ def _sync_data_editors_to_config_state():
                 })
             st.session_state.config_state["competitors"] = competitors_config
 
-    # Sync controls data editor
+    # Sync controls data editor - separate dummies from regular controls
     if "controls_df_current" in st.session_state:
         edited_df = st.session_state.controls_df_current
         if isinstance(edited_df, pd.DataFrame) and len(edited_df) > 0:
             controls_config = []
+            dummy_variables_config = []
+
             for _, row in edited_df.iterrows():
                 categories = {}
                 for cat_col in category_cols:
                     if cat_col["name"] in row and pd.notna(row[cat_col["name"]]) and row[cat_col["name"]]:
                         categories[cat_col["name"]] = str(row[cat_col["name"]])
 
-                controls_config.append({
-                    "name": row["Control"],
-                    "display_name": row.get("Display Name", row["Control"]),
-                    "categories": categories,
-                    "sign_constraint": row.get("Sign Constraint", "unconstrained"),
-                    "is_dummy": row.get("Is Dummy", False),
-                    "scale": row.get("Scale", False),
-                })
+                # Check Source field to separate dummies from regular controls
+                is_from_dummy = row.get("Source") == "dummy"
+
+                if is_from_dummy:
+                    # Keep as dummy variable - preserve start_date/end_date
+                    dummy_variables_config.append({
+                        "name": row["Control"],
+                        "display_name": row.get("Display Name", row["Control"]),
+                        "start_date": row.get("start_date"),
+                        "end_date": row.get("end_date"),
+                        "categories": categories,
+                        "sign_constraint": row.get("Sign Constraint", "positive"),
+                    })
+                else:
+                    # Regular control
+                    controls_config.append({
+                        "name": row["Control"],
+                        "display_name": row.get("Display Name", row["Control"]),
+                        "categories": categories,
+                        "sign_constraint": row.get("Sign Constraint", "unconstrained"),
+                        "is_dummy": row.get("Is Dummy", False),
+                        "scale": row.get("Scale", False),
+                    })
+
             st.session_state.config_state["controls"] = controls_config
+            st.session_state.config_state["dummy_variables"] = dummy_variables_config
 
 
 def build_config_from_state() -> ModelConfig:
