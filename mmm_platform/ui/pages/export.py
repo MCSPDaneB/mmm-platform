@@ -359,13 +359,26 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
                 })
 
             template_df = pd.DataFrame(template_data)
+
+            # Build valid channels reference CSV
+            channels_df = pd.DataFrame({
+                "model_channel": mapping_options
+            })
+
+            # Create ZIP with both files
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.writestr("mapping_template.csv", template_df.to_csv(index=False))
+                zf.writestr("valid_channels.csv", channels_df.to_csv(index=False))
+            zip_buffer.seek(0)
+
             st.download_button(
                 "Download Mapping Template",
-                data=template_df.to_csv(index=False),
-                file_name="mapping_template.csv",
-                mime="text/csv",
+                data=zip_buffer.getvalue(),
+                file_name="mapping_template.zip",
+                mime="application/zip",
                 key=f"download_mapping_template{key_suffix}",
-                help=f"Download CSV with all {len(unique_granular)} entities for bulk editing"
+                help=f"ZIP with mapping template ({len(unique_granular)} entities) + valid channels reference"
             )
 
         with csv_col2:
