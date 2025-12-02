@@ -108,6 +108,15 @@ def _show_configs_section(client: str = "all"):
     if "configs_selected" not in st.session_state:
         st.session_state.configs_selected = []
 
+    # Build selection list from checkbox states (avoids st.rerun() on every click)
+    # This reads the checkbox widget states that Streamlit manages internally
+    configs_from_checkboxes = []
+    for key in st.session_state:
+        if key.startswith("select_config_") and st.session_state[key]:
+            config_path = key[len("select_config_"):]
+            configs_from_checkboxes.append(config_path)
+    st.session_state.configs_selected = configs_from_checkboxes
+
     # Save current config button
     if st.session_state.get("current_data") is not None:
         with st.expander("💾 Save Current Configuration", expanded=False):
@@ -168,26 +177,26 @@ def _show_configs_section(client: str = "all"):
         with action_cols[0]:
             if st.button("⭐ Favorite", key="bulk_fav_configs"):
                 _bulk_favorite(st.session_state.configs_selected, "config", True)
-                st.session_state.configs_selected = []
+                _clear_config_checkboxes()
                 st.rerun()
         with action_cols[1]:
             if st.button("☆ Unfavorite", key="bulk_unfav_configs"):
                 _bulk_favorite(st.session_state.configs_selected, "config", False)
-                st.session_state.configs_selected = []
+                _clear_config_checkboxes()
                 st.rerun()
         with action_cols[2]:
             if st.button("📦 Archive", key="bulk_arch_configs"):
                 _bulk_archive(st.session_state.configs_selected, "config", True)
-                st.session_state.configs_selected = []
+                _clear_config_checkboxes()
                 st.rerun()
         with action_cols[3]:
             if st.button("📤 Unarchive", key="bulk_unarch_configs"):
                 _bulk_archive(st.session_state.configs_selected, "config", False)
-                st.session_state.configs_selected = []
+                _clear_config_checkboxes()
                 st.rerun()
         with action_cols[4]:
             if st.button("Clear", key="clear_config_selection"):
-                st.session_state.configs_selected = []
+                _clear_config_checkboxes()
                 st.rerun()
 
     st.write(f"Found **{len(configs)}** saved configuration(s)")
@@ -215,19 +224,15 @@ def _show_configs_section(client: str = "all"):
         # Checkbox + expander layout
         header_col1, header_col2 = st.columns([0.05, 0.95])
         with header_col1:
-            selected = st.checkbox(
+            # Checkbox manages its own state via key - selection list built at start of render
+            st.checkbox(
                 "Select",
                 value=is_selected,
                 key=f"select_config_{config_path}",
                 help="Select for bulk actions",
                 label_visibility="collapsed"
             )
-            if selected and config_path not in st.session_state.configs_selected:
-                st.session_state.configs_selected.append(config_path)
-                st.rerun()
-            elif not selected and config_path in st.session_state.configs_selected:
-                st.session_state.configs_selected.remove(config_path)
-                st.rerun()
+            # No st.rerun() needed - selection list is built from checkbox states at start
 
         with header_col2:
             with st.expander(title):
@@ -281,6 +286,15 @@ def _show_models_section(client: str = "all"):
     if "models_mode" not in st.session_state:
         st.session_state.models_mode = "Compare"
 
+    # Build selection list from checkbox states (avoids st.rerun() on every click)
+    # This reads the checkbox widget states that Streamlit manages internally
+    models_from_checkboxes = []
+    for key in st.session_state:
+        if key.startswith("select_model_") and st.session_state[key]:
+            model_path = key[len("select_model_"):]
+            models_from_checkboxes.append(model_path)
+    st.session_state.models_selected = models_from_checkboxes
+
     # Mode toggle
     mode = st.radio(
         "Selection mode",
@@ -292,7 +306,7 @@ def _show_models_section(client: str = "all"):
     # Sync to session state (radio widget manages its own state)
     if mode != st.session_state.models_mode:
         st.session_state.models_mode = mode
-        st.session_state.models_selected = []  # Clear selection on mode change
+        _clear_model_checkboxes()
         st.rerun()
 
     # Filter controls
@@ -348,14 +362,14 @@ def _show_models_section(client: str = "all"):
                     st.rerun()
             with col2:
                 if st.button("Clear Selection", key="clear_compare"):
-                    st.session_state.models_selected = []
+                    _clear_model_checkboxes()
                     st.rerun()
         elif n_selected == 1:
             st.info("Select one more model to compare (2 required)")
         elif n_selected > 2:
             st.warning(f"{n_selected} models selected. Please select exactly 2 for comparison.")
             if st.button("Clear Selection", key="clear_compare_excess"):
-                st.session_state.models_selected = []
+                _clear_model_checkboxes()
                 st.rerun()
     else:
         # Bulk Actions mode
@@ -365,26 +379,26 @@ def _show_models_section(client: str = "all"):
             with action_cols[0]:
                 if st.button("⭐ Favorite", key="bulk_fav_models"):
                     _bulk_favorite(st.session_state.models_selected, "model", True)
-                    st.session_state.models_selected = []
+                    _clear_model_checkboxes()
                     st.rerun()
             with action_cols[1]:
                 if st.button("☆ Unfavorite", key="bulk_unfav_models"):
                     _bulk_favorite(st.session_state.models_selected, "model", False)
-                    st.session_state.models_selected = []
+                    _clear_model_checkboxes()
                     st.rerun()
             with action_cols[2]:
                 if st.button("📦 Archive", key="bulk_arch_models"):
                     _bulk_archive(st.session_state.models_selected, "model", True)
-                    st.session_state.models_selected = []
+                    _clear_model_checkboxes()
                     st.rerun()
             with action_cols[3]:
                 if st.button("📤 Unarchive", key="bulk_unarch_models"):
                     _bulk_archive(st.session_state.models_selected, "model", False)
-                    st.session_state.models_selected = []
+                    _clear_model_checkboxes()
                     st.rerun()
             with action_cols[4]:
                 if st.button("Clear", key="clear_model_selection"):
-                    st.session_state.models_selected = []
+                    _clear_model_checkboxes()
                     st.rerun()
 
     st.write(f"Found **{len(models)}** fitted model(s)")
@@ -414,21 +428,15 @@ def _show_models_section(client: str = "all"):
         # Header with checkbox
         header_col1, header_col2 = st.columns([0.05, 0.95])
         with header_col1:
-            # Checkbox for selection
-            selected = st.checkbox(
+            # Checkbox manages its own state via key - selection list built at start of render
+            st.checkbox(
                 "Select",
                 value=is_selected,
                 key=f"select_model_{model_path}",
                 help="Select for comparison or bulk actions",
                 label_visibility="collapsed"
             )
-            # Update selection state
-            if selected and model_path not in st.session_state.models_selected:
-                st.session_state.models_selected.append(model_path)
-                st.rerun()
-            elif not selected and model_path in st.session_state.models_selected:
-                st.session_state.models_selected.remove(model_path)
-                st.rerun()
+            # No st.rerun() needed - selection list is built from checkbox states at start
 
         with header_col2:
             with st.expander(title):
@@ -509,6 +517,22 @@ def _bulk_archive(paths: list, item_type: str, value: bool):
     persistence = ModelPersistence if item_type == "model" else ConfigPersistence
     for path in paths:
         persistence.set_archived(path, value)
+
+
+def _clear_config_checkboxes():
+    """Clear all config selection checkboxes."""
+    keys_to_clear = [k for k in st.session_state if k.startswith("select_config_")]
+    for k in keys_to_clear:
+        st.session_state[k] = False
+    st.session_state.configs_selected = []
+
+
+def _clear_model_checkboxes():
+    """Clear all model selection checkboxes."""
+    keys_to_clear = [k for k in st.session_state if k.startswith("select_model_")]
+    for k in keys_to_clear:
+        st.session_state[k] = False
+    st.session_state.models_selected = []
 
 
 def _save_current_config(name: str):
