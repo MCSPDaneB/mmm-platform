@@ -1748,7 +1748,7 @@ def show():
                             hovermode="x unified",
                             template="plotly_dark",
                         )
-                        st.plotly_chart(fig, use_container_width=True)
+                        st.plotly_chart(fig, width="stretch")
 
                         # Summary table
                         st.subheader("Contribution Summary")
@@ -1763,7 +1763,7 @@ def show():
                                     "Avg Weekly": f"${avg_contrib:,.0f}",
                                 })
                         if summary_data:
-                            st.dataframe(pd.DataFrame(summary_data), use_container_width=True)
+                            st.dataframe(pd.DataFrame(summary_data), width="stretch")
 
                 except Exception as e:
                     st.error(f"Error loading contributions: {e}")
@@ -1804,7 +1804,7 @@ def show():
 
                     if variables_data:
                         coef_df = pd.DataFrame(variables_data)
-                        st.dataframe(coef_df, use_container_width=True)
+                        st.dataframe(coef_df, width="stretch")
                     else:
                         st.info("No coefficient data available for owned media.")
 
@@ -1893,7 +1893,7 @@ def show():
                                 "Significant": "Yes" if result.is_significant else "No"
                             })
                         sig_df = pd.DataFrame(sig_data)
-                        st.dataframe(sig_df, use_container_width=True)
+                        st.dataframe(sig_df, width="stretch")
                     else:
                         st.info("No significance data available.")
 
@@ -1964,7 +1964,7 @@ def _show_owned_media_saturation_curves(wrapper, config, owned_media_cols, displ
         hovermode="x unified",
         template="plotly_dark",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _show_owned_media_adstock_curves(wrapper, config, owned_media_cols, display_names, selected_om, paid_channel_count):
@@ -2009,7 +2009,7 @@ def _show_owned_media_adstock_curves(wrapper, config, owned_media_cols, display_
         hovermode="x unified",
         template="plotly_dark",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _logistic_saturation(x: np.ndarray, lam: float) -> np.ndarray:

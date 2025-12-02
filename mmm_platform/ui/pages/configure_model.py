@@ -1268,8 +1268,15 @@ def show():
                 num_rows="fixed",
                 key="controls_data_editor",
             )
-            # Store the full DataFrame for sync function to access
-            st.session_state["controls_df_current"] = edited_controls
+            # Merge edits back into full DataFrame (preserving hidden columns like Source, start_date, end_date)
+            if len(control_df) > 0:
+                full_df = control_df.copy()
+                for col in display_columns:
+                    if col in edited_controls.columns:
+                        full_df[col] = edited_controls[col].values
+                st.session_state["controls_df_current"] = full_df
+            else:
+                st.session_state["controls_df_current"] = edited_controls
 
             # Save button to apply changes (prevents constant refreshing)
             if st.button("💾 Save Control Settings", key="save_controls_btn"):
