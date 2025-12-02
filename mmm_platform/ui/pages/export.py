@@ -1038,6 +1038,10 @@ def _show_combined_model_export(
                 if disagg_config is not None:
                     disagg_configs[label] = (wrapper, disagg_config)
 
+        # Store in session state so it persists when button is clicked
+        if disagg_configs:
+            st.session_state["combined_disagg_configs"] = disagg_configs
+
     st.markdown("---")
 
     # Prepare button
@@ -1050,11 +1054,13 @@ def _show_combined_model_export(
                 st.session_state["combined_df_fit"] = generate_combined_actual_vs_fitted(wrappers_with_labels, brand)
 
                 # Generate combined disaggregated results if any models have disagg configs
-                if disagg_configs:
+                # Read from session state since UI state may be lost on button click
+                disagg_configs_to_use = st.session_state.get("combined_disagg_configs", {})
+                if disagg_configs_to_use:
                     # Build list of (wrapper, label, disagg_config) tuples
                     wrappers_with_disagg = [
                         (wrapper, label, disagg_config)
-                        for label, (wrapper, disagg_config) in disagg_configs.items()
+                        for label, (wrapper, disagg_config) in disagg_configs_to_use.items()
                     ]
 
                     # Generate combined disaggregated files
@@ -1067,7 +1073,7 @@ def _show_combined_model_export(
 
                     # Generate workings files (per-model for diagnostic purposes)
                     combined_disagg_results = {}
-                    for label, (wrapper, disagg_config) in disagg_configs.items():
+                    for label, (wrapper, disagg_config) in disagg_configs_to_use.items():
                         mapped_df, granular_name_cols, date_col, weight_col, include_cols = disagg_config
                         combined_disagg_results[label] = generate_disaggregated_results(
                             wrapper=wrapper,
