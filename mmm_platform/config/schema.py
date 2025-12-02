@@ -592,12 +592,14 @@ class ModelConfig(BaseModel):
 
     # Legacy methods for backward compatibility
     def get_channel_categories(self, column_name: str = "Category") -> list[str]:
-        """Get unique channel categories for a specific column."""
-        return list(set(ch.get_category(column_name) for ch in self.channels))
+        """Get unique channel categories for a specific column (preserves insertion order)."""
+        seen = dict.fromkeys(ch.get_category(column_name) for ch in self.channels)
+        return list(seen.keys())
 
     def get_control_categories(self, column_name: str = "Category") -> list[str]:
-        """Get unique control categories for a specific column."""
-        return list(set(ctrl.get_category(column_name) for ctrl in self.controls))
+        """Get unique control categories for a specific column (preserves insertion order)."""
+        seen = dict.fromkeys(ctrl.get_category(column_name) for ctrl in self.controls)
+        return list(seen.keys())
 
     def get_channels_by_category(self, category: str, column_name: str = "Category") -> list[ChannelConfig]:
         """Get channels in a specific category for a specific column."""

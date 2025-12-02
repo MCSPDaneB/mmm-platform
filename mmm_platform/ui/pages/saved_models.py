@@ -1053,21 +1053,23 @@ def _parse_categories_csv(csv_content: str, config: ModelConfig) -> tuple[dict, 
     current_cat_cols = {col.name for col in config.category_columns}
 
     # Check which columns have at least one non-empty value
-    cols_with_values = set()
+    # Use list to preserve order from CSV (set would lose ordering)
+    cols_with_values = []
     for col in csv_category_cols:
         for val in df[col]:
             if pd.notna(val) and str(val).strip():
-                cols_with_values.add(col)
+                cols_with_values.append(col)
                 break
 
     # Determine column changes:
     # - Added: in CSV with values, not in current
     # - Removed: in current but not in CSV, OR in CSV but completely empty
+    cols_with_values_set = set(cols_with_values)  # For fast membership check
     added_columns = [c for c in cols_with_values if c not in current_cat_cols]
-    removed_columns = [c for c in current_cat_cols if c not in cols_with_values]
+    removed_columns = [c for c in current_cat_cols if c not in cols_with_values_set]
 
-    # Final columns = columns with at least one value
-    final_columns = list(cols_with_values)
+    # Final columns = columns with at least one value (order preserved from CSV)
+    final_columns = cols_with_values
 
     # Build categories dict keyed by variable_name
     new_categories = {}

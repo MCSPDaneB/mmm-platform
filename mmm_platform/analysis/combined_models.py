@@ -740,7 +740,7 @@ class MultiModelAnalyzer:
             model_channels = set(ch.channel for ch in config["channel_analysis"])
             common = common.intersection(model_channels)
 
-        return list(common)
+        return sorted(list(common))  # Sort for consistent ordering
 
     def run_analysis(self) -> MultiModelResult:
         """
