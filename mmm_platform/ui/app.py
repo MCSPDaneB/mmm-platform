@@ -61,25 +61,22 @@ def main():
 
     if clients:
         client_options = ["All Clients"] + clients
-        # Get current index based on active_client
-        current_client = st.session_state.get("active_client")
-        if current_client and current_client in clients:
-            default_index = clients.index(current_client) + 1  # +1 for "All Clients"
-        else:
-            default_index = 0
 
-        selected_client = st.sidebar.selectbox(
+        # Sync widget state FROM active_client before render
+        active = st.session_state.get("active_client")
+        widget_value = active if active and active in clients else "All Clients"
+        st.session_state.sidebar_client_selector = widget_value
+
+        def on_sidebar_client_change():
+            val = st.session_state.sidebar_client_selector
+            st.session_state.active_client = None if val == "All Clients" else val
+
+        st.sidebar.selectbox(
             "🏢 Client",
             options=client_options,
-            index=default_index,
-            key="sidebar_client_selector"
+            key="sidebar_client_selector",
+            on_change=on_sidebar_client_change
         )
-
-        # Update session state
-        if selected_client == "All Clients":
-            st.session_state.active_client = None
-        else:
-            st.session_state.active_client = selected_client
 
         st.sidebar.markdown("---")
 
@@ -155,27 +152,27 @@ def show_home():
 
     with col1:
         client_options = ["-- Select a client --"] + clients if clients else ["-- No clients yet --"]
-        current_client = st.session_state.get("active_client")
 
-        # Find default index
-        if current_client and current_client in clients:
-            default_index = clients.index(current_client) + 1
+        # Sync widget state FROM active_client before render
+        active = st.session_state.get("active_client")
+        if active and active in clients:
+            st.session_state.home_client_selector = active
         else:
-            default_index = 0
+            st.session_state.home_client_selector = "-- Select a client --"
 
-        selected = st.selectbox(
+        def on_home_client_change():
+            val = st.session_state.home_client_selector
+            if val not in ["-- Select a client --", "-- No clients yet --"]:
+                st.session_state.active_client = val
+            # Note: Don't set to None here - keep current selection if placeholder chosen
+
+        st.selectbox(
             "Client",
             options=client_options,
-            index=default_index,
             label_visibility="collapsed",
-            key="home_client_selector"
+            key="home_client_selector",
+            on_change=on_home_client_change
         )
-
-        # Update session state if a valid client selected
-        if selected not in ["-- Select a client --", "-- No clients yet --"]:
-            if st.session_state.get("active_client") != selected:
-                st.session_state.active_client = selected
-                st.rerun()  # Force rerun to update sidebar
 
     with col2:
         # Create new client option

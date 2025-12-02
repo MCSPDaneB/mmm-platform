@@ -17,7 +17,8 @@
       "Bash(git commit -m \"$(cat <<''EOF''\nAdd multiple category columns for multi-dimensional grouping\n\n- Add CategoryColumnConfig class for defining custom category columns\n- Replace single ''category'' field with ''categories'' dict in ChannelConfig/ControlConfig\n- Add category_columns field to ModelConfig (max 5 columns)\n- Update database models to use JSON categories field\n- Add UI category columns manager in configure_model page\n- Dynamic category columns appear in channel/control data editors\n- Add category column selector in Results page for grouping\n- Add backward compatibility validators for old config format\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
       "Bash(git push:*)",
       "Bash(git commit:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "WebSearch"
     ],
     "deny": [],
     "ask": []

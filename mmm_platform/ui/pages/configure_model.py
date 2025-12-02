@@ -176,23 +176,30 @@ def show():
             clients = list_clients()
             client_options = ["(Select or create new)"] + clients
 
-            # Default: saved_client > session active_client > "(Select or create new)"
+            # Sync widget state FROM active_client or saved_client before render
             saved_client = saved_data.get("client")
-            active_client = st.session_state.get("active_client")
+            active = st.session_state.get("active_client")
 
             if saved_client and saved_client in clients:
-                client_index = client_options.index(saved_client)
-            elif active_client and active_client in clients:
-                client_index = client_options.index(active_client)
+                widget_value = saved_client
+            elif active and active in clients:
+                widget_value = active
             else:
-                client_index = 0
+                widget_value = "(Select or create new)"
+            st.session_state.configure_client_selector = widget_value
+
+            def on_configure_client_change():
+                val = st.session_state.configure_client_selector
+                if val != "(Select or create new)":
+                    st.session_state.active_client = val
 
             client_col1, client_col2 = st.columns([3, 1])
             with client_col1:
                 selected_client = st.selectbox(
                     "Client",
                     options=client_options,
-                    index=client_index,
+                    key="configure_client_selector",
+                    on_change=on_configure_client_change,
                     help="Organize configs/models by client"
                 )
             with client_col2:
@@ -208,8 +215,6 @@ def show():
             # Determine final client value
             if selected_client != "(Select or create new)":
                 client_value = selected_client
-                # Update session state to keep in sync
-                st.session_state.active_client = selected_client
             elif new_client:
                 client_value = new_client
             else:
