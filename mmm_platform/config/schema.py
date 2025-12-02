@@ -96,6 +96,26 @@ class CategoryColumnConfig(BaseModel):
     options: list[str] = Field(default_factory=list, description="Available options for this column")
 
 
+class DisaggregationMappingConfig(BaseModel):
+    """Configuration for disaggregating model results to granular level.
+
+    Stores the mapping configuration (not the file data) so users can
+    quickly re-apply disaggregation when re-uploading a granular file.
+    """
+    id: str = Field(..., description="Unique identifier for this config")
+    name: str = Field(..., description="User-friendly name (e.g., 'Placements by Spend')")
+    created_at: str = Field(..., description="ISO timestamp when config was created")
+    is_active: bool = Field(False, description="Whether this is the active disaggregation config")
+    granular_name_cols: list[str] = Field(..., description="Column(s) forming the entity identifier")
+    date_column: str = Field(..., description="Date column in granular file")
+    weight_column: str = Field(..., description="Weight column for proportional allocation")
+    entity_to_channel_mapping: dict[str, str] = Field(
+        default_factory=dict,
+        description="Maps entity identifiers to model channel names"
+    )
+    notes: Optional[str] = Field(None, description="Optional notes about this config")
+
+
 class ChannelConfig(BaseModel):
     """Configuration for a single media channel."""
     name: str = Field(..., description="Column name in the data")

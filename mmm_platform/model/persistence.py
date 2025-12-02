@@ -948,3 +948,175 @@ def restore_config_to_session(config: Any, data: pd.DataFrame, session_state: di
         updates["control_multiselect"] = session_state["control_multiselect"]
 
     return updates
+
+
+# =============================================================================
+# Disaggregation Configuration Persistence
+# =============================================================================
+
+def load_disaggregation_configs(model_path: Union[str, Path]) -> list[dict]:
+    """
+    Load saved disaggregation configurations from a model's session_state.json.
+
+    Parameters
+    ----------
+    model_path : Union[str, Path]
+        Path to the model directory.
+
+    Returns
+    -------
+    list[dict]
+        List of saved disaggregation configurations.
+    """
+    model_path = Path(model_path)
+    session_file = model_path / "session_state.json"
+
+    if not session_file.exists():
+        return []
+
+    try:
+        with open(session_file, "r") as f:
+            session_state = json.load(f)
+
+        disagg_data = session_state.get("disaggregation", {})
+        return disagg_data.get("saved_configs", [])
+    except Exception as e:
+        logger.warning(f"Could not load disaggregation configs from {model_path}: {e}")
+        return []
+
+
+def save_disaggregation_config(
+    model_path: Union[str, Path],
+    config: dict,
+    set_active: bool = True
+) -> None:
+    """
+    Save a disaggregation configuration to a model's session_state.json.
+
+    Parameters
+    ----------
+    model_path : Union[str, Path]
+        Path to the model directory.
+    config : dict
+        Disaggregation configuration dict with keys:
+        - id, name, created_at, granular_name_cols, date_column, weight_column,
+        - entity_to_channel_mapping, notes (optional)
+    set_active : bool
+        If True, set this config as active and deactivate others.
+    """
+    model_path = Path(model_path)
+    session_file = model_path / "session_state.json"
+
+    # Load existing session state
+    if session_file.exists():
+        with open(session_file, "r") as f:
+            session_state = json.load(f)
+    else:
+        session_state = {}
+
+    # Initialize disaggregation section if needed
+    if "disaggregation" not in session_state:
+        session_state["disaggregation"] = {"saved_configs": []}
+
+    # Generate ID if not present
+    if "id" not in config or not config["id"]:
+        import uuid
+        config["id"] = f"disagg_{uuid.uuid4().hex[:8]}"
+
+    # Set is_active
+    config["is_active"] = set_active
+
+    # If setting active, deactivate others
+    if set_active:
+        for existing in session_state["disaggregation"]["saved_configs"]:
+            existing["is_active"] = False
+
+    # Check if updating existing config (by id)
+    existing_ids = [c["id"] for c in session_state["disaggregation"]["saved_configs"]]
+    if config["id"] in existing_ids:
+        # Update existing
+        for i, existing in enumerate(session_state["disaggregation"]["saved_configs"]):
+            if existing["id"] == config["id"]:
+                session_state["disaggregation"]["saved_configs"][i] = config
+                break
+    else:
+        # Add new
+        session_state["disaggregation"]["saved_configs"].append(config)
+
+    # Save back
+    with open(session_file, "w") as f:
+        json.dump(session_state, f, indent=2)
+
+    logger.info(f"Saved disaggregation config '{config['name']}' to {model_path}")
+
+
+def delete_disaggregation_config(model_path: Union[str, Path], config_id: str) -> bool:
+    """
+    Delete a disaggregation configuration from a model.
+
+    Parameters
+    ----------
+    model_path : Union[str, Path]
+        Path to the model directory.
+    config_id : str
+        ID of the config to delete.
+
+    Returns
+    -------
+    bool
+        True if deleted, False if not found.
+    """
+    model_path = Path(model_path)
+    session_file = model_path / "session_state.json"
+
+    if not session_file.exists():
+        return False
+
+    with open(session_file, "r") as f:
+        session_state = json.load(f)
+
+    if "disaggregation" not in session_state:
+        return False
+
+    configs = session_state["disaggregation"]["saved_configs"]
+    original_count = len(configs)
+    session_state["disaggregation"]["saved_configs"] = [
+        c for c in configs if c["id"] != config_id
+    ]
+
+    if len(session_state["disaggregation"]["saved_configs"]) < original_count:
+        with open(session_file, "w") as f:
+            json.dump(session_state, f, indent=2)
+        logger.info(f"Deleted disaggregation config {config_id} from {model_path}")
+        return True
+
+    return False
+
+
+def validate_disaggregation_config(config: dict, model_channels: list[str]) -> tuple[bool, str]:
+    """
+    Validate a saved disaggregation config against current model channels.
+
+    Parameters
+    ----------
+    config : dict
+        Saved disaggregation configuration.
+    model_channels : list[str]
+        Current model channel names.
+
+    Returns
+    -------
+    tuple[bool, str]
+        (is_valid, error_message). If valid, error_message is empty.
+    """
+    mapped_channels = set(config.get("entity_to_channel_mapping", {}).values())
+    # Remove "-- Not Mapped --" from validation
+    mapped_channels.discard("-- Not Mapped --")
+
+    current_channels = set(model_channels)
+
+    missing = mapped_channels - current_channels
+    if missing:
+        return False, f"Mapping references channels not in model: {', '.join(sorted(missing))}"
+
+    return True, ""

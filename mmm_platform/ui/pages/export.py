@@ -140,6 +140,7 @@ def show():
             wrapper=wrapper,
             config=wrapper.config,
             brand=model_info["client"] or "unknown",
+            model_path=model_info["path"],
             generate_decomps_stacked=generate_decomps_stacked,
             generate_media_results=generate_media_results,
             generate_actual_vs_fitted=generate_actual_vs_fitted
@@ -163,7 +164,7 @@ def show():
         )
 
 
-def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
+def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None, key_suffix: str = ""):
     """
     Show disaggregation UI for a single model.
 
@@ -175,6 +176,8 @@ def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
         The model configuration
     brand : str
         Brand name for exports
+    model_path : str, optional
+        Path to model directory (for loading/saving disaggregation configs)
     key_suffix : str
         Suffix to add to all widget keys (for multiple instances)
 
@@ -184,6 +187,55 @@ def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
         (mapped_df, granular_name_cols, date_col, weight_col) if ready, None otherwise
         granular_name_cols is a list of column names forming the entity identifier
     """
+    from mmm_platform.model.persistence import (
+        load_disaggregation_configs,
+        save_disaggregation_config,
+        validate_disaggregation_config
+    )
+
+    model_channels = [ch.name for ch in config.channels]
+
+    # Load saved disaggregation configs if model_path provided
+    saved_configs = []
+    if model_path:
+        saved_configs = load_disaggregation_configs(model_path)
+
+    # Show saved configs selector if any exist
+    selected_saved_config = None
+    if saved_configs:
+        st.markdown("#### Saved Configurations")
+
+        config_options = ["+ Create New"] + [
+            f"{c['name']} ({c['created_at'][:10]})" for c in saved_configs
+        ]
+
+        selected_option = st.selectbox(
+            "Use saved configuration",
+            options=config_options,
+            key=f"disagg_saved_config{key_suffix}",
+            help="Select a saved configuration or create a new one"
+        )
+
+        if selected_option != "+ Create New":
+            # Find the selected config
+            idx = config_options.index(selected_option) - 1  # -1 for "Create New"
+            selected_saved_config = saved_configs[idx]
+
+            # Validate against current model channels
+            is_valid, error_msg = validate_disaggregation_config(selected_saved_config, model_channels)
+
+            if not is_valid:
+                st.error(f"⚠️ Saved config is invalid: {error_msg}")
+                st.info("Please create a new configuration or edit this one.")
+                selected_saved_config = None
+            else:
+                st.success(f"Using saved config: **{selected_saved_config['name']}**")
+                with st.expander("Config details"):
+                    st.write(f"**Entity columns:** {', '.join(selected_saved_config['granular_name_cols'])}")
+                    st.write(f"**Date column:** {selected_saved_config['date_column']}")
+                    st.write(f"**Weight column:** {selected_saved_config['weight_column']}")
+                    st.write(f"**Mappings:** {len(selected_saved_config['entity_to_channel_mapping'])} entities")
+
     # File upload
     granular_file = st.file_uploader(
         "Upload granular mapping file",
@@ -208,18 +260,27 @@ def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
         all_columns = granular_df.columns.tolist()
         numeric_columns = granular_df.select_dtypes(include=['number']).columns.tolist()
 
-        # Get model channel names for dropdown
-        model_channels = [ch.name for ch in config.channels]
-
         # Column mapping UI
         st.markdown("#### Column Mapping")
 
         col1, col2 = st.columns(2)
 
+        # Pre-populate from saved config if available
+        default_entity_cols = selected_saved_config['granular_name_cols'] if selected_saved_config else []
+        default_entity_cols = [c for c in default_entity_cols if c in all_columns]  # Filter to valid columns
+
+        default_date_col = selected_saved_config['date_column'] if selected_saved_config else None
+        default_date_idx = all_columns.index(default_date_col) if default_date_col and default_date_col in all_columns else 0
+
+        default_weight_col = selected_saved_config['weight_column'] if selected_saved_config else None
+        weight_options = numeric_columns if numeric_columns else all_columns
+        default_weight_idx = weight_options.index(default_weight_col) if default_weight_col and default_weight_col in weight_options else 0
+
         with col1:
             granular_name_cols = st.multiselect(
                 "Entity Identifier Column(s)",
                 options=all_columns,
+                default=default_entity_cols,
                 help="Select one or more columns to form the unique entity identifier (e.g., Region + Store_ID)",
                 key=f"granular_name_cols{key_suffix}"
             )
@@ -227,6 +288,7 @@ def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
             date_col_granular = st.selectbox(
                 "Date Column",
                 options=all_columns,
+                index=default_date_idx,
                 help="Column containing dates",
                 key=f"granular_date_col{key_suffix}"
             )
@@ -234,7 +296,8 @@ def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
         with col2:
             weight_col = st.selectbox(
                 "Weight Column",
-                options=numeric_columns if numeric_columns else all_columns,
+                options=weight_options,
+                index=default_weight_idx,
                 help="Numeric column to use for proportional allocation (e.g., spend, impressions, attribution)",
                 key=f"granular_weight_col{key_suffix}"
             )
@@ -264,22 +327,32 @@ def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
         # Create mapping DataFrame
         mapping_options = ["-- Not Mapped --"] + model_channels
 
-        # Check for existing mapping in session state (unique per model)
+        # Initialize mapping from saved config or session state
         mapping_key = f"granular_mapping{key_suffix}"
         if mapping_key not in st.session_state:
-            st.session_state[mapping_key] = {}
+            if selected_saved_config:
+                # Use saved config mapping
+                st.session_state[mapping_key] = selected_saved_config.get('entity_to_channel_mapping', {}).copy()
+            else:
+                st.session_state[mapping_key] = {}
 
         # Build mapping table data
         mapping_data = []
         for granular_val in unique_granular[:50]:  # Limit to first 50 for performance
-            # Try to auto-match by checking if entity name contains channel name
-            auto_match = "-- Not Mapped --"
-            for ch in model_channels:
-                if ch.lower() in str(granular_val).lower() or str(granular_val).lower() in ch.lower():
-                    auto_match = ch
-                    break
+            # Check saved mapping first
+            if str(granular_val) in st.session_state[mapping_key]:
+                saved_mapping = st.session_state[mapping_key][str(granular_val)]
+                # Validate the saved mapping is still valid
+                if saved_mapping not in mapping_options:
+                    saved_mapping = "-- Not Mapped --"
+            else:
+                # Try to auto-match by checking if entity name contains channel name
+                saved_mapping = "-- Not Mapped --"
+                for ch in model_channels:
+                    if ch.lower() in str(granular_val).lower() or str(granular_val).lower() in ch.lower():
+                        saved_mapping = ch
+                        break
 
-            saved_mapping = st.session_state[mapping_key].get(str(granular_val), auto_match)
             mapping_data.append({
                 "Entity": str(granular_val),
                 "Model Channel": saved_mapping,
@@ -325,13 +398,13 @@ def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
         st.markdown("#### Mapping Summary")
         mapped_count = len(mapped_df)
         total_count = len(granular_df)
-        mapped_channels = mapped_df["_model_channel"].nunique()
+        mapped_channels_count = mapped_df["_model_channel"].nunique()
 
         col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("Mapped Rows", f"{mapped_count:,} / {total_count:,}")
         with col2:
-            st.metric("Mapped Channels", f"{mapped_channels} / {len(model_channels)}")
+            st.metric("Mapped Channels", f"{mapped_channels_count} / {len(model_channels)}")
         with col3:
             unmapped_channels = set(model_channels) - set(mapped_df["_model_channel"].unique())
             st.metric("Unmapped Channels", len(unmapped_channels))
@@ -341,6 +414,38 @@ def _show_disaggregation_ui(wrapper, config, brand: str, key_suffix: str = ""):
                 st.write("These channels have no granular mapping and will be output at channel level:")
                 for ch in sorted(unmapped_channels):
                     st.write(f"- {ch}")
+
+        # Save configuration button
+        if model_path and mapped_count > 0:
+            st.markdown("---")
+            st.markdown("#### Save Configuration")
+            save_col1, save_col2 = st.columns([3, 1])
+
+            with save_col1:
+                config_name = st.text_input(
+                    "Configuration name",
+                    value=selected_saved_config['name'] if selected_saved_config else f"Disagg by {weight_col}",
+                    key=f"disagg_config_name{key_suffix}",
+                    placeholder="e.g., Placements by Spend"
+                )
+
+            with save_col2:
+                if st.button("💾 Save Config", key=f"save_disagg_config{key_suffix}"):
+                    if config_name:
+                        new_config = {
+                            "id": selected_saved_config['id'] if selected_saved_config else None,
+                            "name": config_name,
+                            "created_at": datetime.now().isoformat(),
+                            "granular_name_cols": granular_name_cols,
+                            "date_column": date_col_granular,
+                            "weight_column": weight_col,
+                            "entity_to_channel_mapping": dict(st.session_state[mapping_key]),
+                        }
+                        save_disaggregation_config(model_path, new_config)
+                        st.success(f"Saved configuration: {config_name}")
+                        st.rerun()
+                    else:
+                        st.warning("Please enter a configuration name")
 
         if mapped_count > 0:
             return (mapped_df, granular_name_cols, date_col_granular, weight_col)
@@ -357,6 +462,7 @@ def _show_single_model_export(
     wrapper,
     config,
     brand: str,
+    model_path: str,
     generate_decomps_stacked,
     generate_media_results,
     generate_actual_vs_fitted
@@ -406,7 +512,7 @@ def _show_single_model_export(
             "Split model results to a more granular level (e.g., placements, campaigns) "
             "using proportional weighting from an uploaded file."
         )
-        disagg_config = _show_disaggregation_ui(wrapper, config, brand, key_suffix="")
+        disagg_config = _show_disaggregation_ui(wrapper, config, brand, model_path=model_path, key_suffix="")
 
     st.markdown("---")
 
@@ -726,12 +832,16 @@ def _show_combined_model_export(
             "using proportional weighting from uploaded files."
         )
 
-        for idx, (wrapper, label) in enumerate(wrappers_with_labels):
+        for idx, row in edited_config.iterrows():
+            wrapper = next(w for w, n, p in loaded_wrappers if p == row["Path"])
+            label = row["Label"]
+            model_path = row["Path"]
             with st.expander(f"Disaggregation for {label}", expanded=False):
                 disagg_config = _show_disaggregation_ui(
                     wrapper=wrapper,
                     config=wrapper.config,
                     brand=brand,
+                    model_path=model_path,
                     key_suffix=f"_{idx}_{label}"
                 )
                 if disagg_config is not None:
