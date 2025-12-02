@@ -248,315 +248,323 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
         key=f"granular_file_uploader{key_suffix}"
     )
 
+    # Session state key for caching the DataFrame
+    granular_df_key = f"granular_df{key_suffix}"
+
     if granular_file is None:
+        # Check if we have a previously loaded DataFrame in session state
+        if granular_df_key not in st.session_state:
+            return None
+        granular_df = st.session_state[granular_df_key]
+        st.info(f"Using cached data: {len(granular_df):,} rows × {len(granular_df.columns)} columns")
+    else:
+        # Load the file
+        try:
+            if granular_file.name.endswith('.csv'):
+                granular_df = pd.read_csv(granular_file)
+            else:
+                granular_df = pd.read_excel(granular_file)
+
+            # Store in session state for persistence across button clicks
+            st.session_state[granular_df_key] = granular_df
+            st.success(f"Loaded {len(granular_df):,} rows × {len(granular_df.columns)} columns")
+        except Exception as e:
+            st.error(f"Error loading file: {e}")
+            return None
+
+    # Get all columns for mapping (works with both fresh upload and cached data)
+    all_columns = granular_df.columns.tolist()
+    numeric_columns = granular_df.select_dtypes(include=['number']).columns.tolist()
+
+    # Column mapping UI
+    st.markdown("#### Column Mapping")
+
+    col1, col2 = st.columns(2)
+
+    # Pre-populate from saved config if available
+    default_entity_cols = selected_saved_config['granular_name_cols'] if selected_saved_config else []
+    default_entity_cols = [c for c in default_entity_cols if c in all_columns]  # Filter to valid columns
+
+    default_date_col = selected_saved_config['date_column'] if selected_saved_config else None
+    default_date_idx = all_columns.index(default_date_col) if default_date_col and default_date_col in all_columns else 0
+
+    default_weight_col = selected_saved_config['weight_column'] if selected_saved_config else None
+    weight_options = numeric_columns if numeric_columns else all_columns
+    default_weight_idx = weight_options.index(default_weight_col) if default_weight_col and default_weight_col in weight_options else 0
+
+    with col1:
+        granular_name_cols = st.multiselect(
+            "Entity Identifier Column(s)",
+            options=all_columns,
+            default=default_entity_cols,
+            help="Select one or more columns to form the unique entity identifier (e.g., Region + Store_ID)",
+            key=f"granular_name_cols{key_suffix}"
+        )
+
+        date_col_granular = st.selectbox(
+            "Date Column",
+            options=all_columns,
+            index=default_date_idx,
+            help="Column containing dates",
+            key=f"granular_date_col{key_suffix}"
+        )
+
+    with col2:
+        weight_col = st.selectbox(
+            "Weight Column",
+            options=weight_options,
+            index=default_weight_idx,
+            help="Numeric column to use for proportional allocation (e.g., spend, impressions, attribution)",
+            key=f"granular_weight_col{key_suffix}"
+        )
+
+    # Columns to Include multiselect
+    # Exclude already selected columns from options
+    used_cols = set(granular_name_cols + [date_col_granular, weight_col])
+    available_include_cols = [c for c in all_columns if c not in used_cols]
+
+    # Pre-populate from saved config if available
+    default_include_cols = selected_saved_config.get('include_columns', []) if selected_saved_config else []
+    default_include_cols = [c for c in default_include_cols if c in available_include_cols]
+
+    include_cols = st.multiselect(
+        "Columns to Include",
+        options=available_include_cols,
+        default=default_include_cols,
+        help="Additional columns to carry through to output (e.g., impressions, clicks). These will appear in the disaggregated media results.",
+        key=f"granular_include_cols{key_suffix}"
+    )
+
+    # Validate entity columns selected
+    if not granular_name_cols:
+        st.warning("Please select at least one entity identifier column.")
         return None
 
-    # Load the file
-    try:
-        if granular_file.name.endswith('.csv'):
-            granular_df = pd.read_csv(granular_file)
+    # Model channel mapping
+    st.markdown("#### Map Granular Entities to Model Channels")
+    st.caption(
+        "For each unique entity in your granular file, select which model channel it maps to. "
+        "Leave as '-- Not Mapped --' to exclude from disaggregation."
+    )
+
+    # Get unique entity combinations (composite key from multiple columns)
+    unique_entities_df = granular_df[granular_name_cols].drop_duplicates()
+
+    # Create composite key for display and mapping
+    def make_composite_key(row):
+        return " | ".join(str(row[col]) for col in granular_name_cols)
+
+    unique_entities_df["_composite_key"] = unique_entities_df.apply(make_composite_key, axis=1)
+    unique_granular = unique_entities_df["_composite_key"].tolist()
+
+    # Create mapping DataFrame
+    mapping_options = ["-- Not Mapped --"] + model_channels
+
+    # Initialize mapping from saved config or session state
+    mapping_key = f"granular_mapping{key_suffix}"
+    if mapping_key not in st.session_state:
+        if selected_saved_config:
+            # Use saved config mapping
+            st.session_state[mapping_key] = selected_saved_config.get('entity_to_channel_mapping', {}).copy()
         else:
-            granular_df = pd.read_excel(granular_file)
+            st.session_state[mapping_key] = {}
 
-        st.success(f"Loaded {len(granular_df):,} rows × {len(granular_df.columns)} columns")
+    # CSV Download/Upload for bulk mapping
+    st.markdown("**Bulk Mapping Options**")
+    csv_col1, csv_col2 = st.columns(2)
 
-        # Get all columns for mapping
-        all_columns = granular_df.columns.tolist()
-        numeric_columns = granular_df.select_dtypes(include=['number']).columns.tolist()
-
-        # Column mapping UI
-        st.markdown("#### Column Mapping")
-
-        col1, col2 = st.columns(2)
-
-        # Pre-populate from saved config if available
-        default_entity_cols = selected_saved_config['granular_name_cols'] if selected_saved_config else []
-        default_entity_cols = [c for c in default_entity_cols if c in all_columns]  # Filter to valid columns
-
-        default_date_col = selected_saved_config['date_column'] if selected_saved_config else None
-        default_date_idx = all_columns.index(default_date_col) if default_date_col and default_date_col in all_columns else 0
-
-        default_weight_col = selected_saved_config['weight_column'] if selected_saved_config else None
-        weight_options = numeric_columns if numeric_columns else all_columns
-        default_weight_idx = weight_options.index(default_weight_col) if default_weight_col and default_weight_col in weight_options else 0
-
-        with col1:
-            granular_name_cols = st.multiselect(
-                "Entity Identifier Column(s)",
-                options=all_columns,
-                default=default_entity_cols,
-                help="Select one or more columns to form the unique entity identifier (e.g., Region + Store_ID)",
-                key=f"granular_name_cols{key_suffix}"
-            )
-
-            date_col_granular = st.selectbox(
-                "Date Column",
-                options=all_columns,
-                index=default_date_idx,
-                help="Column containing dates",
-                key=f"granular_date_col{key_suffix}"
-            )
-
-        with col2:
-            weight_col = st.selectbox(
-                "Weight Column",
-                options=weight_options,
-                index=default_weight_idx,
-                help="Numeric column to use for proportional allocation (e.g., spend, impressions, attribution)",
-                key=f"granular_weight_col{key_suffix}"
-            )
-
-        # Columns to Include multiselect
-        # Exclude already selected columns from options
-        used_cols = set(granular_name_cols + [date_col_granular, weight_col])
-        available_include_cols = [c for c in all_columns if c not in used_cols]
-
-        # Pre-populate from saved config if available
-        default_include_cols = selected_saved_config.get('include_columns', []) if selected_saved_config else []
-        default_include_cols = [c for c in default_include_cols if c in available_include_cols]
-
-        include_cols = st.multiselect(
-            "Columns to Include",
-            options=available_include_cols,
-            default=default_include_cols,
-            help="Additional columns to carry through to output (e.g., impressions, clicks). These will appear in the disaggregated media results.",
-            key=f"granular_include_cols{key_suffix}"
-        )
-
-        # Validate entity columns selected
-        if not granular_name_cols:
-            st.warning("Please select at least one entity identifier column.")
-            return None
-
-        # Model channel mapping
-        st.markdown("#### Map Granular Entities to Model Channels")
-        st.caption(
-            "For each unique entity in your granular file, select which model channel it maps to. "
-            "Leave as '-- Not Mapped --' to exclude from disaggregation."
-        )
-
-        # Get unique entity combinations (composite key from multiple columns)
-        unique_entities_df = granular_df[granular_name_cols].drop_duplicates()
-
-        # Create composite key for display and mapping
-        def make_composite_key(row):
-            return " | ".join(str(row[col]) for col in granular_name_cols)
-
-        unique_entities_df["_composite_key"] = unique_entities_df.apply(make_composite_key, axis=1)
-        unique_granular = unique_entities_df["_composite_key"].tolist()
-
-        # Create mapping DataFrame
-        mapping_options = ["-- Not Mapped --"] + model_channels
-
-        # Initialize mapping from saved config or session state
-        mapping_key = f"granular_mapping{key_suffix}"
-        if mapping_key not in st.session_state:
-            if selected_saved_config:
-                # Use saved config mapping
-                st.session_state[mapping_key] = selected_saved_config.get('entity_to_channel_mapping', {}).copy()
-            else:
-                st.session_state[mapping_key] = {}
-
-        # CSV Download/Upload for bulk mapping
-        st.markdown("**Bulk Mapping Options**")
-        csv_col1, csv_col2 = st.columns(2)
-
-        with csv_col1:
-            # Build template with ALL entities (not just first 50)
-            template_data = []
-            for granular_val in unique_granular:
-                current_mapping = st.session_state[mapping_key].get(str(granular_val), "-- Not Mapped --")
-                # Auto-match if not already mapped
-                if current_mapping == "-- Not Mapped --" or current_mapping not in mapping_options:
-                    for ch in model_channels:
-                        if ch.lower() in str(granular_val).lower() or str(granular_val).lower() in ch.lower():
-                            current_mapping = ch
-                            break
-                    else:
-                        current_mapping = "-- Not Mapped --"
-                template_data.append({
-                    "entity": str(granular_val),
-                    "model_channel": current_mapping
-                })
-
-            template_df = pd.DataFrame(template_data)
-
-            # Build valid channels reference CSV
-            channels_df = pd.DataFrame({
-                "model_channel": mapping_options
-            })
-
-            # Create ZIP with both files
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-                zf.writestr("mapping_template.csv", template_df.to_csv(index=False))
-                zf.writestr("valid_channels.csv", channels_df.to_csv(index=False))
-            zip_buffer.seek(0)
-
-            st.download_button(
-                "Download Mapping Template",
-                data=zip_buffer.getvalue(),
-                file_name="mapping_template.zip",
-                mime="application/zip",
-                key=f"download_mapping_template{key_suffix}",
-                help=f"ZIP with mapping template ({len(unique_granular)} entities) + valid channels reference"
-            )
-
-        with csv_col2:
-            uploaded_mapping = st.file_uploader(
-                "Upload Mapping CSV",
-                type=["csv"],
-                key=f"mapping_upload{key_suffix}",
-                help="Upload completed mapping CSV (columns: entity, model_channel)"
-            )
-
-        if uploaded_mapping is not None:
-            try:
-                mapping_csv = pd.read_csv(uploaded_mapping)
-                if "entity" in mapping_csv.columns and "model_channel" in mapping_csv.columns:
-                    imported_count = 0
-                    invalid_channels = []
-                    for _, row in mapping_csv.iterrows():
-                        entity = str(row["entity"])
-                        channel = str(row["model_channel"])
-                        if channel in mapping_options:
-                            st.session_state[mapping_key][entity] = channel
-                            imported_count += 1
-                        elif channel and channel != "nan":
-                            invalid_channels.append(channel)
-
-                    if imported_count > 0:
-                        st.success(f"Imported {imported_count} mappings from CSV")
-                    if invalid_channels:
-                        st.warning(f"Skipped invalid channels: {set(invalid_channels)}")
-                else:
-                    st.error("CSV must have 'entity' and 'model_channel' columns")
-            except Exception as e:
-                st.error(f"Error reading CSV: {e}")
-
-        # Build mapping table data for all entities
-        mapping_data = []
+    with csv_col1:
+        # Build template with ALL entities (not just first 50)
+        template_data = []
         for granular_val in unique_granular:
-            # Check saved mapping first
-            if str(granular_val) in st.session_state[mapping_key]:
-                saved_mapping = st.session_state[mapping_key][str(granular_val)]
-                # Validate the saved mapping is still valid
-                if saved_mapping not in mapping_options:
-                    saved_mapping = "-- Not Mapped --"
-            else:
-                # Try to auto-match by checking if entity name contains channel name
-                saved_mapping = "-- Not Mapped --"
+            current_mapping = st.session_state[mapping_key].get(str(granular_val), "-- Not Mapped --")
+            # Auto-match if not already mapped
+            if current_mapping == "-- Not Mapped --" or current_mapping not in mapping_options:
                 for ch in model_channels:
                     if ch.lower() in str(granular_val).lower() or str(granular_val).lower() in ch.lower():
-                        saved_mapping = ch
+                        current_mapping = ch
                         break
-
-            mapping_data.append({
-                "Entity": str(granular_val),
-                "Model Channel": saved_mapping,
+                else:
+                    current_mapping = "-- Not Mapped --"
+            template_data.append({
+                "entity": str(granular_val),
+                "model_channel": current_mapping
             })
 
-        mapping_df = pd.DataFrame(mapping_data)
+        template_df = pd.DataFrame(template_data)
 
-        # Wrap data_editor in form to prevent rerender on each change
-        with st.form(key=f"mapping_form{key_suffix}"):
-            edited_mapping = st.data_editor(
-                mapping_df,
-                column_config={
-                    "Entity": st.column_config.TextColumn("Entity", disabled=True),
-                    "Model Channel": st.column_config.SelectboxColumn(
-                        "Model Channel",
-                        options=mapping_options,
-                        help="Select which model channel this maps to"
-                    ),
-                },
-                hide_index=True,
-                width="stretch",
-                height=400,
-                key=f"granular_mapping_editor{key_suffix}",
-            )
+        # Build valid channels reference CSV
+        channels_df = pd.DataFrame({
+            "model_channel": mapping_options
+        })
 
-            apply_btn = st.form_submit_button("Apply Mappings", type="primary")
+        # Create ZIP with both files
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("mapping_template.csv", template_df.to_csv(index=False))
+            zf.writestr("valid_channels.csv", channels_df.to_csv(index=False))
+        zip_buffer.seek(0)
 
-        # Save mapping to session state only when form is submitted
-        if apply_btn:
-            for _, row in edited_mapping.iterrows():
-                st.session_state[mapping_key][row["Entity"]] = row["Model Channel"]
-            st.rerun()
-
-        # Create composite key column in granular_df for mapping
-        granular_df["_composite_key"] = granular_df.apply(make_composite_key, axis=1)
-
-        # Apply mapping to granular DataFrame using composite key
-        granular_df["_model_channel"] = granular_df["_composite_key"].map(
-            lambda x: st.session_state[mapping_key].get(str(x), "-- Not Mapped --")
+        st.download_button(
+            "Download Mapping Template",
+            data=zip_buffer.getvalue(),
+            file_name="mapping_template.zip",
+            mime="application/zip",
+            key=f"download_mapping_template{key_suffix}",
+            help=f"ZIP with mapping template ({len(unique_granular)} entities) + valid channels reference"
         )
 
-        # Filter out unmapped rows
-        mapped_df = granular_df[granular_df["_model_channel"] != "-- Not Mapped --"].copy()
+    with csv_col2:
+        uploaded_mapping = st.file_uploader(
+            "Upload Mapping CSV",
+            type=["csv"],
+            key=f"mapping_upload{key_suffix}",
+            help="Upload completed mapping CSV (columns: entity, model_channel)"
+        )
 
-        # Show mapping summary
-        st.markdown("#### Mapping Summary")
-        mapped_count = len(mapped_df)
-        total_count = len(granular_df)
-        mapped_channels_count = mapped_df["_model_channel"].nunique()
+    if uploaded_mapping is not None:
+        try:
+            mapping_csv = pd.read_csv(uploaded_mapping)
+            if "entity" in mapping_csv.columns and "model_channel" in mapping_csv.columns:
+                imported_count = 0
+                invalid_channels = []
+                for _, row in mapping_csv.iterrows():
+                    entity = str(row["entity"])
+                    channel = str(row["model_channel"])
+                    if channel in mapping_options:
+                        st.session_state[mapping_key][entity] = channel
+                        imported_count += 1
+                    elif channel and channel != "nan":
+                        invalid_channels.append(channel)
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Mapped Rows", f"{mapped_count:,} / {total_count:,}")
-        with col2:
-            st.metric("Mapped Channels", f"{mapped_channels_count} / {len(model_channels)}")
-        with col3:
-            unmapped_channels = set(model_channels) - set(mapped_df["_model_channel"].unique())
-            st.metric("Unmapped Channels", len(unmapped_channels))
+                if imported_count > 0:
+                    st.success(f"Imported {imported_count} mappings from CSV")
+                if invalid_channels:
+                    st.warning(f"Skipped invalid channels: {set(invalid_channels)}")
+            else:
+                st.error("CSV must have 'entity' and 'model_channel' columns")
+        except Exception as e:
+            st.error(f"Error reading CSV: {e}")
 
-        if unmapped_channels:
-            with st.expander("Unmapped Model Channels"):
-                st.write("These channels have no granular mapping and will be output at channel level:")
-                for ch in sorted(unmapped_channels):
-                    st.write(f"- {ch}")
-
-        # Save configuration button
-        if model_path and mapped_count > 0:
-            st.markdown("---")
-            st.markdown("#### Save Configuration")
-            save_col1, save_col2 = st.columns([3, 1])
-
-            with save_col1:
-                config_name = st.text_input(
-                    "Configuration name",
-                    value=selected_saved_config['name'] if selected_saved_config else f"Disagg by {weight_col}",
-                    key=f"disagg_config_name{key_suffix}",
-                    placeholder="e.g., Placements by Spend"
-                )
-
-            with save_col2:
-                if st.button("💾 Save Config", key=f"save_disagg_config{key_suffix}"):
-                    if config_name:
-                        new_config = {
-                            "id": selected_saved_config['id'] if selected_saved_config else None,
-                            "name": config_name,
-                            "created_at": datetime.now().isoformat(),
-                            "granular_name_cols": granular_name_cols,
-                            "date_column": date_col_granular,
-                            "weight_column": weight_col,
-                            "include_columns": include_cols,
-                            "entity_to_channel_mapping": dict(st.session_state[mapping_key]),
-                        }
-                        save_disaggregation_config(model_path, new_config)
-                        st.success(f"Saved configuration: {config_name}")
-                        st.rerun()
-                    else:
-                        st.warning("Please enter a configuration name")
-
-        if mapped_count > 0:
-            return (mapped_df, granular_name_cols, date_col_granular, weight_col, include_cols)
+    # Build mapping table data for all entities
+    mapping_data = []
+    for granular_val in unique_granular:
+        # Check saved mapping first
+        if str(granular_val) in st.session_state[mapping_key]:
+            saved_mapping = st.session_state[mapping_key][str(granular_val)]
+            # Validate the saved mapping is still valid
+            if saved_mapping not in mapping_options:
+                saved_mapping = "-- Not Mapped --"
         else:
-            st.warning("No rows are mapped to model channels. Please map at least one entity.")
-            return None
+            # Try to auto-match by checking if entity name contains channel name
+            saved_mapping = "-- Not Mapped --"
+            for ch in model_channels:
+                if ch.lower() in str(granular_val).lower() or str(granular_val).lower() in ch.lower():
+                    saved_mapping = ch
+                    break
 
-    except Exception as e:
-        st.error(f"Error loading file: {e}")
+        mapping_data.append({
+            "Entity": str(granular_val),
+            "Model Channel": saved_mapping,
+        })
+
+    mapping_df = pd.DataFrame(mapping_data)
+
+    # Wrap data_editor in form to prevent rerender on each change
+    with st.form(key=f"mapping_form{key_suffix}"):
+        edited_mapping = st.data_editor(
+            mapping_df,
+            column_config={
+                "Entity": st.column_config.TextColumn("Entity", disabled=True),
+                "Model Channel": st.column_config.SelectboxColumn(
+                    "Model Channel",
+                    options=mapping_options,
+                    help="Select which model channel this maps to"
+                ),
+            },
+            hide_index=True,
+            width="stretch",
+            height=400,
+            key=f"granular_mapping_editor{key_suffix}",
+        )
+
+        apply_btn = st.form_submit_button("Apply Mappings", type="primary")
+
+    # Save mapping to session state only when form is submitted
+    if apply_btn:
+        for _, row in edited_mapping.iterrows():
+            st.session_state[mapping_key][row["Entity"]] = row["Model Channel"]
+        st.rerun()
+
+    # Create composite key column in granular_df for mapping
+    granular_df["_composite_key"] = granular_df.apply(make_composite_key, axis=1)
+
+    # Apply mapping to granular DataFrame using composite key
+    granular_df["_model_channel"] = granular_df["_composite_key"].map(
+        lambda x: st.session_state[mapping_key].get(str(x), "-- Not Mapped --")
+    )
+
+    # Filter out unmapped rows
+    mapped_df = granular_df[granular_df["_model_channel"] != "-- Not Mapped --"].copy()
+
+    # Show mapping summary
+    st.markdown("#### Mapping Summary")
+    mapped_count = len(mapped_df)
+    total_count = len(granular_df)
+    mapped_channels_count = mapped_df["_model_channel"].nunique()
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Mapped Rows", f"{mapped_count:,} / {total_count:,}")
+    with col2:
+        st.metric("Mapped Channels", f"{mapped_channels_count} / {len(model_channels)}")
+    with col3:
+        unmapped_channels = set(model_channels) - set(mapped_df["_model_channel"].unique())
+        st.metric("Unmapped Channels", len(unmapped_channels))
+
+    if unmapped_channels:
+        with st.expander("Unmapped Model Channels"):
+            st.write("These channels have no granular mapping and will be output at channel level:")
+            for ch in sorted(unmapped_channels):
+                st.write(f"- {ch}")
+
+    # Save configuration button
+    if model_path and mapped_count > 0:
+        st.markdown("---")
+        st.markdown("#### Save Configuration")
+        save_col1, save_col2 = st.columns([3, 1])
+
+        with save_col1:
+            config_name = st.text_input(
+                "Configuration name",
+                value=selected_saved_config['name'] if selected_saved_config else f"Disagg by {weight_col}",
+                key=f"disagg_config_name{key_suffix}",
+                placeholder="e.g., Placements by Spend"
+            )
+
+        with save_col2:
+            if st.button("💾 Save Config", key=f"save_disagg_config{key_suffix}"):
+                if config_name:
+                    new_config = {
+                        "id": selected_saved_config['id'] if selected_saved_config else None,
+                        "name": config_name,
+                        "created_at": datetime.now().isoformat(),
+                        "granular_name_cols": granular_name_cols,
+                        "date_column": date_col_granular,
+                        "weight_column": weight_col,
+                        "include_columns": include_cols,
+                        "entity_to_channel_mapping": dict(st.session_state[mapping_key]),
+                    }
+                    save_disaggregation_config(model_path, new_config)
+                    st.success(f"Saved configuration: {config_name}")
+                    st.rerun()
+                else:
+                    st.warning("Please enter a configuration name")
+
+    if mapped_count > 0:
+        return (mapped_df, granular_name_cols, date_col_granular, weight_col, include_cols)
+    else:
+        st.warning("No rows are mapped to model channels. Please map at least one entity.")
         return None
 
 
