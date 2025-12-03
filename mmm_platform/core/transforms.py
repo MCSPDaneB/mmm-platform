@@ -204,9 +204,12 @@ class TransformEngine:
         if l_max is None:
             l_max = self.config.adstock.l_max
 
-        # Geometric weights
+        # Geometric weights for adstock carryover
+        # Adstock: past spend affects current period
         weights = np.array([alpha ** i for i in range(l_max)])
         weights = weights / weights.sum()  # Normalize
+        # Reverse weights so convolution looks BACKWARD (past affects current)
+        weights = weights[::-1]
 
         # Apply convolution
         x_adstocked = np.convolve(x, weights, mode='full')[:len(x)]

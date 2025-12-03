@@ -132,9 +132,12 @@ def apply_adstock_to_weights(
         alpha = channel_alphas[channel]
 
         # Apply geometric adstock to this entity's TIME-ORDERED series
-        # Formula: weights = [alpha^0, alpha^1, ..., alpha^(l_max-1)] normalized
+        # Adstock models carryover: past spend affects current period
+        # Formula: adstocked[t] = spend[t] + α*spend[t-1] + α²*spend[t-2] + ...
         weights = np.array([alpha ** i for i in range(l_max)])
         weights = weights / weights.sum()
+        # Reverse weights so convolution looks BACKWARD (past affects current)
+        weights = weights[::-1]
 
         x = entity_data[weight_col].values
         x_adstocked = np.convolve(x, weights, mode='full')[:len(x)]
@@ -1055,6 +1058,48 @@ def generate_decomps_stacked_disaggregated(
 
     granular_df["_entity_key"] = granular_df.apply(make_composite_key, axis=1)
 
+    # Expand granular data to cover ALL model dates for each entity
+    # This ensures adstock carryover is calculated for zero-spend weeks
+    model_dates = pd.to_datetime(contribs.index).normalize()
+
+    # Build expansion: each entity × each model date
+    expansion_rows = []
+    for channel in granular_df[model_channel_col].unique():
+        channel_mask = granular_df[model_channel_col] == channel
+        channel_entities = granular_df.loc[channel_mask, "_entity_key"].unique()
+
+        # Get entity metadata (name columns) from first occurrence
+        entity_metadata = {}
+        for entity in channel_entities:
+            entity_row = granular_df[(granular_df["_entity_key"] == entity)].iloc[0]
+            entity_metadata[entity] = {col: entity_row[col] for col in granular_name_cols}
+
+        for entity in channel_entities:
+            for model_date in model_dates:
+                row_data = {
+                    "_entity_key": entity,
+                    model_channel_col: channel,
+                    date_col: model_date,
+                }
+                # Add entity name columns
+                row_data.update(entity_metadata[entity])
+                expansion_rows.append(row_data)
+
+    expanded_df = pd.DataFrame(expansion_rows)
+
+    # Merge with actual granular data to get spend/weight values
+    merge_cols = ["_entity_key", model_channel_col, date_col, weight_col]
+    merge_cols = [c for c in merge_cols if c in granular_df.columns]
+
+    granular_df = expanded_df.merge(
+        granular_df[merge_cols],
+        on=["_entity_key", model_channel_col, date_col],
+        how="left"
+    )
+
+    # Fill missing weight values with 0 (weeks with no spend)
+    granular_df[weight_col] = granular_df[weight_col].fillna(0)
+
     # Get posterior adstock alphas and apply
     channel_alphas = get_channel_adstock_alphas(wrapper)
     granular_df = apply_adstock_to_weights(
@@ -1294,6 +1339,53 @@ def generate_media_results_disaggregated(
         return " | ".join(str(row[col]) for col in granular_name_cols)
 
     granular_df["_entity_key"] = granular_df.apply(make_composite_key, axis=1)
+
+    # Expand granular data to cover ALL model dates for each entity
+    # This ensures adstock carryover is calculated for zero-spend weeks
+    model_dates = pd.to_datetime(contribs.index).normalize()
+
+    # Build expansion: each entity × each model date
+    expansion_rows = []
+    for channel in granular_df[model_channel_col].unique():
+        channel_mask = granular_df[model_channel_col] == channel
+        channel_entities = granular_df.loc[channel_mask, "_entity_key"].unique()
+
+        # Get entity metadata (name columns) from first occurrence
+        entity_metadata = {}
+        for entity in channel_entities:
+            entity_row = granular_df[(granular_df["_entity_key"] == entity)].iloc[0]
+            entity_metadata[entity] = {col: entity_row[col] for col in granular_name_cols}
+
+        for entity in channel_entities:
+            for model_date in model_dates:
+                row_data = {
+                    "_entity_key": entity,
+                    model_channel_col: channel,
+                    date_col: model_date,
+                }
+                # Add entity name columns
+                row_data.update(entity_metadata[entity])
+                expansion_rows.append(row_data)
+
+    expanded_df = pd.DataFrame(expansion_rows)
+
+    # Merge with actual granular data to get spend/weight values
+    # Keep only the columns we need from original granular_df for the merge
+    merge_cols = ["_entity_key", model_channel_col, date_col, weight_col] + include_cols
+    merge_cols = [c for c in merge_cols if c in granular_df.columns]
+
+    granular_df = expanded_df.merge(
+        granular_df[merge_cols],
+        on=["_entity_key", model_channel_col, date_col],
+        how="left"
+    )
+
+    # Fill missing weight values with 0 (weeks with no spend)
+    granular_df[weight_col] = granular_df[weight_col].fillna(0)
+    # Fill missing include_cols with 0
+    for inc_col in include_cols:
+        if inc_col in granular_df.columns:
+            granular_df[inc_col] = granular_df[inc_col].fillna(0)
 
     # Get posterior adstock alphas and apply
     channel_alphas = get_channel_adstock_alphas(wrapper)
