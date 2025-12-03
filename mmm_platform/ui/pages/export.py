@@ -9,6 +9,827 @@ import zipfile
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+from typing import Optional
+
+
+# =============================================================================
+# Column Schema UI Components
+# =============================================================================
+
+def _show_schema_selector(client: str, model_path: str = None, key_suffix: str = "") -> Optional[dict]:
+    """
+    Show schema selection dropdown with client and model-level schemas.
+
+    Parameters
+    ----------
+    client : str
+        Client name.
+    model_path : str, optional
+        Path to model (for model-level overrides).
+    key_suffix : str
+        Suffix for widget keys to avoid conflicts.
+
+    Returns
+    -------
+    Optional[dict]
+        Selected schema dict, or None for no schema (original columns).
+    """
+    from mmm_platform.model.persistence import (
+        list_export_schemas,
+        load_export_schema,
+        load_model_schema_override
+    )
+
+    # Get client-level schemas
+    client_schemas = list_export_schemas(client) if client else []
+
+    # Get model-level override if exists
+    model_override = None
+    if model_path:
+        model_override = load_model_schema_override(model_path)
+
+    # Build options
+    options = ["None (Original Columns)"]
+    schema_map = {}
+
+    if model_override:
+        label = f"[Model] {model_override.get('name', 'Custom Override')}"
+        options.append(label)
+        schema_map[label] = ("model", model_override)
+
+    for schema_meta in client_schemas:
+        label = f"[Client] {schema_meta['name']}"
+        if schema_meta.get("description"):
+            label += f" - {schema_meta['description'][:30]}..."
+        options.append(label)
+        schema_map[label] = ("client", schema_meta["path"])
+
+    # Show selector
+    selected = st.selectbox(
+        "Column Schema",
+        options=options,
+        key=f"export_schema_selector{key_suffix}",
+        help="Select a schema to rename/reorder/filter columns, or use original columns"
+    )
+
+    if selected == "None (Original Columns)":
+        return None
+
+    # Load selected schema
+    schema_type, schema_ref = schema_map[selected]
+    if schema_type == "model":
+        return schema_ref
+    else:
+        return load_export_schema(schema_ref)
+
+
+def _show_schema_validation_ui(
+    schema: dict,
+    df_decomps: pd.DataFrame,
+    df_media: pd.DataFrame,
+    df_fit: pd.DataFrame,
+    key_suffix: str = "",
+    session_key: str = "export_selected_schema"
+) -> tuple[bool, Optional[dict]]:
+    """
+    Validate schema against actual data and show drift warnings.
+
+    Parameters
+    ----------
+    schema : dict
+        Schema to validate.
+    df_decomps : pd.DataFrame
+        Decomps DataFrame.
+    df_media : pd.DataFrame
+        Media results DataFrame.
+    df_fit : pd.DataFrame
+        Actual vs fitted DataFrame.
+    key_suffix : str
+        Suffix for widget keys.
+    session_key : str
+        Session state key for storing the schema.
+
+    Returns
+    -------
+    tuple[bool, Optional[dict]]
+        (should_proceed, updated_schema)
+        - should_proceed: True if user wants to continue with schema
+        - updated_schema: The schema to use (may be auto-fixed or None)
+    """
+    from mmm_platform.analysis.schema_validation import (
+        validate_full_schema,
+        has_any_drift,
+        has_major_drift,
+        auto_fix_schema_drift
+    )
+
+    validation_results = validate_full_schema(schema, df_decomps, df_media, df_fit)
+
+    if not has_any_drift(validation_results):
+        st.success("Schema validated successfully - all columns match")
+        return True, schema
+
+    # Show drift warnings
+    if has_major_drift(validation_results):
+        st.error("Major schema drift detected - most columns don't match")
+    else:
+        st.warning("Schema drift detected - some columns have changed")
+
+    for name, result in validation_results.items():
+        if result["severity"] == "none":
+            continue
+
+        severity_icon = "X" if result["severity"] == "major" else "!"
+        with st.expander(f"[{severity_icon}] {name.replace('_', ' ').title()}: {result['severity'].upper()} drift"):
+            if result["new"]:
+                st.write("**New columns** (in data but not in schema):")
+                for col in sorted(result["new"]):
+                    st.write(f"  + {col}")
+            if result["removed"]:
+                st.write("**Removed columns** (in schema but not in data):")
+                for col in sorted(result["removed"]):
+                    st.write(f"  - {col}")
+
+            if result["severity"] == "major":
+                st.error("Major drift - schema may not be compatible. Consider creating a new schema.")
+
+    # Options for user
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("Auto-fix Schema", key=f"schema_auto_fix{key_suffix}", help="Add new columns, remove missing ones"):
+            fixed_schema = auto_fix_schema_drift(schema, validation_results)
+            st.session_state[session_key] = fixed_schema
+            st.success("Schema auto-fixed!")
+            st.rerun()
+    with col2:
+        if st.button("Proceed Anyway", key=f"schema_proceed_anyway{key_suffix}"):
+            return True, schema
+    with col3:
+        if st.button("Use Original Columns", key=f"schema_use_original{key_suffix}"):
+            st.session_state[session_key] = None
+            return True, None
+
+    return False, schema
+
+
+def _show_column_editor(
+    dataset_name: str,
+    df: pd.DataFrame,
+    current_schema: Optional[dict],
+    key_suffix: str = ""
+) -> Optional[dict]:
+    """
+    Show column editor for a single dataset.
+
+    Parameters
+    ----------
+    dataset_name : str
+        Name of dataset (decomps_stacked, media_results, actual_vs_fitted).
+    df : pd.DataFrame
+        DataFrame with columns to edit.
+    current_schema : Optional[dict]
+        Current DatasetColumnSchema dict, or None.
+    key_suffix : str
+        Suffix for widget keys.
+
+    Returns
+    -------
+    Optional[dict]
+        Updated DatasetColumnSchema dict if changes applied, None otherwise.
+    """
+    # Use session state to persist schema changes between renders
+    schema_key = f"working_schema_{dataset_name}{key_suffix}"
+
+    # Initialize from current_schema if not in session state
+    if schema_key not in st.session_state:
+        st.session_state[schema_key] = current_schema
+
+    working_schema = st.session_state[schema_key]
+
+    # Build editor data from working schema (which has normalized order)
+    if working_schema and working_schema.get("columns"):
+        # Use existing schema, adding any new columns
+        schema_col_names = {c["original_name"] for c in working_schema["columns"]}
+        editor_data = []
+
+        for col in working_schema["columns"]:
+            if col["original_name"] in df.columns:
+                editor_data.append({
+                    "Original": col["original_name"],
+                    "Display Name": col.get("display_name") or col["original_name"],
+                    "Visible": col.get("visible", True),
+                    "Order": col.get("order", len(editor_data))
+                })
+
+        # Add new columns not in schema
+        for col in df.columns:
+            if col not in schema_col_names:
+                editor_data.append({
+                    "Original": col,
+                    "Display Name": col,
+                    "Visible": True,
+                    "Order": len(editor_data)
+                })
+    else:
+        # Generate from DataFrame columns
+        editor_data = [
+            {
+                "Original": col,
+                "Display Name": col,
+                "Visible": True,
+                "Order": i
+            }
+            for i, col in enumerate(df.columns)
+        ]
+
+    # Sort editor data by order before displaying (so rows appear in correct order)
+    editor_data_sorted = sorted(editor_data, key=lambda x: x["Order"])
+    editor_df = pd.DataFrame(editor_data_sorted)
+
+    # Track original order for each row (by Original column name) to detect changes
+    original_orders = {row["Original"]: row["Order"] for row in editor_data_sorted}
+
+    # Info text about ordering
+    st.caption("*Change order numbers, then click 'Apply Reorder' to see changes.*")
+
+    # Show data editor
+    edited_df = st.data_editor(
+        editor_df,
+        column_config={
+            "Original": st.column_config.TextColumn("Original Column", disabled=True),
+            "Display Name": st.column_config.TextColumn("Display Name"),
+            "Visible": st.column_config.CheckboxColumn("Include"),
+            "Order": st.column_config.NumberColumn(
+                "Order",
+                min_value=0,
+                step=1,
+                help="Lower number = earlier position"
+            )
+        },
+        hide_index=True,
+        height=min(400, 50 + len(editor_data) * 35),
+        key=f"column_editor_{dataset_name}{key_suffix}"
+    )
+
+    # Reorder button - only normalizes and saves when clicked
+    if st.button("Apply Reorder", key=f"reorder_{dataset_name}{key_suffix}"):
+        # Normalize order: handle insertions correctly
+        # When user changes order (e.g., 6→3), that item goes BEFORE existing items at position 3
+        rows_with_priority = []
+        for _, row in edited_df.iterrows():
+            orig_order = original_orders.get(row["Original"], row["Order"])
+            new_order = row["Order"]
+            # If order changed, use fractional value to insert BEFORE existing items at that position
+            if new_order != orig_order:
+                sort_key = new_order - 0.5  # Insert before, not after
+            else:
+                sort_key = new_order
+            rows_with_priority.append((sort_key, row))
+
+        # Sort by priority key
+        rows_with_priority.sort(key=lambda x: x[0])
+
+        # Convert back to schema format with sequential order values
+        columns = []
+        for i, (_, row) in enumerate(rows_with_priority):
+            columns.append({
+                "original_name": row["Original"],
+                "display_name": row["Display Name"] if row["Display Name"] != row["Original"] else None,
+                "visible": row["Visible"],
+                "order": i
+            })
+
+        # Save to session state and rerun to show reordered rows
+        result_schema = {"columns": columns}
+        st.session_state[schema_key] = result_schema
+        st.rerun()
+
+    # Return current edited state (not saved to session state on every render)
+    # This allows "Save & Apply Schema" to capture current edits
+    columns = []
+    for _, row in edited_df.iterrows():
+        columns.append({
+            "original_name": row["Original"],
+            "display_name": row["Display Name"] if row["Display Name"] != row["Original"] else None,
+            "visible": row["Visible"],
+            "order": int(row["Order"])
+        })
+
+    return {"columns": columns}
+
+
+def _show_column_editor_section_single(brand: str, model_path: str):
+    """Expander section for single model column schema editing."""
+    from mmm_platform.analysis.schema_validation import resolve_disagg_schema
+    from mmm_platform.model.persistence import save_export_schema, save_model_schema_override
+
+    # Get working schema from session state
+    working_schema = st.session_state.get("export_selected_schema") or {}
+
+    # Check if disaggregated files are available
+    has_disagg = (
+        st.session_state.get("export_df_decomps_disagg_original") is not None or
+        st.session_state.get("export_df_media_disagg_original") is not None
+    )
+
+    # Toggle between base and disaggregated files
+    if has_disagg:
+        schema_mode = st.radio(
+            "Edit schema for",
+            options=["Base Files", "Disaggregated Files"],
+            horizontal=True,
+            key="schema_edit_mode_single"
+        )
+    else:
+        schema_mode = "Base Files"
+
+    if schema_mode == "Base Files":
+        # Tabs for base datasets
+        tab1, tab2, tab3 = st.tabs(["Decomps Stacked", "Media Results", "Actual vs Fitted"])
+
+        with tab1:
+            df_for_editor = st.session_state.get("export_df_decomps_original")
+            if df_for_editor is not None:
+                current_decomps_schema = working_schema.get("decomps_stacked", {})
+                updated_decomps = _show_column_editor("decomps_stacked", df_for_editor, current_decomps_schema, "_single")
+                if updated_decomps:
+                    working_schema["decomps_stacked"] = updated_decomps
+                    st.session_state["export_selected_schema"] = working_schema
+
+        with tab2:
+            df_for_editor = st.session_state.get("export_df_media_original")
+            if df_for_editor is not None:
+                current_media_schema = working_schema.get("media_results", {})
+                updated_media = _show_column_editor("media_results", df_for_editor, current_media_schema, "_single")
+                if updated_media:
+                    working_schema["media_results"] = updated_media
+                    st.session_state["export_selected_schema"] = working_schema
+
+        with tab3:
+            df_for_editor = st.session_state.get("export_df_fit_original")
+            if df_for_editor is not None:
+                current_fit_schema = working_schema.get("actual_vs_fitted", {})
+                updated_fit = _show_column_editor("actual_vs_fitted", df_for_editor, current_fit_schema, "_single")
+                if updated_fit:
+                    working_schema["actual_vs_fitted"] = updated_fit
+                    st.session_state["export_selected_schema"] = working_schema
+
+    else:
+        # Tabs for disaggregated datasets
+        tab1, tab2 = st.tabs(["Decomps Stacked (Disagg)", "Media Results (Disagg)"])
+
+        with tab1:
+            df_disagg = st.session_state.get("export_df_decomps_disagg_original")
+            if df_disagg is not None:
+                explicit_disagg_schema = working_schema.get("decomps_stacked_disagg")
+                if not explicit_disagg_schema:
+                    st.info("Inheriting from base schema. Edit below to override.")
+                resolved_schema = resolve_disagg_schema(
+                    working_schema.get("decomps_stacked", {}),
+                    explicit_disagg_schema,
+                    df_disagg
+                )
+                updated_disagg = _show_column_editor("decomps_stacked_disagg", df_disagg, resolved_schema, "_single_disagg")
+                if updated_disagg:
+                    working_schema["decomps_stacked_disagg"] = updated_disagg
+                    st.session_state["export_selected_schema"] = working_schema
+            else:
+                st.info("No disaggregated decomps data available")
+
+        with tab2:
+            df_disagg = st.session_state.get("export_df_media_disagg_original")
+            if df_disagg is not None:
+                explicit_disagg_schema = working_schema.get("media_results_disagg")
+                if not explicit_disagg_schema:
+                    st.info("Inheriting from base schema. Edit below to override.")
+                resolved_schema = resolve_disagg_schema(
+                    working_schema.get("media_results", {}),
+                    explicit_disagg_schema,
+                    df_disagg
+                )
+                updated_disagg = _show_column_editor("media_results_disagg", df_disagg, resolved_schema, "_single_disagg")
+                if updated_disagg:
+                    working_schema["media_results_disagg"] = updated_disagg
+                    st.session_state["export_selected_schema"] = working_schema
+            else:
+                st.info("No disaggregated media data available")
+
+    # Save & Apply Section
+    st.markdown("---")
+
+    # Generate default schema name with timestamp if not already set
+    from datetime import datetime as dt
+    default_schema_name = working_schema.get("name", "")
+    if not default_schema_name:
+        default_schema_name = f"Export Schema {dt.now().strftime('%Y%m%d_%H%M%S')}"
+
+    # Schema name and save options
+    save_col1, save_col2 = st.columns([3, 1])
+    with save_col1:
+        schema_name = st.text_input(
+            "Schema Name",
+            value=default_schema_name,
+            key="save_schema_name_single",
+            placeholder="e.g., Standard BI Export"
+        )
+    with save_col2:
+        save_level = st.radio(
+            "Save to",
+            options=["Client", "Model"],
+            key="save_schema_level_single",
+            horizontal=True
+        )
+
+    schema_desc = st.text_input(
+        "Description (optional)",
+        value=working_schema.get("description", ""),
+        key="save_schema_desc_single",
+        placeholder="Brief description of this schema"
+    )
+
+    # Buttons
+    col_save, col_reset = st.columns(2)
+    with col_save:
+        if st.button("Save & Apply Schema", key="save_apply_schema_single", type="primary"):
+            if not schema_name:
+                st.warning("Please enter a schema name")
+            else:
+                # Auto-resolve disaggregated schemas before saving
+                # If decomps disagg data exists but no explicit schema, resolve and include it
+                df_decomps_disagg = st.session_state.get("export_df_decomps_disagg_original")
+                if df_decomps_disagg is not None and not working_schema.get("decomps_stacked_disagg"):
+                    resolved = resolve_disagg_schema(
+                        working_schema.get("decomps_stacked", {}),
+                        None,
+                        df_decomps_disagg
+                    )
+                    if resolved and resolved.get("columns"):
+                        working_schema["decomps_stacked_disagg"] = resolved
+
+                # If media disagg data exists but no explicit schema, resolve and include it
+                df_media_disagg = st.session_state.get("export_df_media_disagg_original")
+                if df_media_disagg is not None and not working_schema.get("media_results_disagg"):
+                    resolved = resolve_disagg_schema(
+                        working_schema.get("media_results", {}),
+                        None,
+                        df_media_disagg
+                    )
+                    if resolved and resolved.get("columns"):
+                        working_schema["media_results_disagg"] = resolved
+
+                # Build schema to save
+                schema_to_save = working_schema.copy()
+                schema_to_save["name"] = schema_name
+                schema_to_save["description"] = schema_desc if schema_desc else None
+
+                # Save to database
+                if save_level == "Client" and brand:
+                    save_export_schema(brand, schema_to_save)
+                    st.success(f"Saved schema '{schema_name}' at client level")
+                elif model_path:
+                    save_model_schema_override(model_path, schema_to_save)
+                    st.success(f"Saved schema '{schema_name}' as model override")
+                else:
+                    st.error("Unable to save: no client or model path available")
+
+                # Apply to exports
+                st.session_state["export_selected_schema"] = schema_to_save
+                _apply_schema_to_exports()
+
+    with col_reset:
+        if st.button("Reset to Original", key="reset_columns_single"):
+            st.session_state["export_selected_schema"] = None
+            # Clear working schemas from session state
+            for key in list(st.session_state.keys()):
+                if key.startswith("working_schema_"):
+                    del st.session_state[key]
+            # Restore original DataFrames
+            if "export_df_decomps_original" in st.session_state:
+                st.session_state["export_df_decomps"] = st.session_state["export_df_decomps_original"]
+            if "export_df_media_original" in st.session_state:
+                st.session_state["export_df_media"] = st.session_state["export_df_media_original"]
+            if "export_df_fit_original" in st.session_state:
+                st.session_state["export_df_fit"] = st.session_state["export_df_fit_original"]
+            st.success("Reset to original columns!")
+            st.rerun()
+
+
+def _show_column_editor_section_combined(brand: str, model_path: str):
+    """Expander section for combined model column schema editing."""
+    from mmm_platform.analysis.schema_validation import resolve_disagg_schema
+    from mmm_platform.model.persistence import save_export_schema, save_model_schema_override
+
+    # Get working schema from session state
+    working_schema = st.session_state.get("combined_selected_schema") or {}
+
+    # Check if disaggregated files are available
+    has_disagg = (
+        st.session_state.get("combined_df_decomps_disagg_original") is not None or
+        st.session_state.get("combined_df_media_disagg_original") is not None
+    )
+
+    # Toggle between base and disaggregated files
+    if has_disagg:
+        schema_mode = st.radio(
+            "Edit schema for",
+            options=["Base Files", "Disaggregated Files"],
+            horizontal=True,
+            key="schema_edit_mode_combined"
+        )
+    else:
+        schema_mode = "Base Files"
+
+    if schema_mode == "Base Files":
+        # Tabs for base datasets
+        tab1, tab2, tab3 = st.tabs(["Decomps Stacked", "Media Results", "Actual vs Fitted"])
+
+        with tab1:
+            df_for_editor = st.session_state.get("combined_df_decomps_original")
+            if df_for_editor is not None:
+                current_decomps_schema = working_schema.get("decomps_stacked", {})
+                updated_decomps = _show_column_editor("decomps_stacked", df_for_editor, current_decomps_schema, "_combined")
+                if updated_decomps:
+                    working_schema["decomps_stacked"] = updated_decomps
+                    st.session_state["combined_selected_schema"] = working_schema
+
+        with tab2:
+            df_for_editor = st.session_state.get("combined_df_media_original")
+            if df_for_editor is not None:
+                current_media_schema = working_schema.get("media_results", {})
+                updated_media = _show_column_editor("media_results", df_for_editor, current_media_schema, "_combined")
+                if updated_media:
+                    working_schema["media_results"] = updated_media
+                    st.session_state["combined_selected_schema"] = working_schema
+
+        with tab3:
+            df_for_editor = st.session_state.get("combined_df_fit_original")
+            if df_for_editor is not None:
+                current_fit_schema = working_schema.get("actual_vs_fitted", {})
+                updated_fit = _show_column_editor("actual_vs_fitted", df_for_editor, current_fit_schema, "_combined")
+                if updated_fit:
+                    working_schema["actual_vs_fitted"] = updated_fit
+                    st.session_state["combined_selected_schema"] = working_schema
+
+    else:
+        # Tabs for disaggregated datasets
+        tab1, tab2 = st.tabs(["Decomps Stacked (Disagg)", "Media Results (Disagg)"])
+
+        with tab1:
+            df_disagg = st.session_state.get("combined_df_decomps_disagg_original")
+            if df_disagg is not None:
+                explicit_disagg_schema = working_schema.get("decomps_stacked_disagg")
+                if not explicit_disagg_schema:
+                    st.info("Inheriting from base schema. Edit below to override.")
+                resolved_schema = resolve_disagg_schema(
+                    working_schema.get("decomps_stacked", {}),
+                    explicit_disagg_schema,
+                    df_disagg
+                )
+                updated_disagg = _show_column_editor("decomps_stacked_disagg", df_disagg, resolved_schema, "_combined_disagg")
+                if updated_disagg:
+                    working_schema["decomps_stacked_disagg"] = updated_disagg
+                    st.session_state["combined_selected_schema"] = working_schema
+            else:
+                st.info("No disaggregated decomps data available")
+
+        with tab2:
+            df_disagg = st.session_state.get("combined_df_media_disagg_original")
+            if df_disagg is not None:
+                explicit_disagg_schema = working_schema.get("media_results_disagg")
+                if not explicit_disagg_schema:
+                    st.info("Inheriting from base schema. Edit below to override.")
+                resolved_schema = resolve_disagg_schema(
+                    working_schema.get("media_results", {}),
+                    explicit_disagg_schema,
+                    df_disagg
+                )
+                updated_disagg = _show_column_editor("media_results_disagg", df_disagg, resolved_schema, "_combined_disagg")
+                if updated_disagg:
+                    working_schema["media_results_disagg"] = updated_disagg
+                    st.session_state["combined_selected_schema"] = working_schema
+            else:
+                st.info("No disaggregated media data available")
+
+    # Save & Apply Section
+    st.markdown("---")
+
+    # Generate default schema name with timestamp if not already set
+    from datetime import datetime as dt
+    default_schema_name = working_schema.get("name", "")
+    if not default_schema_name:
+        default_schema_name = f"Export Schema {dt.now().strftime('%Y%m%d_%H%M%S')}"
+
+    # Schema name and save options
+    save_col1, save_col2 = st.columns([3, 1])
+    with save_col1:
+        schema_name = st.text_input(
+            "Schema Name",
+            value=default_schema_name,
+            key="save_schema_name_combined",
+            placeholder="e.g., Standard BI Export"
+        )
+    with save_col2:
+        save_level = st.radio(
+            "Save to",
+            options=["Client", "Model"],
+            key="save_schema_level_combined",
+            horizontal=True
+        )
+
+    schema_desc = st.text_input(
+        "Description (optional)",
+        value=working_schema.get("description", ""),
+        key="save_schema_desc_combined",
+        placeholder="Brief description of this schema"
+    )
+
+    # Buttons
+    col_save, col_reset = st.columns(2)
+    with col_save:
+        if st.button("Save & Apply Schema", key="save_apply_schema_combined", type="primary"):
+            if not schema_name:
+                st.warning("Please enter a schema name")
+            else:
+                # Auto-resolve disaggregated schemas before saving
+                # If decomps disagg data exists but no explicit schema, resolve and include it
+                df_decomps_disagg = st.session_state.get("combined_df_decomps_disagg_original")
+                if df_decomps_disagg is not None and not working_schema.get("decomps_stacked_disagg"):
+                    resolved = resolve_disagg_schema(
+                        working_schema.get("decomps_stacked", {}),
+                        None,
+                        df_decomps_disagg
+                    )
+                    if resolved and resolved.get("columns"):
+                        working_schema["decomps_stacked_disagg"] = resolved
+
+                # If media disagg data exists but no explicit schema, resolve and include it
+                df_media_disagg = st.session_state.get("combined_df_media_disagg_original")
+                if df_media_disagg is not None and not working_schema.get("media_results_disagg"):
+                    resolved = resolve_disagg_schema(
+                        working_schema.get("media_results", {}),
+                        None,
+                        df_media_disagg
+                    )
+                    if resolved and resolved.get("columns"):
+                        working_schema["media_results_disagg"] = resolved
+
+                # Build schema to save
+                schema_to_save = working_schema.copy()
+                schema_to_save["name"] = schema_name
+                schema_to_save["description"] = schema_desc if schema_desc else None
+
+                # Save to database
+                if save_level == "Client" and brand:
+                    save_export_schema(brand, schema_to_save)
+                    st.success(f"Saved schema '{schema_name}' at client level")
+                elif model_path:
+                    save_model_schema_override(model_path, schema_to_save)
+                    st.success(f"Saved schema '{schema_name}' as model override")
+                else:
+                    st.error("Unable to save: no client or model path available")
+
+                # Apply to exports
+                st.session_state["combined_selected_schema"] = schema_to_save
+                _apply_schema_to_combined_exports()
+
+    with col_reset:
+        if st.button("Reset to Original", key="reset_columns_combined"):
+            st.session_state["combined_selected_schema"] = None
+            # Clear working schemas from session state
+            for key in list(st.session_state.keys()):
+                if key.startswith("working_schema_"):
+                    del st.session_state[key]
+            # Restore original DataFrames
+            if "combined_df_decomps_original" in st.session_state:
+                st.session_state["combined_df_decomps"] = st.session_state["combined_df_decomps_original"]
+            if "combined_df_media_original" in st.session_state:
+                st.session_state["combined_df_media"] = st.session_state["combined_df_media_original"]
+            if "combined_df_fit_original" in st.session_state:
+                st.session_state["combined_df_fit"] = st.session_state["combined_df_fit_original"]
+            st.success("Reset to original columns!")
+            st.rerun()
+
+
+def _apply_schema_to_exports():
+    """
+    Apply the selected schema to the export DataFrames in session state.
+
+    Always starts from the ORIGINAL DataFrames to ensure correct application
+    even when schema is applied multiple times.
+    """
+    from mmm_platform.analysis.schema_validation import (
+        apply_schema_to_dataframe,
+        resolve_disagg_schema
+    )
+
+    schema = st.session_state.get("export_selected_schema")
+    if not schema:
+        return
+
+    # Apply to base datasets - always start from ORIGINAL
+    datasets = [
+        ("export_df_decomps", "export_df_decomps_original", "decomps_stacked"),
+        ("export_df_media", "export_df_media_original", "media_results"),
+        ("export_df_fit", "export_df_fit_original", "actual_vs_fitted"),
+    ]
+
+    for session_key, original_key, schema_key in datasets:
+        original_df = st.session_state.get(original_key)
+        if original_df is not None:
+            dataset_schema = schema.get(schema_key, {})
+            if dataset_schema and dataset_schema.get("columns"):
+                st.session_state[session_key] = apply_schema_to_dataframe(
+                    original_df,
+                    dataset_schema["columns"]
+                )
+            else:
+                # No schema for this dataset - use original as-is
+                st.session_state[session_key] = original_df.copy()
+
+    # Apply to disaggregated versions with inheritance - always start from ORIGINAL
+    disagg_mappings = [
+        ("export_df_decomps_disagg", "export_df_decomps_disagg_original", "decomps_stacked", "decomps_stacked_disagg"),
+        ("export_df_media_disagg", "export_df_media_disagg_original", "media_results", "media_results_disagg"),
+    ]
+
+    for session_key, original_key, base_schema_key, disagg_schema_key in disagg_mappings:
+        original_df = st.session_state.get(original_key)
+        if original_df is not None:
+            # Resolve schema with inheritance
+            resolved_schema = resolve_disagg_schema(
+                base_schema=schema.get(base_schema_key, {}),
+                disagg_schema=schema.get(disagg_schema_key),
+                disagg_df=original_df
+            )
+            if resolved_schema and resolved_schema.get("columns"):
+                st.session_state[session_key] = apply_schema_to_dataframe(
+                    original_df,
+                    resolved_schema["columns"]
+                )
+            else:
+                # No schema - use original as-is
+                st.session_state[session_key] = original_df.copy()
+
+
+def _apply_schema_to_combined_exports():
+    """
+    Apply the selected schema to the combined export DataFrames in session state.
+
+    Always starts from the ORIGINAL DataFrames to ensure correct application
+    even when schema is applied multiple times.
+    """
+    from mmm_platform.analysis.schema_validation import (
+        apply_schema_to_dataframe,
+        resolve_disagg_schema
+    )
+
+    schema = st.session_state.get("combined_selected_schema")
+    if not schema:
+        return
+
+    # Apply to base datasets - always start from ORIGINAL
+    datasets = [
+        ("combined_df_decomps", "combined_df_decomps_original", "decomps_stacked"),
+        ("combined_df_media", "combined_df_media_original", "media_results"),
+        ("combined_df_fit", "combined_df_fit_original", "actual_vs_fitted"),
+    ]
+
+    for session_key, original_key, schema_key in datasets:
+        original_df = st.session_state.get(original_key)
+        if original_df is not None:
+            dataset_schema = schema.get(schema_key, {})
+            if dataset_schema and dataset_schema.get("columns"):
+                st.session_state[session_key] = apply_schema_to_dataframe(
+                    original_df,
+                    dataset_schema["columns"]
+                )
+            else:
+                # No schema for this dataset - use original as-is
+                st.session_state[session_key] = original_df.copy()
+
+    # Apply to disaggregated versions with inheritance - always start from ORIGINAL
+    disagg_mappings = [
+        ("combined_df_decomps_disagg", "combined_df_decomps_disagg_original", "decomps_stacked", "decomps_stacked_disagg"),
+        ("combined_df_media_disagg", "combined_df_media_disagg_original", "media_results", "media_results_disagg"),
+    ]
+
+    for session_key, original_key, base_schema_key, disagg_schema_key in disagg_mappings:
+        original_df = st.session_state.get(original_key)
+        if original_df is not None:
+            # Resolve schema with inheritance
+            resolved_schema = resolve_disagg_schema(
+                base_schema=schema.get(base_schema_key, {}),
+                disagg_schema=schema.get(disagg_schema_key),
+                disagg_df=original_df
+            )
+            if resolved_schema and resolved_schema.get("columns"):
+                st.session_state[session_key] = apply_schema_to_dataframe(
+                    original_df,
+                    resolved_schema["columns"]
+                )
+            else:
+                # No schema - use original as-is
+                st.session_state[session_key] = original_df.copy()
 
 
 def show():
@@ -490,10 +1311,14 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
 
         apply_btn = st.form_submit_button("Apply Mappings", type="primary")
 
-    # Save mapping to session state only when form is submitted
+    st.caption("*Click Apply Mappings to update the summary below. Mappings are automatically used when you Prepare Export Files.*")
+
+    # Always sync editor state to session state (ensures Prepare Export uses latest)
+    for _, row in edited_mapping.iterrows():
+        st.session_state[mapping_key][row["Entity"]] = row["Model Channel"]
+
+    # Rerun only on Apply button to refresh the summary display below
     if apply_btn:
-        for _, row in edited_mapping.iterrows():
-            st.session_state[mapping_key][row["Entity"]] = row["Model Channel"]
         st.rerun()
 
     # Create composite key column in granular_df for mapping
@@ -506,6 +1331,28 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
 
     # Filter out unmapped rows
     mapped_df = granular_df[granular_df["_model_channel"] != "-- Not Mapped --"].copy()
+
+    # Deduplicate: aggregate by key columns to prevent row duplication in disaggregation
+    # Key columns are entity identifiers + date + channel mapping
+    dedup_key_cols = granular_name_cols + [date_col_granular, "_model_channel"]
+    # Identify numeric columns to sum (spend, impressions, revenue, etc.)
+    numeric_cols = mapped_df.select_dtypes(include=['number']).columns.tolist()
+    numeric_cols = [c for c in numeric_cols if c not in dedup_key_cols]
+
+    if numeric_cols and len(mapped_df) > 0:
+        # Aggregate: sum numeric values for duplicate key combinations
+        agg_dict = {col: 'sum' for col in numeric_cols}
+        # Ensure include_cols are numeric and in the aggregation
+        for ic in include_cols:
+            if ic in mapped_df.columns:
+                # Convert to numeric in case they're stored as strings
+                mapped_df[ic] = pd.to_numeric(mapped_df[ic], errors='coerce').fillna(0)
+                if ic not in agg_dict and ic not in dedup_key_cols:
+                    agg_dict[ic] = 'sum'
+        mapped_df = mapped_df.groupby(dedup_key_cols, as_index=False).agg(agg_dict)
+    elif len(mapped_df) > 0:
+        # No numeric columns - just drop duplicates
+        mapped_df = mapped_df.drop_duplicates(subset=dedup_key_cols)
 
     # Show mapping summary
     st.markdown("#### Mapping Summary")
@@ -628,6 +1475,14 @@ def _show_single_model_export(
         )
         disagg_config = _show_disaggregation_ui(wrapper, config, brand, model_path=model_path, key_suffix="")
 
+    # Column Schema Selection
+    st.markdown("---")
+    st.subheader("Column Schema")
+    st.caption("Optionally apply a schema to rename, reorder, or filter columns in exports")
+
+    selected_schema = _show_schema_selector(client=brand, model_path=model_path, key_suffix="_single")
+    st.session_state["export_selected_schema"] = selected_schema
+
     st.markdown("---")
 
     # Prepare button
@@ -702,16 +1557,77 @@ def _show_single_model_export(
 
                 st.session_state["export_files_ready"] = True
                 st.session_state["export_brand"] = brand
+
+                # Validate schema if one is selected
+                if st.session_state.get("export_selected_schema"):
+                    st.session_state["export_schema_validated"] = False
+                else:
+                    st.session_state["export_schema_validated"] = True
+
                 st.success("Export files ready!")
 
             except Exception as e:
                 st.error(f"Error generating exports: {e}")
                 st.session_state["export_files_ready"] = False
 
+    # Schema validation step (if schema selected and not yet validated)
+    if (st.session_state.get("export_files_ready", False)
+        and st.session_state.get("export_selected_schema")
+        and not st.session_state.get("export_schema_validated", False)):
+
+        st.markdown("---")
+        st.subheader("Schema Validation")
+
+        should_proceed, updated_schema = _show_schema_validation_ui(
+            st.session_state["export_selected_schema"],
+            st.session_state["export_df_decomps"],
+            st.session_state["export_df_media"],
+            st.session_state["export_df_fit"],
+            key_suffix="_single",
+            session_key="export_selected_schema"
+        )
+
+        if should_proceed:
+            st.session_state["export_selected_schema"] = updated_schema
+            st.session_state["export_schema_validated"] = True
+            # Apply schema to exports
+            if updated_schema:
+                _apply_schema_to_exports()
+            st.rerun()
+        else:
+            st.info("Please resolve schema validation issues above to proceed.")
+            st.stop()
+
     # Show downloads only if files are ready
     if st.session_state.get("export_files_ready", False):
         st.markdown("---")
         st.subheader("Platform Export Files")
+
+        # Store original DataFrames for column editing (before schema was applied)
+        if "export_df_decomps_original" not in st.session_state:
+            st.session_state["export_df_decomps_original"] = st.session_state.get("export_df_decomps")
+            st.session_state["export_df_media_original"] = st.session_state.get("export_df_media")
+            st.session_state["export_df_fit_original"] = st.session_state.get("export_df_fit")
+            st.session_state["export_df_decomps_disagg_original"] = st.session_state.get("export_df_decomps_disagg")
+            st.session_state["export_df_media_disagg_original"] = st.session_state.get("export_df_media_disagg")
+
+        # Column schema editor expander
+        # Track if user has opened the expander (stays open once opened until page refresh)
+        if "column_editor_opened_single" not in st.session_state:
+            st.session_state["column_editor_opened_single"] = False
+
+        # Check if any working schema exists (indicates user was editing)
+        has_working_schema = any(
+            k.startswith("working_schema_") and k.endswith("_single")
+            for k in st.session_state.keys()
+        )
+        if has_working_schema:
+            st.session_state["column_editor_opened_single"] = True
+
+        with st.expander("Configure Column Schema", expanded=st.session_state["column_editor_opened_single"]):
+            st.session_state["column_editor_opened_single"] = True  # Mark as opened once user sees it
+            st.caption("Customize column names, order, and visibility before download")
+            _show_column_editor_section_single(brand, model_path)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -1050,6 +1966,16 @@ def _show_combined_model_export(
         if disagg_configs:
             st.session_state["combined_disagg_configs"] = disagg_configs
 
+    # Column Schema Selection
+    st.markdown("---")
+    st.subheader("Column Schema")
+    st.caption("Optionally apply a schema to rename, reorder, or filter columns in exports")
+
+    # For combined export, use the first model's path for model-level override lookup
+    first_model_path = loaded_wrappers[0][2] if loaded_wrappers else None
+    combined_selected_schema = _show_schema_selector(client=brand, model_path=first_model_path, key_suffix="_combined")
+    st.session_state["combined_selected_schema"] = combined_selected_schema
+
     st.markdown("---")
 
     # Prepare button
@@ -1102,11 +2028,47 @@ def _show_combined_model_export(
                 st.session_state["combined_files_ready"] = True
                 st.session_state["combined_brand"] = brand
                 st.session_state["combined_labels"] = [label for _, label in wrappers_with_labels]
+                st.session_state["combined_first_model_path"] = loaded_wrappers[0][2] if loaded_wrappers else None
+
+                # Validate schema if one is selected
+                if st.session_state.get("combined_selected_schema"):
+                    st.session_state["combined_schema_validated"] = False
+                else:
+                    st.session_state["combined_schema_validated"] = True
+
                 st.success("Export files ready!")
 
             except Exception as e:
                 st.error(f"Error generating exports: {e}")
                 st.session_state["combined_files_ready"] = False
+
+    # Schema validation step (if schema selected and not yet validated)
+    if (st.session_state.get("combined_files_ready", False)
+        and st.session_state.get("combined_selected_schema")
+        and not st.session_state.get("combined_schema_validated", False)):
+
+        st.markdown("---")
+        st.subheader("Schema Validation")
+
+        should_proceed, updated_schema = _show_schema_validation_ui(
+            st.session_state["combined_selected_schema"],
+            st.session_state["combined_df_decomps"],
+            st.session_state["combined_df_media"],
+            st.session_state["combined_df_fit"],
+            key_suffix="_combined",
+            session_key="combined_selected_schema"
+        )
+
+        if should_proceed:
+            st.session_state["combined_selected_schema"] = updated_schema
+            st.session_state["combined_schema_validated"] = True
+            # Apply schema to combined exports
+            if updated_schema:
+                _apply_schema_to_combined_exports()
+            st.rerun()
+        else:
+            st.info("Please resolve schema validation issues above to proceed.")
+            st.stop()
 
     # Show downloads only if files are ready
     if st.session_state.get("combined_files_ready", False):
@@ -1120,6 +2082,35 @@ def _show_combined_model_export(
             f"These CSV files combine data from all models with separate columns: "
             f"{label_display}, kpi_total"
         )
+
+        # Store original DataFrames for column editing (before schema was applied)
+        if "combined_df_decomps_original" not in st.session_state:
+            st.session_state["combined_df_decomps_original"] = st.session_state.get("combined_df_decomps")
+            st.session_state["combined_df_media_original"] = st.session_state.get("combined_df_media")
+            st.session_state["combined_df_fit_original"] = st.session_state.get("combined_df_fit")
+            st.session_state["combined_df_decomps_disagg_original"] = st.session_state.get("combined_df_decomps_disagg")
+            st.session_state["combined_df_media_disagg_original"] = st.session_state.get("combined_df_media_disagg")
+
+        # Column schema editor expander
+        combined_brand = st.session_state.get("combined_brand", brand)
+        combined_model_path = st.session_state.get("combined_first_model_path", "")
+
+        # Track if user has opened the expander (stays open once opened until page refresh)
+        if "column_editor_opened_combined" not in st.session_state:
+            st.session_state["column_editor_opened_combined"] = False
+
+        # Check if any working schema exists (indicates user was editing)
+        has_working_schema = any(
+            k.startswith("working_schema_") and k.endswith("_combined")
+            for k in st.session_state.keys()
+        )
+        if has_working_schema:
+            st.session_state["column_editor_opened_combined"] = True
+
+        with st.expander("Configure Column Schema", expanded=st.session_state["column_editor_opened_combined"]):
+            st.session_state["column_editor_opened_combined"] = True  # Mark as opened once user sees it
+            st.caption("Customize column names, order, and visibility before download")
+            _show_column_editor_section_combined(combined_brand, combined_model_path)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
