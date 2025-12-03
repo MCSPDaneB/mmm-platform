@@ -1052,6 +1052,14 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
                 selected_saved_config = None
             else:
                 st.success(f"Using saved config: **{selected_saved_config['name']}**")
+
+                # Explicitly set widget session state values from saved config
+                # This is needed because Streamlit ignores `default` after first render
+                include_cols_key = f"granular_include_cols{key_suffix}"
+                saved_include_cols = selected_saved_config.get('include_columns', [])
+                if saved_include_cols:
+                    st.session_state[include_cols_key] = saved_include_cols
+
                 with st.expander("Config details"):
                     st.write(f"**Entity columns:** {', '.join(selected_saved_config['granular_name_cols'])}")
                     st.write(f"**Date column:** {selected_saved_config['date_column']}")
@@ -1144,16 +1152,21 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
     used_cols = set(granular_name_cols + [date_col_granular, weight_col])
     available_include_cols = [c for c in all_columns if c not in used_cols]
 
-    # Pre-populate from saved config if available
-    default_include_cols = selected_saved_config.get('include_columns', []) if selected_saved_config else []
-    default_include_cols = [c for c in default_include_cols if c in available_include_cols]
+    # Initialize session state for include_cols if not already set
+    # (saved config values are set earlier when config is selected)
+    include_cols_key = f"granular_include_cols{key_suffix}"
+    if include_cols_key not in st.session_state:
+        # Use saved config values or empty list as initial value
+        default_include_cols = selected_saved_config.get('include_columns', []) if selected_saved_config else []
+        default_include_cols = [c for c in default_include_cols if c in available_include_cols]
+        st.session_state[include_cols_key] = default_include_cols
 
     include_cols = st.multiselect(
         "Columns to Include",
         options=available_include_cols,
-        default=default_include_cols,
+        # No default parameter - use session state exclusively to avoid warning
         help="Additional columns to carry through to output (e.g., impressions, clicks). These will appear in the disaggregated media results.",
-        key=f"granular_include_cols{key_suffix}"
+        key=include_cols_key
     )
 
     # Validate entity columns selected
