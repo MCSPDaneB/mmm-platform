@@ -849,6 +849,17 @@ def show():
     st.title("Export Data")
     st.caption("Generate CSV files for upload to external visualization platforms")
 
+    # Reset button in a small column to keep it unobtrusive
+    reset_col, _ = st.columns([1, 5])
+    with reset_col:
+        if st.button("Reset Export", help="Clear all export settings and start fresh"):
+            # Clear export-related session state keys
+            keys_to_clear = [k for k in list(st.session_state.keys())
+                             if k.startswith(('export_', 'combined_', 'granular_'))]
+            for key in keys_to_clear:
+                del st.session_state[key]
+            st.rerun()
+
     # Model Selection Section
     st.subheader("Select Models")
 
