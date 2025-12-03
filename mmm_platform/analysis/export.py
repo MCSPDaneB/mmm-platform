@@ -1362,12 +1362,9 @@ def generate_media_results_disaggregated(
                     if len(cat_col_names) < 2:
                         row['decomp_lvl2'] = row.get(cat_col_names[0] if cat_col_names else 'decomp_lvl1', display_name)
                     row['spend'] = spend
-                    row['impressions'] = 0
-                    row['clicks'] = 0
-                    # Add any include_cols as 0
+                    # For no-granular-data case, set all include_cols to 0
                     for inc_col in include_cols:
-                        if inc_col not in ['spend', 'impressions', 'clicks']:
-                            row[inc_col] = 0
+                        row[inc_col] = 0
                     row['decomp'] = col
                     row[f'kpi_{target_col}'] = kpi_value
                     rows.append(row)
@@ -1401,17 +1398,12 @@ def generate_media_results_disaggregated(
                         # Use actual values from granular file for spend column
                         row['spend'] = g_row[weight_col] if weight_col else 0
 
-                        # Get impressions/clicks from include_cols or derived columns
-                        row['impressions'] = 0
-                        row['clicks'] = 0
+                        # Get include_cols values from granular file (actual values, not split)
                         for inc_col in include_cols:
                             if inc_col in g_row.index:
                                 row[inc_col] = g_row[inc_col]
-                                # Also map to standard columns if applicable
-                                if 'impr' in inc_col.lower():
-                                    row['impressions'] = g_row[inc_col]
-                                elif 'click' in inc_col.lower():
-                                    row['clicks'] = g_row[inc_col]
+                            else:
+                                row[inc_col] = 0  # Default if column not found
 
                         row['decomp'] = col
                         row[f'kpi_{target_col}'] = granular_contrib
@@ -1437,19 +1429,9 @@ def generate_media_results_disaggregated(
                     row['decomp_lvl2'] = row.get(cat_col_names[0] if cat_col_names else 'decomp_lvl1', display_name)
                 row['spend'] = spend
 
-                # Derive impressions/clicks column names
-                impr_col = col.replace('_spend', '_impr').replace('_Spend', '_impr')
-                clicks_col = col.replace('_spend', '_clicks').replace('_Spend', '_clicks')
-
-                if impr_col in wrapper.df_scaled.columns and date_idx < len(wrapper.df_scaled):
-                    row['impressions'] = wrapper.df_scaled.iloc[date_idx][impr_col]
-                else:
-                    row['impressions'] = 0
-
-                if clicks_col in wrapper.df_scaled.columns and date_idx < len(wrapper.df_scaled):
-                    row['clicks'] = wrapper.df_scaled.iloc[date_idx][clicks_col]
-                else:
-                    row['clicks'] = 0
+                # For unmapped channels, set include_cols to 0 (no granular data available)
+                for inc_col in include_cols:
+                    row[inc_col] = 0
 
                 row['decomp'] = col
                 row[f'kpi_{target_col}'] = kpi_value
@@ -1491,9 +1473,14 @@ def generate_combined_decomps_stacked_disaggregated(
     # Generate disaggregated decomps for each model
     all_disagg_dfs = []
     labels = []
+    all_include_cols = set()  # Collect include_cols from all models dynamically
 
     for wrapper, label, disagg_config in wrappers_with_disagg:
         mapped_df, granular_name_cols, date_col, weight_col, include_cols = disagg_config
+
+        # Track all include_cols across models for merge key exclusion
+        if include_cols:
+            all_include_cols.update(include_cols)
 
         df_disagg = generate_decomps_stacked_disaggregated(
             wrapper=wrapper,
@@ -1517,9 +1504,15 @@ def generate_combined_decomps_stacked_disaggregated(
         all_disagg_dfs.append(df_disagg)
         labels.append(label)
 
-    # Identify key columns (everything except kpi_* columns)
+    # Identify key columns - structural columns only, exclude value columns
+    # Value columns can have floating-point differences across models causing duplicate rows
     first_df = all_disagg_dfs[0]
-    key_cols = [c for c in first_df.columns if not c.startswith('kpi_')]
+    # Base value columns that are always numeric
+    base_value_cols = {'spend', 'impressions', 'clicks', 'weight_pct', 'raw_weight', 'adstocked_weight'}
+    # Combine with dynamically collected include_cols (e.g., instore_revenue, online_revenue)
+    value_cols = base_value_cols | all_include_cols
+    key_cols = [c for c in first_df.columns
+                if not c.startswith('kpi_') and c not in value_cols]
 
     # Merge all DataFrames on key columns
     result = all_disagg_dfs[0]
@@ -1576,9 +1569,14 @@ def generate_combined_media_results_disaggregated(
     # Generate disaggregated media results for each model
     all_disagg_dfs = []
     labels = []
+    all_include_cols = set()  # Collect include_cols from all models dynamically
 
     for wrapper, label, disagg_config in wrappers_with_disagg:
         mapped_df, granular_name_cols, date_col, weight_col, include_cols = disagg_config
+
+        # Track all include_cols across models for merge key exclusion
+        if include_cols:
+            all_include_cols.update(include_cols)
 
         df_disagg = generate_media_results_disaggregated(
             wrapper=wrapper,
@@ -1604,10 +1602,11 @@ def generate_combined_media_results_disaggregated(
 
     # Identify key columns for merging (exclude value columns that should be taken from first df only)
     first_df = all_disagg_dfs[0]
-    # These columns have the same value across all models (from same granular file)
-    # So they should NOT be merge keys - just take them from first df
-    value_cols = {'spend', 'impressions', 'clicks'}
-    # Also exclude any kpi columns and include_cols that might have been added
+    # Base value columns that are always numeric
+    base_value_cols = {'spend', 'impressions', 'clicks', 'weight_pct', 'raw_weight', 'adstocked_weight'}
+    # Combine with dynamically collected include_cols (e.g., instore_revenue, online_revenue)
+    value_cols = base_value_cols | all_include_cols
+    # Also exclude any kpi columns
     all_cols_to_exclude = value_cols | {c for c in first_df.columns if c.startswith('kpi_')}
     key_cols = [c for c in first_df.columns if c not in all_cols_to_exclude]
 
