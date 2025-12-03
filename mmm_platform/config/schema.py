@@ -117,6 +117,83 @@ class DisaggregationMappingConfig(BaseModel):
     notes: Optional[str] = Field(None, description="Optional notes about this config")
 
 
+# =============================================================================
+# Export Column Schema Models
+# =============================================================================
+
+class ColumnSchemaEntry(BaseModel):
+    """Configuration for a single column in an export schema."""
+    original_name: str = Field(..., description="Original column name from the data")
+    display_name: Optional[str] = Field(None, description="Renamed column name for export (None = use original)")
+    visible: bool = Field(True, description="Whether to include this column in export")
+    order: int = Field(0, description="Position in output (lower = earlier)")
+
+
+class DatasetColumnSchema(BaseModel):
+    """Column schema for a single dataset (decomps, media, or actual_vs_fitted)."""
+    columns: list[ColumnSchemaEntry] = Field(default_factory=list)
+
+    def get_visible_columns_ordered(self) -> list[ColumnSchemaEntry]:
+        """Return visible columns sorted by order."""
+        return sorted(
+            [c for c in self.columns if c.visible],
+            key=lambda x: x.order
+        )
+
+    def get_column_mapping(self) -> dict[str, str]:
+        """Return mapping of original_name -> display_name for renaming."""
+        return {
+            c.original_name: (c.display_name or c.original_name)
+            for c in self.columns if c.visible
+        }
+
+
+class ExportColumnSchema(BaseModel):
+    """Complete export column schema covering all three datasets.
+
+    Schemas can be saved at client level (shared across models) or
+    at model level (as an override for a specific model).
+
+    Disaggregated schemas (decomps_stacked_disagg, media_results_disagg) are optional.
+    If not set, they inherit from the base schema and auto-extend with extra columns.
+    If explicitly set, they override the base schema entirely.
+    """
+    id: str = Field(..., description="Unique identifier for this schema")
+    name: str = Field(..., description="User-friendly name (e.g., 'Standard BI Export')")
+    description: Optional[str] = Field(None, description="Optional description")
+    created_at: str = Field(..., description="ISO timestamp when schema was created")
+    updated_at: Optional[str] = Field(None, description="ISO timestamp when schema was last updated")
+
+    # Per-dataset schemas (base files)
+    decomps_stacked: DatasetColumnSchema = Field(default_factory=DatasetColumnSchema)
+    media_results: DatasetColumnSchema = Field(default_factory=DatasetColumnSchema)
+    actual_vs_fitted: DatasetColumnSchema = Field(default_factory=DatasetColumnSchema)
+
+    # Disaggregated schemas (optional - inherit from base if None)
+    decomps_stacked_disagg: Optional[DatasetColumnSchema] = Field(
+        None,
+        description="Schema for disaggregated decomps. If None, inherits from decomps_stacked."
+    )
+    media_results_disagg: Optional[DatasetColumnSchema] = Field(
+        None,
+        description="Schema for disaggregated media results. If None, inherits from media_results."
+    )
+
+    # Model-level override tracking
+    is_model_override: bool = Field(False, description="True if this is a model-level override of a client schema")
+    parent_schema_id: Optional[str] = Field(None, description="ID of parent client schema if this is an override")
+
+
+class SchemaValidationResult(BaseModel):
+    """Result of validating a schema against actual data columns."""
+    dataset_name: str = Field(..., description="Name of the dataset being validated")
+    is_valid: bool = Field(True, description="Whether the schema is fully compatible")
+    matched_columns: list[str] = Field(default_factory=list, description="Columns that match between schema and data")
+    new_columns: list[str] = Field(default_factory=list, description="Columns in data but not in schema")
+    removed_columns: list[str] = Field(default_factory=list, description="Columns in schema but not in data")
+    drift_severity: Literal["none", "minor", "major"] = Field("none", description="Severity of schema drift")
+
+
 class ChannelConfig(BaseModel):
     """Configuration for a single media channel."""
     name: str = Field(..., description="Column name in the data")

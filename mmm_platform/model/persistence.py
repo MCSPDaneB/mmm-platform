@@ -1120,3 +1120,210 @@ def validate_disaggregation_config(config: dict, model_channels: list[str]) -> t
         return False, f"Mapping references channels not in model: {', '.join(sorted(missing))}"
 
     return True, ""
+
+
+# =============================================================================
+# Export Column Schema Persistence
+# =============================================================================
+
+def get_client_schemas_dir(client: str) -> Path:
+    """
+    Get the schemas directory for a specific client.
+
+    Parameters
+    ----------
+    client : str
+        Client name.
+
+    Returns
+    -------
+    Path
+        Path to schemas directory (created if doesn't exist).
+    """
+    schemas_dir = get_clients_dir() / client / "schemas"
+    schemas_dir.mkdir(parents=True, exist_ok=True)
+    return schemas_dir
+
+
+def list_export_schemas(client: str) -> list[dict]:
+    """
+    List all export column schemas for a client.
+
+    Parameters
+    ----------
+    client : str
+        Client name.
+
+    Returns
+    -------
+    list[dict]
+        List of schema metadata (id, name, created_at, description, path).
+    """
+    schemas_dir = get_client_schemas_dir(client)
+    schemas = []
+
+    for schema_file in schemas_dir.glob("*.json"):
+        try:
+            with open(schema_file, "r") as f:
+                schema = json.load(f)
+            schemas.append({
+                "id": schema.get("id"),
+                "name": schema.get("name"),
+                "description": schema.get("description"),
+                "created_at": schema.get("created_at"),
+                "updated_at": schema.get("updated_at"),
+                "path": str(schema_file)
+            })
+        except Exception as e:
+            logger.warning(f"Could not read schema from {schema_file}: {e}")
+
+    return sorted(schemas, key=lambda x: x.get("created_at", ""), reverse=True)
+
+
+def load_export_schema(schema_path: Union[str, Path]) -> dict:
+    """
+    Load an export column schema from file.
+
+    Parameters
+    ----------
+    schema_path : Union[str, Path]
+        Path to the schema JSON file.
+
+    Returns
+    -------
+    dict
+        Schema dictionary.
+    """
+    with open(schema_path, "r") as f:
+        return json.load(f)
+
+
+def save_export_schema(client: str, schema: dict) -> Path:
+    """
+    Save an export column schema for a client.
+
+    Parameters
+    ----------
+    client : str
+        Client name.
+    schema : dict
+        Schema dict (ExportColumnSchema.model_dump()).
+
+    Returns
+    -------
+    Path
+        Path to saved schema file.
+    """
+    import uuid
+
+    schemas_dir = get_client_schemas_dir(client)
+
+    # Generate ID if not present
+    if "id" not in schema or not schema["id"]:
+        schema["id"] = f"schema_{uuid.uuid4().hex[:8]}"
+
+    # Set timestamps
+    if "created_at" not in schema or not schema["created_at"]:
+        schema["created_at"] = datetime.now().isoformat()
+    schema["updated_at"] = datetime.now().isoformat()
+
+    # Save to file
+    schema_file = schemas_dir / f"{schema['id']}.json"
+    with open(schema_file, "w") as f:
+        json.dump(schema, f, indent=2)
+
+    logger.info(f"Saved export schema '{schema['name']}' to {schema_file}")
+    return schema_file
+
+
+def delete_export_schema(schema_path: Union[str, Path]) -> bool:
+    """
+    Delete an export column schema file.
+
+    Parameters
+    ----------
+    schema_path : Union[str, Path]
+        Path to the schema file.
+
+    Returns
+    -------
+    bool
+        True if deleted, False if file didn't exist.
+    """
+    schema_path = Path(schema_path)
+    if schema_path.exists():
+        schema_path.unlink()
+        logger.info(f"Deleted export schema at {schema_path}")
+        return True
+    return False
+
+
+def load_model_schema_override(model_path: Union[str, Path]) -> Optional[dict]:
+    """
+    Load model-level schema override from model's session_state.json.
+
+    Parameters
+    ----------
+    model_path : Union[str, Path]
+        Path to model directory.
+
+    Returns
+    -------
+    Optional[dict]
+        Schema override dict if exists, None otherwise.
+    """
+    model_path = Path(model_path)
+    session_file = model_path / "session_state.json"
+
+    if not session_file.exists():
+        return None
+
+    try:
+        with open(session_file, "r") as f:
+            session_state = json.load(f)
+        return session_state.get("export_schema_override")
+    except Exception as e:
+        logger.warning(f"Could not load model schema override from {model_path}: {e}")
+        return None
+
+
+def save_model_schema_override(model_path: Union[str, Path], schema: dict) -> None:
+    """
+    Save a model-level schema override to model's session_state.json.
+
+    Parameters
+    ----------
+    model_path : Union[str, Path]
+        Path to model directory.
+    schema : dict
+        Schema override dict.
+    """
+    import uuid
+
+    model_path = Path(model_path)
+    session_file = model_path / "session_state.json"
+
+    # Load existing session state
+    if session_file.exists():
+        with open(session_file, "r") as f:
+            session_state = json.load(f)
+    else:
+        session_state = {}
+
+    # Generate ID if not present
+    if "id" not in schema or not schema["id"]:
+        schema["id"] = f"schema_{uuid.uuid4().hex[:8]}"
+
+    # Set timestamps
+    if "created_at" not in schema or not schema["created_at"]:
+        schema["created_at"] = datetime.now().isoformat()
+    schema["updated_at"] = datetime.now().isoformat()
+
+    # Mark as override
+    schema["is_model_override"] = True
+    session_state["export_schema_override"] = schema
+
+    with open(session_file, "w") as f:
+        json.dump(session_state, f, indent=2)
+
+    logger.info(f"Saved model schema override to {model_path}")
