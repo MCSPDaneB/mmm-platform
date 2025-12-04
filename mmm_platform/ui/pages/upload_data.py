@@ -140,8 +140,10 @@ def _show_channel_mapping_ui(media_df: pd.DataFrame, level_cols: list[str]):
 
     st.info(f"Found {len(unique_combos)} unique channel combinations")
 
-    # Initialize mapping in session state if needed
-    if 'channel_mapping_df' not in st.session_state:
+    # Initialize or reset mapping in session state if columns don't match
+    stored_cols = set(st.session_state.get('channel_mapping_df', pd.DataFrame()).columns) - {'variable_name'}
+    current_cols = set(level_cols)
+    if 'channel_mapping_df' not in st.session_state or stored_cols != current_cols:
         st.session_state.channel_mapping_df = unique_combos.copy()
 
     # Create editable dataframe

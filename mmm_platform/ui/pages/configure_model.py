@@ -249,9 +249,36 @@ def show():
                 height=100,
             )
 
-            revenue_scale = st.number_input(
-                "Revenue/Spend Scale Factor",
-                value=saved_data.get("revenue_scale", 1000.0),
+            # KPI Type selector - determines display terminology
+            kpi_type_options = ["revenue", "count"]
+            kpi_type_labels = {
+                "revenue": "Revenue/Value (e.g., sales, revenue) - uses ROI terminology",
+                "count": "Count (e.g., installs, leads, volume) - uses Cost Per X terminology"
+            }
+            saved_kpi_type = saved_data.get("kpi_type", "revenue")
+            kpi_type_index = kpi_type_options.index(saved_kpi_type) if saved_kpi_type in kpi_type_options else 0
+
+            kpi_type = st.selectbox(
+                "KPI Type",
+                options=kpi_type_options,
+                index=kpi_type_index,
+                format_func=lambda x: kpi_type_labels.get(x, x),
+                help="Determines how efficiency metrics are displayed (ROI vs Cost Per X)"
+            )
+
+            # Show KPI display name input for count KPIs
+            kpi_display_name = None
+            if kpi_type == "count":
+                default_kpi_name = saved_data.get("kpi_display_name") or (target_col.replace("_", " ").title() if target_col else "Unit")
+                kpi_display_name = st.text_input(
+                    "KPI Display Name",
+                    value=default_kpi_name,
+                    help="Name for the KPI in labels (e.g., 'Install', 'Lead', 'Conversion')"
+                )
+
+            target_scale = st.number_input(
+                "Target/Spend Scale Factor",
+                value=saved_data.get("target_scale", saved_data.get("revenue_scale", 1000.0)),
                 min_value=1.0,
                 help="Divide values by this factor for numerical stability"
             )
@@ -387,7 +414,9 @@ def show():
             "description": description,
             "date_col": date_col,
             "target_col": target_col,
-            "revenue_scale": revenue_scale,
+            "target_scale": target_scale,
+            "kpi_type": kpi_type,
+            "kpi_display_name": kpi_display_name,
             "dayfirst": dayfirst,
             "include_trend": include_trend,
             "model_start_date": model_start_str,
@@ -400,12 +429,37 @@ def show():
     with tab2:
         st.subheader("Media Channels")
 
-        st.markdown("""
-        Configure your media channels. Each channel represents a marketing spend variable.
-        Set ROI priors based on your expectations or historical performance.
+        # Get KPI type for dynamic labels
+        kpi_type = st.session_state.config_state.get("kpi_type", "revenue")
+        kpi_display_name = st.session_state.config_state.get("kpi_display_name", "Unit")
 
-        **Note:** Channels are auto-detected by the `PaidMedia_` prefix in column names.
-        """)
+        # Define prior column labels based on KPI type
+        if kpi_type == "count":
+            prior_low_label = "Cost Low"
+            prior_mid_label = "Cost Mid"
+            prior_high_label = "Cost High"
+            prior_help_text = f"Expected cost per {kpi_display_name.lower()}"
+        else:
+            prior_low_label = "ROI Low"
+            prior_mid_label = "ROI Mid"
+            prior_high_label = "ROI High"
+            prior_help_text = "Expected return on investment"
+
+        # Dynamic instruction text
+        if kpi_type == "count":
+            st.markdown(f"""
+            Configure your media channels. Each channel represents a marketing spend variable.
+            Set **Cost Per {kpi_display_name}** priors based on your expectations or historical performance.
+
+            **Note:** Channels are auto-detected by the `PaidMedia_` prefix in column names.
+            """)
+        else:
+            st.markdown("""
+            Configure your media channels. Each channel represents a marketing spend variable.
+            Set ROI priors based on your expectations or historical performance.
+
+            **Note:** Channels are auto-detected by the `PaidMedia_` prefix in column names.
+            """)
 
         # Auto-detect channels with PaidMedia_ prefix
         numeric_cols = df.select_dtypes(include=["number"]).columns.tolist()
@@ -603,13 +657,13 @@ def show():
 
             channel_df = pd.DataFrame(channel_table_data)
 
-            # Build column config dynamically
+            # Build column config dynamically with KPI-aware labels
             column_config = {
                 "Channel": st.column_config.TextColumn("Channel", disabled=True),
                 "Display Name": st.column_config.TextColumn("Display Name"),
-                "ROI Low": st.column_config.NumberColumn("ROI Low", min_value=0.0, format="%.2f"),
-                "ROI Mid": st.column_config.NumberColumn("ROI Mid", min_value=0.0, format="%.2f"),
-                "ROI High": st.column_config.NumberColumn("ROI High", min_value=0.0, format="%.2f"),
+                "ROI Low": st.column_config.NumberColumn(prior_low_label, min_value=0.0, format="%.2f", help=prior_help_text),
+                "ROI Mid": st.column_config.NumberColumn(prior_mid_label, min_value=0.0, format="%.2f", help=prior_help_text),
+                "ROI High": st.column_config.NumberColumn(prior_high_label, min_value=0.0, format="%.2f", help=prior_help_text),
                 "Adstock": st.column_config.SelectboxColumn(
                     "Adstock",
                     options=["short", "medium", "long"],
@@ -790,7 +844,24 @@ def show():
 
             om_df = pd.DataFrame(om_table_data)
 
-            # Build column config (similar to paid media)
+            # Build column config (similar to paid media) with KPI-aware labels
+            # Get KPI type for dynamic labels (same as paid media section)
+            om_kpi_type = st.session_state.config_state.get("kpi_type", "revenue")
+            om_kpi_display_name = st.session_state.config_state.get("kpi_display_name", "Unit")
+
+            if om_kpi_type == "count":
+                om_prior_low_label = "Cost Low"
+                om_prior_mid_label = "Cost Mid"
+                om_prior_high_label = "Cost High"
+                om_prior_help = f"Expected cost per {om_kpi_display_name.lower()} (required when Include Priors is checked)"
+                om_include_label = "Include Cost Priors"
+            else:
+                om_prior_low_label = "ROI Low"
+                om_prior_mid_label = "ROI Mid"
+                om_prior_high_label = "ROI High"
+                om_prior_help = "Required when Include ROI Priors is checked"
+                om_include_label = "Include ROI Priors"
+
             om_column_config = {
                 "Variable": st.column_config.TextColumn("Variable", disabled=True),
                 "Display Name": st.column_config.TextColumn("Display Name"),
@@ -804,12 +875,12 @@ def show():
                     help="Override curve sharpness for this variable (Default uses global setting)"
                 ),
                 "Include ROI Priors": st.column_config.CheckboxColumn(
-                    "Include ROI Priors",
+                    om_include_label,
                     help="Enable if you have cost/spend data for this variable"
                 ),
-                "ROI Low": st.column_config.NumberColumn("ROI Low", min_value=0.0, format="%.2f", help="Required when Include ROI Priors is checked"),
-                "ROI Mid": st.column_config.NumberColumn("ROI Mid", min_value=0.0, format="%.2f", help="Required when Include ROI Priors is checked"),
-                "ROI High": st.column_config.NumberColumn("ROI High", min_value=0.0, format="%.2f", help="Required when Include ROI Priors is checked"),
+                "ROI Low": st.column_config.NumberColumn(om_prior_low_label, min_value=0.0, format="%.2f", help=om_prior_help),
+                "ROI Mid": st.column_config.NumberColumn(om_prior_mid_label, min_value=0.0, format="%.2f", help=om_prior_help),
+                "ROI High": st.column_config.NumberColumn(om_prior_high_label, min_value=0.0, format="%.2f", help=om_prior_help),
                 "Total": st.column_config.NumberColumn("Total", disabled=True, format="%.2f"),
             }
 
@@ -1644,6 +1715,9 @@ def _sync_data_editors_to_config_state():
     """
     category_cols = st.session_state.get("category_columns", [])
 
+    # Get KPI type for conversion logic
+    kpi_type = st.session_state.config_state.get("kpi_type", "revenue")
+
     # Sync channels data editor
     if "channels_df_current" in st.session_state:
         edited_df = st.session_state.channels_df_current
@@ -1660,14 +1734,32 @@ def _sync_data_editors_to_config_state():
                 curve_shape = row.get("Curve Shape", "Default")
                 curve_override = None if curve_shape == "Default" else curve_shape.lower()
 
+                # Convert cost-per to efficiency for count KPIs
+                # User enters: Cost Low (cheap), Cost Mid, Cost High (expensive)
+                # Internally we store: efficiency (target per $)
+                if kpi_type == "count":
+                    # Cost-per to efficiency: efficiency = 1 / cost
+                    # Low cost = high efficiency, high cost = low efficiency
+                    cost_low = row["ROI Low"] if row["ROI Low"] > 0 else 1.0
+                    cost_mid = row["ROI Mid"] if row["ROI Mid"] > 0 else 5.0
+                    cost_high = row["ROI High"] if row["ROI High"] > 0 else 10.0
+                    efficiency_low = 1.0 / cost_high  # High cost = low efficiency
+                    efficiency_mid = 1.0 / cost_mid
+                    efficiency_high = 1.0 / cost_low  # Low cost = high efficiency
+                else:
+                    # For revenue KPIs, values are already efficiency (ROI)
+                    efficiency_low = row["ROI Low"]
+                    efficiency_mid = row["ROI Mid"]
+                    efficiency_high = row["ROI High"]
+
                 channels_config.append({
                     "name": row["Channel"],
                     "display_name": row["Display Name"],
                     "categories": categories,
                     "adstock_type": row["Adstock"],
-                    "roi_prior_low": row["ROI Low"],
-                    "roi_prior_mid": row["ROI Mid"],
-                    "roi_prior_high": row["ROI High"],
+                    "roi_prior_low": efficiency_low,
+                    "roi_prior_mid": efficiency_mid,
+                    "roi_prior_high": efficiency_high,
                     "curve_sharpness_override": curve_override,
                 })
             st.session_state.config_state["channels"] = channels_config
@@ -1698,6 +1790,27 @@ def _sync_data_editors_to_config_state():
                 roi_mid = roi_mid if pd.notna(roi_mid) and roi_mid != "" else None
                 roi_high = roi_high if pd.notna(roi_high) and roi_high != "" else None
 
+                # Convert cost-per to efficiency for count KPIs (if values are provided)
+                if kpi_type == "count" and roi_low is not None and roi_mid is not None and roi_high is not None:
+                    # Cost-per to efficiency: efficiency = 1 / cost
+                    # Low cost = high efficiency, high cost = low efficiency
+                    cost_low = roi_low if roi_low > 0 else 1.0
+                    cost_mid = roi_mid if roi_mid > 0 else 5.0
+                    cost_high = roi_high if roi_high > 0 else 10.0
+                    efficiency_low = 1.0 / cost_high  # High cost = low efficiency
+                    efficiency_mid = 1.0 / cost_mid
+                    efficiency_high = 1.0 / cost_low  # Low cost = high efficiency
+                elif roi_low is not None and roi_mid is not None and roi_high is not None:
+                    # For revenue KPIs, values are already efficiency (ROI)
+                    efficiency_low = roi_low
+                    efficiency_mid = roi_mid
+                    efficiency_high = roi_high
+                else:
+                    # No priors provided
+                    efficiency_low = None
+                    efficiency_mid = None
+                    efficiency_high = None
+
                 owned_media_config.append({
                     "name": row["Variable"],
                     "display_name": row.get("Display Name", row["Variable"]),
@@ -1705,9 +1818,9 @@ def _sync_data_editors_to_config_state():
                     "adstock_type": row.get("Adstock", "medium"),
                     "curve_sharpness_override": curve_override,
                     "include_roi": include_roi,
-                    "roi_prior_low": roi_low,
-                    "roi_prior_mid": roi_mid,
-                    "roi_prior_high": roi_high,
+                    "roi_prior_low": efficiency_low,
+                    "roi_prior_mid": efficiency_mid,
+                    "roi_prior_high": efficiency_high,
                 })
             st.session_state.config_state["owned_media"] = owned_media_config
 
@@ -1856,8 +1969,10 @@ def build_config_from_state() -> ModelConfig:
             date_column=state.get("date_col", "time"),
             target_column=state.get("target_col", "revenue"),
             dayfirst=state.get("dayfirst", True),
-            revenue_scale=state.get("revenue_scale", 1000.0),
-            spend_scale=state.get("revenue_scale", 1000.0),
+            target_scale=state.get("target_scale", state.get("revenue_scale", 1000.0)),
+            spend_scale=state.get("target_scale", state.get("revenue_scale", 1000.0)),
+            kpi_type=state.get("kpi_type", "revenue"),
+            kpi_display_name=state.get("kpi_display_name"),
             model_start_date=state.get("model_start_date"),
             model_end_date=state.get("model_end_date"),
             include_trend=state.get("include_trend", True),

@@ -20,7 +20,8 @@ from mmm_platform.analysis.bayesian_significance import (
 from mmm_platform.analysis.marginal_roi import MarginalROIAnalyzer
 from mmm_platform.analysis.executive_summary import ExecutiveSummaryGenerator
 from mmm_platform.analysis.roi_diagnostics import quick_roi_diagnostics
-from mmm_platform.config.schema import DummyVariableConfig, SignConstraint
+from mmm_platform.config.schema import DummyVariableConfig, SignConstraint, KPIType
+from mmm_platform.ui.kpi_labels import KPILabels
 
 
 def get_contiguous_periods(df: pd.DataFrame, mask: pd.Series, date_col: str) -> list[tuple]:
@@ -195,17 +196,21 @@ def show():
     wrapper = st.session_state.current_model
     config = wrapper.config
 
+    # Create KPI-aware labels helper
+    kpi_labels = KPILabels(config)
+    eff_label = kpi_labels.efficiency_label  # "ROI" or "Cost Per X"
+
     # Create analyzers
     diagnostics = ModelDiagnostics.from_mmm_wrapper(wrapper)
     contributions = ContributionAnalyzer.from_mmm_wrapper(wrapper)
     marginal_analyzer = MarginalROIAnalyzer.from_mmm_wrapper(wrapper)
     exec_generator = ExecutiveSummaryGenerator(marginal_analyzer)
 
-    # Tabs
+    # Tabs - use dynamic labels based on KPI type
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs([
         "Overview",
-        "Channel ROI",
-        "Marginal ROI & Priority",
+        f"Channel {eff_label}",
+        f"Marginal {eff_label} & Priority",
         "Executive Summary",
         "Bayesian Significance",
         "Diagnostics",
@@ -215,7 +220,7 @@ def show():
         "Model Coefficients",
         "Media Curves",
         "Owned Media",
-        "ROI Prior Validation"
+        f"{eff_label} Prior Validation"
     ])
 
     # =========================================================================
@@ -315,15 +320,15 @@ def show():
         )
 
     # =========================================================================
-    # Tab 2: Channel ROI
+    # Tab 2: Channel Efficiency (ROI or Cost Per X)
     # =========================================================================
     with tab2:
-        st.subheader("Channel ROI Analysis")
+        st.subheader(f"Channel {eff_label} Analysis")
 
         roi_df = contributions.get_channel_roi(roi_channels=config.get_channel_columns())
 
         if len(roi_df) > 0:
-            # Category column selector for ROI grouping
+            # Category column selector for efficiency grouping
             roi_category_column_names = config.get_category_column_names()
             roi_selected_category_col = None
 
@@ -367,8 +372,8 @@ def show():
                     category_roi,
                     x="category",
                     y="roi",
-                    title="ROI by Category",
-                    labels={"category": "Category", "roi": "ROI"},
+                    title=f"{eff_label} by Category",
+                    labels={"category": "Category", "roi": eff_label},
                     color="category",
                     color_discrete_map=CATEGORY_COLORS,
                 )
@@ -377,15 +382,15 @@ def show():
 
                 # Category table
                 display_df = category_roi[["category", "spend_real", "contribution_real", "roi"]].copy()
-                display_df.columns = ["Category", "Spend ($)", "Contribution ($)", "ROI"]
+                display_df.columns = ["Category", "Spend ($)", "Contribution ($)", eff_label]
             else:
-                # ROI bar chart by channel, colored by category
+                # Efficiency bar chart by channel, colored by category
                 fig = px.bar(
                     roi_df.sort_values("roi", ascending=False),
                     x="display_name",
                     y="roi",
-                    title="ROI by Channel (colored by Category)",
-                    labels={"display_name": "Channel", "roi": "ROI"},
+                    title=f"{eff_label} by Channel (colored by Category)",
+                    labels={"display_name": "Channel", "roi": eff_label},
                     color="category",
                     color_discrete_map=CATEGORY_COLORS,
                 )
@@ -394,13 +399,13 @@ def show():
 
                 # Channel table
                 display_df = roi_df[["display_name", "category", "spend_real", "contribution_real", "roi"]].copy()
-                display_df.columns = ["Channel", "Category", "Spend ($)", "Contribution ($)", "ROI"]
+                display_df.columns = ["Channel", "Category", "Spend ($)", "Contribution ($)", eff_label]
 
             # Format table
             st.subheader("Details")
             display_df["Spend ($)"] = display_df["Spend ($)"].apply(lambda x: f"${x:,.0f}")
             display_df["Contribution ($)"] = display_df["Contribution ($)"].apply(lambda x: f"${x:,.0f}")
-            display_df["ROI"] = display_df["ROI"].apply(lambda x: f"{x:.2f}")
+            display_df[eff_label] = display_df[eff_label].apply(lambda x: f"{x:.2f}")
 
             st.dataframe(display_df, width="stretch", hide_index=True)
 
@@ -428,21 +433,21 @@ def show():
                 x=[0, max_val],
                 y=[0, max_val],
                 mode="lines",
-                name="Break-even (ROI=1)",
+                name=f"Break-even ({eff_label}=1)",
                 line=dict(dash="dash", color="gray")
             ))
 
             st.plotly_chart(fig2, width="stretch")
 
     # =========================================================================
-    # Tab 3: Marginal ROI & Investment Priority
+    # Tab 3: Marginal Efficiency & Investment Priority
     # =========================================================================
     with tab3:
-        st.subheader("Marginal ROI & Investment Priority")
+        st.subheader(f"Marginal {eff_label} & Investment Priority")
 
-        st.markdown("""
-        This analysis uses **saturation curve derivatives** to calculate the true marginal ROI
-        (return on the *next* dollar spent), not just the average ROI.
+        st.markdown(f"""
+        This analysis uses **saturation curve derivatives** to calculate the true marginal {eff_label}
+        (return on the *next* dollar spent), not just the average {eff_label}.
         """)
 
         try:
@@ -477,22 +482,22 @@ def show():
 
             styled_df = display_df[['channel', 'current_spend', 'current_roi', 'marginal_roi',
                                      'priority_rank', 'breakeven_spend', 'headroom_amount', 'action', 'needs_test']]
-            styled_df.columns = ['Channel', 'Current Spend', 'Current ROI', 'Marginal ROI',
+            styled_df.columns = ['Channel', 'Current Spend', f'Current {eff_label}', f'Marginal {eff_label}',
                                  'Priority', 'Breakeven Spend', 'Headroom', 'Action', 'Needs Test']
 
             st.dataframe(styled_df, width="stretch", hide_index=True)
 
-            st.markdown("""
+            st.markdown(f"""
             **Key Concepts:**
-            - **Marginal ROI**: Return on the *next* dollar spent (from saturation curve derivative)
-            - **Breakeven Spend**: Spend level where marginal ROI = $1.00
+            - **Marginal {eff_label}**: Return on the *next* dollar spent (from saturation curve derivative)
+            - **Breakeven Spend**: Spend level where marginal {eff_label} = $1.00
             - **Headroom**: Additional spend available before hitting breakeven
-            - **Needs Test**: High uncertainty in ROI estimate - validate with incrementality test
+            - **Needs Test**: High uncertainty in {eff_label} estimate - validate with incrementality test
             """)
 
             # Visualizations
             st.markdown("---")
-            st.subheader("Current vs Marginal ROI")
+            st.subheader(f"Current vs Marginal {eff_label}")
 
             result = marginal_analyzer.run_full_analysis()
             channel_names = [ch.channel_name for ch in result.channel_analysis]
@@ -501,13 +506,13 @@ def show():
 
             fig = go.Figure()
             fig.add_trace(go.Bar(
-                name='Current (Avg) ROI',
+                name=f'Current (Avg) {eff_label}',
                 x=channel_names,
                 y=current_rois,
                 marker_color='steelblue'
             ))
             fig.add_trace(go.Bar(
-                name='Marginal ROI',
+                name=f'Marginal {eff_label}',
                 x=channel_names,
                 y=marginal_rois,
                 marker_color='orange'
@@ -515,13 +520,13 @@ def show():
             fig.add_hline(y=1, line_dash="dash", line_color="red", annotation_text="Breakeven")
             fig.update_layout(
                 barmode='group',
-                title="Current ROI vs Marginal ROI by Channel",
+                title=f"Current {eff_label} vs Marginal {eff_label} by Channel",
                 xaxis_tickangle=-45
             )
             st.plotly_chart(fig, width="stretch")
 
         except Exception as e:
-            st.error(f"Error running marginal ROI analysis: {str(e)}")
+            st.error(f"Error running marginal {eff_label} analysis: {str(e)}")
             st.info("Make sure the model has been properly fitted with posterior samples available.")
 
     # =========================================================================
@@ -541,7 +546,7 @@ def show():
             with col2:
                 st.metric("Total Contribution", f"${summary['portfolio']['total_contribution']:,.0f}")
             with col3:
-                st.metric("Portfolio ROI", f"${summary['portfolio']['portfolio_roi']:.2f}")
+                st.metric(f"Portfolio {eff_label}", f"${summary['portfolio']['portfolio_roi']:.2f}")
 
             st.markdown("---")
 
@@ -550,7 +555,7 @@ def show():
 
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("INCREASE", summary['counts']['increase'], delta="High marginal ROI")
+                st.metric("INCREASE", summary['counts']['increase'], delta=f"High marginal {eff_label}")
             with col2:
                 st.metric("HOLD", summary['counts']['hold'], delta="Profitable")
             with col3:
@@ -567,18 +572,18 @@ def show():
                 st.markdown("**INCREASE Investment:**")
                 for ch in summary['recommendations']['increase']:
                     test_note = " *(validate with test)*" if ch['needs_test'] else ""
-                    st.markdown(f"- **{ch['channel_name']}**: Marginal ROI ${ch['marginal_roi']:.2f}, "
+                    st.markdown(f"- **{ch['channel_name']}**: Marginal {eff_label} ${ch['marginal_roi']:.2f}, "
                                f"Headroom ${ch['headroom_amount']:,.0f}{test_note}")
 
             if summary['recommendations']['hold']:
                 st.markdown("**HOLD Steady:**")
                 for ch in summary['recommendations']['hold']:
-                    st.markdown(f"- **{ch['channel_name']}**: Marginal ROI ${ch['marginal_roi']:.2f}")
+                    st.markdown(f"- **{ch['channel_name']}**: Marginal {eff_label} ${ch['marginal_roi']:.2f}")
 
             if summary['recommendations']['reduce']:
                 st.markdown("**REDUCE/Reallocate:**")
                 for ch in summary['recommendations']['reduce']:
-                    st.markdown(f"- **{ch['channel_name']}**: Marginal ROI ${ch['marginal_roi']:.2f} *(below breakeven)*")
+                    st.markdown(f"- **{ch['channel_name']}**: Marginal {eff_label} ${ch['marginal_roi']:.2f} *(below breakeven)*")
 
             st.markdown("---")
 
@@ -636,7 +641,7 @@ def show():
                 "Credible Intervals",
                 "Probability of Direction",
                 "ROPE Analysis",
-                "ROI Posteriors",
+                f"{eff_label} Posteriors",
                 "Prior Sensitivity"
             ])
 
@@ -754,20 +759,20 @@ def show():
                 st.dataframe(rope_df, width="stretch", hide_index=True)
 
             # -----------------------------------------------------------------
-            # ROI Posteriors
+            # Efficiency Posteriors (ROI or Cost Per)
             # -----------------------------------------------------------------
             with sig_tab4:
-                st.markdown("### ROI Credible Intervals")
-                st.markdown("Full posterior distribution of ROI per channel with uncertainty.")
+                st.markdown(f"### {eff_label} Credible Intervals")
+                st.markdown(f"Full posterior distribution of {eff_label} per channel with uncertainty.")
 
                 roi_data = []
                 for roi in sig_report.roi_posteriors:
                     roi_data.append({
                         "Channel": roi.channel,
-                        "ROI Mean": f"{roi.roi_mean:.2f}",
-                        "ROI Median": f"{roi.roi_median:.2f}",
-                        "ROI 5%": f"{roi.roi_5pct:.2f}",
-                        "ROI 95%": f"{roi.roi_95pct:.2f}",
+                        f"{eff_label} Mean": f"{roi.roi_mean:.2f}",
+                        f"{eff_label} Median": f"{roi.roi_median:.2f}",
+                        f"{eff_label} 5%": f"{roi.roi_5pct:.2f}",
+                        f"{eff_label} 95%": f"{roi.roi_95pct:.2f}",
                         "Significant": "Yes" if roi.significant else "No"
                     })
 
@@ -796,10 +801,10 @@ def show():
                     )
                 ))
                 fig.add_vline(x=0, line_dash="dash", line_color="red")
-                fig.add_vline(x=1, line_dash="dash", line_color="green", annotation_text="ROI=1")
+                fig.add_vline(x=1, line_dash="dash", line_color="green", annotation_text=f"{eff_label}=1")
                 fig.update_layout(
-                    title="ROI Posteriors with 90% CI",
-                    xaxis_title="ROI",
+                    title=f"{eff_label} Posteriors with 90% CI",
+                    xaxis_title=eff_label,
                     yaxis_title="Channel",
                     height=max(400, len(channels) * 40)
                 )
@@ -816,8 +821,8 @@ def show():
                 for sens in sig_report.prior_sensitivity:
                     sens_data.append({
                         "Channel": sens.channel,
-                        "Prior ROI": f"{sens.prior_roi:.2f}",
-                        "Posterior ROI": f"{sens.posterior_roi:.2f}",
+                        f"Prior {eff_label}": f"{sens.prior_roi:.2f}",
+                        f"Posterior {eff_label}": f"{sens.posterior_roi:.2f}",
                         "Shift": f"{sens.shift:+.2f}",
                         "Data Influence": sens.data_influence
                     })
@@ -859,9 +864,9 @@ def show():
                     line=dict(dash='dash', color='gray')
                 ))
                 fig.update_layout(
-                    title="Prior vs Posterior ROI",
-                    xaxis_title="Prior ROI",
-                    yaxis_title="Posterior ROI",
+                    title=f"Prior vs Posterior {eff_label}",
+                    xaxis_title=f"Prior {eff_label}",
+                    yaxis_title=f"Posterior {eff_label}",
                     height=500
                 )
                 st.plotly_chart(fig, width="stretch")
@@ -1903,11 +1908,11 @@ def show():
                     st.error(f"Error running significance analysis: {e}")
 
     # =========================================================================
-    # Tab 13: ROI Prior Validation
+    # Tab 13: Efficiency Prior Validation (ROI or Cost Per)
     # =========================================================================
     with tab13:
-        st.subheader("ROI Prior Validation")
-        st.caption("Compares your ROI beliefs (priors) against what the model learned (posterior)")
+        st.subheader(f"{eff_label} Prior Validation")
+        st.caption(f"Compares your {eff_label} beliefs (priors) against what the model learned (posterior)")
 
         try:
             roi_report = quick_roi_diagnostics(wrapper)
@@ -1923,13 +1928,13 @@ def show():
 
             # Explanation
             with st.expander("What does this mean?", expanded=False):
-                st.markdown("""
-                This validates whether the ROI the model learned matches your prior beliefs:
+                st.markdown(f"""
+                This validates whether the {eff_label} the model learned matches your prior beliefs:
 
-                - **Prior ROI**: The ROI range you specified when configuring channels
-                - **Posterior ROI**: The ROI the model learned from data (with 90% HDI)
+                - **Prior {eff_label}**: The {eff_label} range you specified when configuring channels
+                - **Posterior {eff_label}**: The {eff_label} the model learned from data (with 90% HDI)
                 - **Prior in HDI**: ✅ if your belief falls within the learned range
-                - **ROI Shift**: How much the learned ROI differs from your prior belief
+                - **{eff_label} Shift**: How much the learned {eff_label} differs from your prior belief
                 - **λ Shift**: How much the saturation curve changed from initial assumptions
 
                 **Large shifts** may indicate:
@@ -1944,16 +1949,16 @@ def show():
 
                 display_df = pd.DataFrame({
                     "Channel": roi_df["channel"],
-                    "Prior ROI (Low-Mid-High)": roi_df.apply(
+                    f"Prior {eff_label} (Low-Mid-High)": roi_df.apply(
                         lambda r: f"{r['prior_roi_low']:.1f} - {r['prior_roi_mid']:.1f} - {r['prior_roi_high']:.1f}",
                         axis=1
                     ),
-                    "Posterior ROI [90% HDI]": roi_df.apply(
+                    f"Posterior {eff_label} [90% HDI]": roi_df.apply(
                         lambda r: f"{r['posterior_roi_mean']:.2f} [{r['posterior_roi_hdi_low']:.2f}, {r['posterior_roi_hdi_high']:.2f}]",
                         axis=1
                     ),
                     "Prior in HDI": roi_df["prior_in_hdi"].apply(lambda x: "✅" if x else "⚠️"),
-                    "ROI Shift": roi_df["roi_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
+                    f"{eff_label} Shift": roi_df["roi_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
                     "λ Shift": roi_df["lambda_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
                 })
 
@@ -1964,7 +1969,7 @@ def show():
                 st.warning(f"**Channels with prior tension:** {', '.join(roi_report.channels_with_prior_tension)}")
 
             if roi_report.channels_with_large_shift:
-                st.warning(f"**Channels with large ROI shift (>50%):** {', '.join(roi_report.channels_with_large_shift)}")
+                st.warning(f"**Channels with large {eff_label} shift (>50%):** {', '.join(roi_report.channels_with_large_shift)}")
 
             # Recommendations
             if roi_report.recommendations:

@@ -64,6 +64,12 @@ def sharpness_label_to_value(label: str) -> int:
 # Enums
 # =============================================================================
 
+class KPIType(str, Enum):
+    """Type of KPI being modeled - determines display terminology."""
+    REVENUE = "revenue"  # Currency-based KPIs (revenue, sales, value) -> "ROI" terminology
+    COUNT = "count"      # Count-based KPIs (installs, leads, volume) -> "Cost Per X" terminology
+
+
 class AdstockType(str, Enum):
     """Adstock decay rate categories."""
     SHORT = "short"
@@ -500,12 +506,30 @@ class DataConfig(BaseModel):
     target_column: str = Field(..., description="Name of the target (KPI) column")
     date_format: Optional[str] = Field(None, description="Date format string (e.g., '%Y-%m-%d')")
     dayfirst: bool = Field(True, description="Whether dates are day-first format")
-    revenue_scale: float = Field(1000.0, gt=0, description="Scale factor for revenue")
+    target_scale: float = Field(1000.0, gt=0, description="Scale factor for target KPI")
     spend_scale: float = Field(1000.0, gt=0, description="Scale factor for spend")
     brand: Optional[str] = Field(None, description="Brand name for exports")
     model_start_date: Optional[str] = Field(None, description="Start date for modeling (YYYY-MM-DD)")
     model_end_date: Optional[str] = Field(None, description="End date for modeling (YYYY-MM-DD)")
     include_trend: bool = Field(True, description="Include linear time trend as control variable")
+
+    # KPI type configuration for dynamic labeling
+    kpi_type: KPIType = Field(KPIType.REVENUE, description="Type of KPI (revenue/count) for display terminology")
+    kpi_display_name: Optional[str] = Field(None, description="Custom display name for KPI (e.g., 'Install' for count KPIs)")
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_revenue_scale(cls, data: Any) -> Any:
+        """Migrate old 'revenue_scale' field to 'target_scale'."""
+        if isinstance(data, dict):
+            if "revenue_scale" in data and "target_scale" not in data:
+                data["target_scale"] = data.pop("revenue_scale")
+        return data
+
+    @property
+    def revenue_scale(self) -> float:
+        """Backward compatibility alias for target_scale."""
+        return self.target_scale
 
 
 class AdstockConfig(BaseModel):
@@ -624,23 +648,58 @@ class ModelConfig(BaseModel):
                 return comp
         return None
 
-    def get_roi_dicts(self) -> tuple[dict, dict, dict]:
-        """Get ROI prior dictionaries for all channels and owned media with ROI."""
-        roi_low = {}
-        roi_mid = {}
-        roi_high = {}
-        # Channels (paid media) always have ROI
+    def get_efficiency_dicts(self) -> tuple[dict, dict, dict]:
+        """Get efficiency prior dictionaries for all channels and owned media with efficiency priors.
+
+        Returns efficiency priors (ROI for revenue KPIs, or inverted cost-per for count KPIs).
+        """
+        eff_low = {}
+        eff_mid = {}
+        eff_high = {}
+        # Channels (paid media) always have efficiency priors
         for ch in self.channels:
-            roi_low[ch.name] = ch.roi_prior_low
-            roi_mid[ch.name] = ch.roi_prior_mid
-            roi_high[ch.name] = ch.roi_prior_high
+            eff_low[ch.name] = ch.roi_prior_low
+            eff_mid[ch.name] = ch.roi_prior_mid
+            eff_high[ch.name] = ch.roi_prior_high
         # Owned media only if include_roi is True
         for om in self.owned_media:
             if om.include_roi:
-                roi_low[om.name] = om.roi_prior_low
-                roi_mid[om.name] = om.roi_prior_mid
-                roi_high[om.name] = om.roi_prior_high
-        return roi_low, roi_mid, roi_high
+                eff_low[om.name] = om.roi_prior_low
+                eff_mid[om.name] = om.roi_prior_mid
+                eff_high[om.name] = om.roi_prior_high
+        return eff_low, eff_mid, eff_high
+
+    def get_roi_dicts(self) -> tuple[dict, dict, dict]:
+        """Backward compatibility alias for get_efficiency_dicts()."""
+        return self.get_efficiency_dicts()
+
+    def get_efficiency_label(self) -> str:
+        """Get display label for efficiency metric based on KPI type.
+
+        Returns 'ROI' for revenue KPIs, 'Cost Per {X}' for count KPIs.
+        """
+        if self.data.kpi_type == KPIType.REVENUE:
+            return "ROI"
+        else:
+            kpi_name = self.data.kpi_display_name or self.data.target_column
+            return f"Cost Per {kpi_name.title()}"
+
+    def is_revenue_type(self) -> bool:
+        """Check if KPI is revenue-type (uses ROI terminology)."""
+        return self.data.kpi_type == KPIType.REVENUE
+
+    def format_efficiency_value(self, value: float) -> str:
+        """Format efficiency value for display based on KPI type.
+
+        For revenue KPIs: displays as ROI (e.g., '$3.50')
+        For count KPIs: inverts and displays as cost-per (e.g., '$5.00')
+        """
+        if self.data.kpi_type == KPIType.REVENUE:
+            return f"${value:.2f}"
+        else:
+            # Cost per = 1 / efficiency
+            cost_per = 1 / value if value > 0 else float('inf')
+            return f"${cost_per:.2f}"
 
     def get_adstock_type_dict(self) -> dict[str, str]:
         """Get adstock type mapping for channels, owned media, competitors, and controls (if enabled)."""
