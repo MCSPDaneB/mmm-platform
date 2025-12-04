@@ -1,0 +1,3 @@
+"""
+MMM Platform Test Suite.
+"""
