@@ -19,6 +19,7 @@ from mmm_platform.analysis.bayesian_significance import (
 )
 from mmm_platform.analysis.marginal_roi import MarginalROIAnalyzer
 from mmm_platform.analysis.executive_summary import ExecutiveSummaryGenerator
+from mmm_platform.analysis.roi_diagnostics import quick_roi_diagnostics
 from mmm_platform.config.schema import DummyVariableConfig, SignConstraint
 
 
@@ -201,7 +202,7 @@ def show():
     exec_generator = ExecutiveSummaryGenerator(marginal_analyzer)
 
     # Tabs
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs([
         "Overview",
         "Channel ROI",
         "Marginal ROI & Priority",
@@ -213,7 +214,8 @@ def show():
         "Visualizations",
         "Model Coefficients",
         "Media Curves",
-        "Owned Media"
+        "Owned Media",
+        "ROI Prior Validation"
     ])
 
     # =========================================================================
@@ -1899,6 +1901,79 @@ def show():
 
                 except Exception as e:
                     st.error(f"Error running significance analysis: {e}")
+
+    # =========================================================================
+    # Tab 13: ROI Prior Validation
+    # =========================================================================
+    with tab13:
+        st.subheader("ROI Prior Validation")
+        st.caption("Compares your ROI beliefs (priors) against what the model learned (posterior)")
+
+        try:
+            roi_report = quick_roi_diagnostics(wrapper)
+
+            # Overall health status
+            health = roi_report.overall_health
+            if "Good" in health:
+                st.success(f"**{health}**")
+            elif "Moderate" in health:
+                st.warning(f"**{health}**")
+            else:
+                st.error(f"**{health}**")
+
+            # Explanation
+            with st.expander("What does this mean?", expanded=False):
+                st.markdown("""
+                This validates whether the ROI the model learned matches your prior beliefs:
+
+                - **Prior ROI**: The ROI range you specified when configuring channels
+                - **Posterior ROI**: The ROI the model learned from data (with 90% HDI)
+                - **Prior in HDI**: ✅ if your belief falls within the learned range
+                - **ROI Shift**: How much the learned ROI differs from your prior belief
+                - **λ Shift**: How much the saturation curve changed from initial assumptions
+
+                **Large shifts** may indicate:
+                - Your prior beliefs need updating based on this data
+                - Data quality issues for that channel
+                - The model found a different relationship than expected
+                """)
+
+            # Summary table
+            if roi_report.channel_results:
+                roi_df = roi_report.to_dataframe()
+
+                display_df = pd.DataFrame({
+                    "Channel": roi_df["channel"],
+                    "Prior ROI (Low-Mid-High)": roi_df.apply(
+                        lambda r: f"{r['prior_roi_low']:.1f} - {r['prior_roi_mid']:.1f} - {r['prior_roi_high']:.1f}",
+                        axis=1
+                    ),
+                    "Posterior ROI [90% HDI]": roi_df.apply(
+                        lambda r: f"{r['posterior_roi_mean']:.2f} [{r['posterior_roi_hdi_low']:.2f}, {r['posterior_roi_hdi_high']:.2f}]",
+                        axis=1
+                    ),
+                    "Prior in HDI": roi_df["prior_in_hdi"].apply(lambda x: "✅" if x else "⚠️"),
+                    "ROI Shift": roi_df["roi_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
+                    "λ Shift": roi_df["lambda_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
+                })
+
+                st.dataframe(display_df, hide_index=True, use_container_width=True)
+
+            # Warnings
+            if roi_report.channels_with_prior_tension:
+                st.warning(f"**Channels with prior tension:** {', '.join(roi_report.channels_with_prior_tension)}")
+
+            if roi_report.channels_with_large_shift:
+                st.warning(f"**Channels with large ROI shift (>50%):** {', '.join(roi_report.channels_with_large_shift)}")
+
+            # Recommendations
+            if roi_report.recommendations:
+                st.subheader("Recommendations")
+                for rec in roi_report.recommendations:
+                    st.info(rec)
+
+        except Exception as e:
+            st.info(f"ROI prior validation not available: {str(e)}")
 
 
 def _show_owned_media_saturation_curves(wrapper, config, owned_media_cols, display_names, selected_om, spend_scale, revenue_scale, paid_channel_count):
