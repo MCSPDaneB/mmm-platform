@@ -161,6 +161,9 @@ def _show_channel_mapping_ui(media_df: pd.DataFrame, level_cols: list[str]):
     current_cols = set(level_cols)
     if 'channel_mapping_df' not in st.session_state or stored_cols != current_cols:
         st.session_state.channel_mapping_df = unique_combos.copy()
+        # Clear upload processed flag when mapping is reset
+        if "_mapping_upload_processed" in st.session_state:
+            del st.session_state["_mapping_upload_processed"]
 
     # Create editable dataframe
     # Only include level columns and variable_name for editing
@@ -193,47 +196,51 @@ def _show_channel_mapping_ui(media_df: pd.DataFrame, level_cols: list[str]):
         )
 
     if uploaded_mapping is not None:
-        try:
-            uploaded_df = pd.read_csv(uploaded_mapping)
+        # Check if we've already processed this file (prevent reprocessing on rerun)
+        if st.session_state.get("_mapping_upload_processed"):
+            # Clear the flag and show success (the data is already loaded)
+            n_mapped = sum(1 for v in st.session_state.channel_mapping_df['variable_name'] if v.strip())
+            st.success(f"Mappings loaded! {n_mapped} channels assigned.")
+        else:
+            try:
+                uploaded_df = pd.read_csv(uploaded_mapping)
 
-            # Validate columns match
-            expected_cols = set(display_cols)
-            actual_cols = set(uploaded_df.columns)
+                # Validate columns match
+                expected_cols = set(display_cols)
+                actual_cols = set(uploaded_df.columns)
 
-            if expected_cols != actual_cols:
-                missing = expected_cols - actual_cols
-                extra = actual_cols - expected_cols
-                error_msg = "Column mismatch in uploaded CSV."
-                if missing:
-                    error_msg += f" Missing: {list(missing)}."
-                if extra:
-                    error_msg += f" Unexpected: {list(extra)}."
-                st.error(error_msg)
-            else:
-                # Merge uploaded variable_names with existing combinations
-                # Use left merge to ensure we only accept mappings for existing channel combinations
-                merged = st.session_state.channel_mapping_df[level_cols].merge(
-                    uploaded_df,
-                    on=level_cols,
-                    how='left'
-                )
+                if expected_cols != actual_cols:
+                    missing = expected_cols - actual_cols
+                    extra = actual_cols - expected_cols
+                    error_msg = "Column mismatch in uploaded CSV."
+                    if missing:
+                        error_msg += f" Missing: {list(missing)}."
+                    if extra:
+                        error_msg += f" Unexpected: {list(extra)}."
+                    st.error(error_msg)
+                else:
+                    # Merge uploaded variable_names with existing combinations
+                    # Use left merge to ensure we only accept mappings for existing channel combinations
+                    merged = st.session_state.channel_mapping_df[level_cols].merge(
+                        uploaded_df,
+                        on=level_cols,
+                        how='left'
+                    )
 
-                # Fill NaN variable_names with empty string
-                merged['variable_name'] = merged['variable_name'].fillna('')
+                    # Fill NaN variable_names with empty string
+                    merged['variable_name'] = merged['variable_name'].fillna('')
 
-                # Count how many mappings were applied
-                n_mapped = sum(1 for v in merged['variable_name'] if v.strip())
+                    # Update session state
+                    st.session_state.channel_mapping_df = merged
+                    # Mark as processed so we don't reprocess on rerun
+                    st.session_state["_mapping_upload_processed"] = True
+                    # Delete the data_editor widget key to force re-initialization
+                    if "channel_mapping_editor" in st.session_state:
+                        del st.session_state["channel_mapping_editor"]
+                    st.rerun()
 
-                # Update session state
-                st.session_state.channel_mapping_df = merged
-                # Delete the data_editor widget key to force re-initialization
-                if "channel_mapping_editor" in st.session_state:
-                    del st.session_state["channel_mapping_editor"]
-                st.success(f"Loaded mappings from CSV! {n_mapped} channels assigned.")
-                st.rerun()
-
-        except Exception as e:
-            st.error(f"Error loading CSV: {e}")
+            except Exception as e:
+                st.error(f"Error loading CSV: {e}")
 
     st.markdown("---")
 
