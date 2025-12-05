@@ -767,12 +767,17 @@ def show():
 
         # Initialize session state (only on first load, don't mutate after)
         if "owned_media_multiselect" not in st.session_state:
-            saved_owned_media = st.session_state.get("config_state", {}).get("owned_media", [])
-            if saved_owned_media:
-                saved_om_names = [om["name"] for om in saved_owned_media]
-                st.session_state.owned_media_multiselect = [c for c in saved_om_names if c in available_owned_media]
+            # Check if user explicitly cleared - if so, start empty (don't auto-detect)
+            if st.session_state.get("_owned_media_cleared"):
+                st.session_state.owned_media_multiselect = []
+                del st.session_state["_owned_media_cleared"]
             else:
-                st.session_state.owned_media_multiselect = auto_owned_media if auto_owned_media else []
+                saved_owned_media = st.session_state.get("config_state", {}).get("owned_media", [])
+                if saved_owned_media:
+                    saved_om_names = [om["name"] for om in saved_owned_media]
+                    st.session_state.owned_media_multiselect = [c for c in saved_om_names if c in available_owned_media]
+                else:
+                    st.session_state.owned_media_multiselect = auto_owned_media if auto_owned_media else []
         # Don't mutate state in else block - it interferes with widget binding and prevents clearing
 
         # Selection buttons
@@ -783,10 +788,14 @@ def show():
                 st.rerun()
         with col_btn2:
             if st.button("Clear", key="clear_owned_media"):
-                st.session_state.owned_media_multiselect = []
+                # Delete the widget key to force re-initialization
+                if "owned_media_multiselect" in st.session_state:
+                    del st.session_state["owned_media_multiselect"]
                 # Also clear saved config so it doesn't restore on page reload
                 if "config_state" in st.session_state and "owned_media" in st.session_state.config_state:
                     st.session_state.config_state["owned_media"] = []
+                # Set flag to skip auto-detection on re-init
+                st.session_state["_owned_media_cleared"] = True
                 st.rerun()
 
         selected_owned_media = st.multiselect(
