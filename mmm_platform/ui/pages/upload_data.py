@@ -165,6 +165,76 @@ def _show_channel_mapping_ui(media_df: pd.DataFrame, level_cols: list[str]):
     # Create editable dataframe
     # Only include level columns and variable_name for editing
     display_cols = level_cols + ['variable_name']
+
+    # === Bulk Edit via CSV ===
+    st.markdown("#### Bulk Edit via CSV")
+    st.caption("Download the template, edit in Excel/Sheets, then upload to apply mappings in bulk.")
+
+    col_download, col_upload = st.columns(2)
+
+    with col_download:
+        # Generate CSV from current mapping
+        csv_data = st.session_state.channel_mapping_df[display_cols].to_csv(index=False)
+        st.download_button(
+            label="📥 Download Mapping CSV",
+            data=csv_data,
+            file_name="channel_mapping.csv",
+            mime="text/csv",
+            help="Download current mapping to edit in Excel/Sheets"
+        )
+
+    with col_upload:
+        uploaded_mapping = st.file_uploader(
+            "Upload Mapping CSV",
+            type=["csv"],
+            key="channel_mapping_upload",
+            help="Upload edited CSV to update all mappings at once",
+            label_visibility="collapsed"
+        )
+
+    if uploaded_mapping is not None:
+        try:
+            uploaded_df = pd.read_csv(uploaded_mapping)
+
+            # Validate columns match
+            expected_cols = set(display_cols)
+            actual_cols = set(uploaded_df.columns)
+
+            if expected_cols != actual_cols:
+                missing = expected_cols - actual_cols
+                extra = actual_cols - expected_cols
+                error_msg = "Column mismatch in uploaded CSV."
+                if missing:
+                    error_msg += f" Missing: {list(missing)}."
+                if extra:
+                    error_msg += f" Unexpected: {list(extra)}."
+                st.error(error_msg)
+            else:
+                # Merge uploaded variable_names with existing combinations
+                # Use left merge to ensure we only accept mappings for existing channel combinations
+                merged = st.session_state.channel_mapping_df[level_cols].merge(
+                    uploaded_df,
+                    on=level_cols,
+                    how='left'
+                )
+
+                # Fill NaN variable_names with empty string
+                merged['variable_name'] = merged['variable_name'].fillna('')
+
+                # Count how many mappings were applied
+                n_mapped = sum(1 for v in merged['variable_name'] if v.strip())
+
+                # Update session state
+                st.session_state.channel_mapping_df = merged
+                st.success(f"Loaded mappings from CSV! {n_mapped} channels assigned.")
+                st.rerun()
+
+        except Exception as e:
+            st.error(f"Error loading CSV: {e}")
+
+    st.markdown("---")
+
+    # === Manual Edit Table ===
     edit_df = st.session_state.channel_mapping_df[display_cols].copy()
 
     edited_df = st.data_editor(
