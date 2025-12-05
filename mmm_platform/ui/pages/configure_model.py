@@ -794,12 +794,14 @@ def show():
                     st.session_state.config_state["owned_media"] = []
                 st.rerun()
 
-        # Use dynamic key to force widget re-creation when version changes
+        # Set the widget key directly BEFORE rendering - this forces Streamlit to use our value
+        widget_key = f"owned_media_multiselect_v{st.session_state._owned_media_version}"
+        st.session_state[widget_key] = st.session_state._owned_media_selection
+
         selected_owned_media = st.multiselect(
             "Select owned media variables",
             options=available_owned_media,
-            default=st.session_state._owned_media_selection,
-            key=f"owned_media_multiselect_v{st.session_state._owned_media_version}",
+            key=widget_key,
             help="Select columns representing owned media (email, organic social, etc.)"
         )
         # Save selection back to state
