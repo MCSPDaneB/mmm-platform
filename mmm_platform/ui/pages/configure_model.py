@@ -765,45 +765,45 @@ def show():
             if any(pattern in col.lower() for pattern in ["email", "organic", "owned", "social", "newsletter", "crm"])
         ]
 
-        # Initialize session state (only on first load, don't mutate after)
-        if "owned_media_multiselect" not in st.session_state:
-            # Check if user explicitly cleared - if so, start empty (don't auto-detect)
-            if st.session_state.get("_owned_media_cleared"):
-                st.session_state.owned_media_multiselect = []
-                del st.session_state["_owned_media_cleared"]
+        # Initialize owned media selection state
+        if "_owned_media_selection" not in st.session_state:
+            saved_owned_media = st.session_state.get("config_state", {}).get("owned_media", [])
+            if saved_owned_media:
+                saved_om_names = [om["name"] for om in saved_owned_media]
+                st.session_state._owned_media_selection = [c for c in saved_om_names if c in available_owned_media]
             else:
-                saved_owned_media = st.session_state.get("config_state", {}).get("owned_media", [])
-                if saved_owned_media:
-                    saved_om_names = [om["name"] for om in saved_owned_media]
-                    st.session_state.owned_media_multiselect = [c for c in saved_om_names if c in available_owned_media]
-                else:
-                    st.session_state.owned_media_multiselect = auto_owned_media if auto_owned_media else []
-        # Don't mutate state in else block - it interferes with widget binding and prevents clearing
+                st.session_state._owned_media_selection = auto_owned_media if auto_owned_media else []
+
+        # Version counter for widget key - increment to force new widget instance
+        if "_owned_media_version" not in st.session_state:
+            st.session_state._owned_media_version = 0
 
         # Selection buttons
         col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 4])
         with col_btn1:
             if st.button("Select Suggested", key="select_suggested_owned"):
-                st.session_state.owned_media_multiselect = auto_owned_media
+                st.session_state._owned_media_selection = auto_owned_media
+                st.session_state._owned_media_version += 1
                 st.rerun()
         with col_btn2:
             if st.button("Clear", key="clear_owned_media"):
-                # Delete the widget key to force re-initialization
-                if "owned_media_multiselect" in st.session_state:
-                    del st.session_state["owned_media_multiselect"]
+                st.session_state._owned_media_selection = []
+                st.session_state._owned_media_version += 1
                 # Also clear saved config so it doesn't restore on page reload
                 if "config_state" in st.session_state and "owned_media" in st.session_state.config_state:
                     st.session_state.config_state["owned_media"] = []
-                # Set flag to skip auto-detection on re-init
-                st.session_state["_owned_media_cleared"] = True
                 st.rerun()
 
+        # Use dynamic key to force widget re-creation when version changes
         selected_owned_media = st.multiselect(
             "Select owned media variables",
             options=available_owned_media,
-            key="owned_media_multiselect",
+            default=st.session_state._owned_media_selection,
+            key=f"owned_media_multiselect_v{st.session_state._owned_media_version}",
             help="Select columns representing owned media (email, organic social, etc.)"
         )
+        # Save selection back to state
+        st.session_state._owned_media_selection = selected_owned_media
 
         if selected_owned_media:
             st.markdown("---")
