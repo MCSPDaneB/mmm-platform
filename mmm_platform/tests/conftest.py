@@ -27,7 +27,7 @@ def basic_config() -> ModelConfig:
             date_column="date",
             target_column="revenue",
             spend_scale=1000.0,
-            revenue_scale=1000.0,
+            target_scale=1000.0,
             dayfirst=False,  # Test data uses YYYY-MM-DD format
         ),
         adstock=AdstockConfig(
@@ -80,7 +80,7 @@ def complex_config() -> ModelConfig:
             date_column="date",
             target_column="revenue",
             spend_scale=1000.0,
-            revenue_scale=1000.0,
+            target_scale=1000.0,
             dayfirst=False,  # Test data uses YYYY-MM-DD format
         ),
         adstock=AdstockConfig(l_max=12),

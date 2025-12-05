@@ -362,7 +362,7 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
                 "target_column": config.data.target_column,
                 "date_column": config.data.date_column,
                 "spend_scale": config.data.spend_scale,
-                "revenue_scale": config.data.revenue_scale,
+                "target_scale": config.data.target_scale,
             }
 
             # Sampling config

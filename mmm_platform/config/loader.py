@@ -107,7 +107,7 @@ class ConfigLoader:
                 "date_column": "time",
                 "target_column": "revenue",
                 "dayfirst": True,
-                "revenue_scale": 1000.0,
+                "target_scale": 1000.0,
                 "spend_scale": 1000.0,
             },
             "category_columns": [
