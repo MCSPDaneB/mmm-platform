@@ -693,13 +693,16 @@ def _build_config_state_from_model(config: ModelConfig) -> dict:
     if config.data:
         config_state["date_col"] = config.data.date_column
         config_state["target_col"] = config.data.target_column
-        config_state["revenue_scale"] = config.data.revenue_scale
+        config_state["target_scale"] = config.data.target_scale
         config_state["spend_scale"] = config.data.spend_scale
         config_state["dayfirst"] = config.data.dayfirst
         config_state["include_trend"] = config.data.include_trend
         config_state["model_start_date"] = config.data.model_start_date
         config_state["model_end_date"] = config.data.model_end_date
         config_state["brand"] = config.data.brand
+        # KPI type fields for proper prior terminology
+        config_state["kpi_type"] = config.data.kpi_type.value if hasattr(config.data.kpi_type, 'value') else config.data.kpi_type
+        config_state["kpi_display_name"] = config.data.kpi_display_name
 
     # Adstock settings - include all decay rates
     if config.adstock:
