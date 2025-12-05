@@ -55,6 +55,22 @@ def _check_config_compatibility(new_df: pd.DataFrame):
                 st.session_state.current_config = None
                 st.session_state.model_fitted = False
                 st.session_state.current_model = None
+                # Also reset config_state to prevent cross-brand contamination
+                st.session_state.config_state = {
+                    "name": "my_mmm_model",
+                    "channels": [],
+                    "controls": [],
+                    "owned_media": [],
+                    "competitors": [],
+                    "dummy_variables": [],
+                }
+                # Clear widget multiselect states
+                for key in ["channel_multiselect", "owned_media_multiselect",
+                            "competitor_multiselect", "control_multiselect"]:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                # Clear category columns
+                st.session_state.category_columns = []
                 st.success("Config reset!")
                 st.rerun()
         with col2:
@@ -301,6 +317,28 @@ def _show_merge_preview(media_df: pd.DataFrame, level_cols: list[str],
             st.session_state.dayfirst = dayfirst
             st.session_state.merge_complete = True
 
+            # RESET config_state for new data to prevent cross-brand contamination
+            # This ensures owned_media, dummies, etc. from previous brands don't carry over
+            st.session_state.config_state = {
+                "name": "my_mmm_model",
+                "channels": [],
+                "controls": [],
+                "owned_media": [],
+                "competitors": [],
+                "dummy_variables": [],
+            }
+            # Clear widget multiselect states so they re-initialize from fresh config_state
+            for key in ["channel_multiselect", "owned_media_multiselect",
+                        "competitor_multiselect", "control_multiselect"]:
+                if key in st.session_state:
+                    del st.session_state[key]
+            # Clear category columns
+            st.session_state.category_columns = []
+            # Clear current_config and model state
+            st.session_state.current_config = None
+            st.session_state.model_fitted = False
+            st.session_state.current_model = None
+
 
 def _show_final_configuration():
     """Show final configuration after merge."""
@@ -402,6 +440,28 @@ def _show_single_file_upload():
             # Store in session state
             st.session_state.current_data = df
             st.session_state.uploaded_filename = uploaded_file.name
+
+            # RESET config_state for new data to prevent cross-brand contamination
+            # This ensures owned_media, dummies, etc. from previous brands don't carry over
+            st.session_state.config_state = {
+                "name": "my_mmm_model",
+                "channels": [],
+                "controls": [],
+                "owned_media": [],
+                "competitors": [],
+                "dummy_variables": [],
+            }
+            # Clear widget multiselect states so they re-initialize from fresh config_state
+            for key in ["channel_multiselect", "owned_media_multiselect",
+                        "competitor_multiselect", "control_multiselect"]:
+                if key in st.session_state:
+                    del st.session_state[key]
+            # Clear category columns
+            st.session_state.category_columns = []
+            # Clear current_config and model state
+            st.session_state.current_config = None
+            st.session_state.model_fitted = False
+            st.session_state.current_model = None
 
             # Check config compatibility with new data
             _check_config_compatibility(df)
