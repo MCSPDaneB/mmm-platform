@@ -789,9 +789,12 @@ def show():
             if st.button("Clear", key="clear_owned_media"):
                 st.session_state._owned_media_selection = []
                 st.session_state._owned_media_version += 1
-                # Also clear saved config so it doesn't restore on page reload
+                # Clear saved config so it doesn't restore on page reload
                 if "config_state" in st.session_state and "owned_media" in st.session_state.config_state:
                     st.session_state.config_state["owned_media"] = []
+                # Clear the data editor DataFrame so sync function doesn't restore old data
+                if "owned_media_df_current" in st.session_state:
+                    del st.session_state["owned_media_df_current"]
                 st.rerun()
 
         # Set the widget key directly BEFORE rendering - this forces Streamlit to use our value
