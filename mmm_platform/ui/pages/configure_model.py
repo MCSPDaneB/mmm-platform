@@ -1001,6 +1001,9 @@ def show():
         with col_btn2:
             if st.button("Clear", key="clear_competitors"):
                 st.session_state.competitor_multiselect = []
+                # Also clear saved config so it doesn't restore on page reload
+                if "config_state" in st.session_state and "competitors" in st.session_state.config_state:
+                    st.session_state.config_state["competitors"] = []
                 st.rerun()
 
         selected_competitors = st.multiselect(
@@ -1122,6 +1125,9 @@ def show():
         with col_btn2:
             if st.button("Clear Controls", key="clear_controls"):
                 st.session_state.control_multiselect = []
+                # Also clear saved config so it doesn't restore on page reload
+                if "config_state" in st.session_state and "controls" in st.session_state.config_state:
+                    st.session_state.config_state["controls"] = []
                 st.rerun()
 
         # Control selection multiselect
