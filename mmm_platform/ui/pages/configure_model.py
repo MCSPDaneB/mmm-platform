@@ -468,8 +468,7 @@ def show():
             if col.startswith("PaidMedia_")
         ]
 
-        # Initialize session state for channels if needed
-        # If channel_multiselect exists (e.g. from loaded config), filter to valid columns
+        # Initialize session state for channels if needed (only on first load, don't mutate after)
         if "channel_multiselect" not in st.session_state:
             # Check if we have saved channels in config_state to restore
             saved_channels = st.session_state.get("config_state", {}).get("channels", [])
@@ -479,9 +478,7 @@ def show():
                 st.session_state.channel_multiselect = [c for c in saved_channel_names if c in numeric_cols]
             else:
                 st.session_state.channel_multiselect = potential_channels if potential_channels else []
-        else:
-            # Filter existing selection to only valid columns
-            st.session_state.channel_multiselect = [c for c in st.session_state.channel_multiselect if c in numeric_cols]
+        # Don't mutate state in else block - it interferes with widget binding and prevents clearing
 
         # Select All / Clear buttons
         col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 4])
@@ -765,7 +762,7 @@ def show():
             if any(pattern in col.lower() for pattern in ["email", "organic", "owned", "social", "newsletter", "crm"])
         ]
 
-        # Initialize session state
+        # Initialize session state (only on first load, don't mutate after)
         if "owned_media_multiselect" not in st.session_state:
             saved_owned_media = st.session_state.get("config_state", {}).get("owned_media", [])
             if saved_owned_media:
@@ -773,8 +770,7 @@ def show():
                 st.session_state.owned_media_multiselect = [c for c in saved_om_names if c in available_owned_media]
             else:
                 st.session_state.owned_media_multiselect = auto_owned_media if auto_owned_media else []
-        else:
-            st.session_state.owned_media_multiselect = [c for c in st.session_state.owned_media_multiselect if c in available_owned_media]
+        # Don't mutate state in else block - it interferes with widget binding and prevents clearing
 
         # Selection buttons
         col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 4])
