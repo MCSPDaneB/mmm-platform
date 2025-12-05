@@ -226,6 +226,9 @@ def _show_channel_mapping_ui(media_df: pd.DataFrame, level_cols: list[str]):
 
                 # Update session state
                 st.session_state.channel_mapping_df = merged
+                # Delete the data_editor widget key to force re-initialization
+                if "channel_mapping_editor" in st.session_state:
+                    del st.session_state["channel_mapping_editor"]
                 st.success(f"Loaded mappings from CSV! {n_mapped} channels assigned.")
                 st.rerun()
 
