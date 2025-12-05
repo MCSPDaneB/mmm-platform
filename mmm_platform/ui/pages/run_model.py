@@ -357,12 +357,15 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
                     "sign_constraint": dv.sign_constraint.value if hasattr(dv.sign_constraint, 'value') else str(dv.sign_constraint),
                 })
 
-            # Data config
+            # Data config - include model date range for filtering
             data_config = {
                 "target_column": config.data.target_column,
                 "date_column": config.data.date_column,
                 "spend_scale": config.data.spend_scale,
                 "target_scale": config.data.target_scale,
+                "model_start_date": config.data.model_start_date,
+                "model_end_date": config.data.model_end_date,
+                "dayfirst": config.data.dayfirst,
             }
 
             # Sampling config

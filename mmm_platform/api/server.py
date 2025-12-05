@@ -85,7 +85,10 @@ class DataConfig(BaseModel):
     target_column: str
     date_column: str
     spend_scale: float = 1.0
-    revenue_scale: float = 1.0
+    target_scale: float = 1.0  # Renamed from revenue_scale for KPI-agnostic support
+    model_start_date: Optional[str] = None
+    model_end_date: Optional[str] = None
+    dayfirst: bool = True
 
 
 class SamplingConfig(BaseModel):
@@ -312,7 +315,10 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
                 target_column=request.data_config.target_column,
                 date_column=request.data_config.date_column,
                 spend_scale=request.data_config.spend_scale,
-                revenue_scale=request.data_config.revenue_scale,
+                target_scale=request.data_config.target_scale,
+                model_start_date=request.data_config.model_start_date,
+                model_end_date=request.data_config.model_end_date,
+                dayfirst=request.data_config.dayfirst,
             ),
             sampling=SchemaSamplingConfig(
                 draws=request.sampling_config.draws,
