@@ -489,6 +489,9 @@ def show():
         with col_btn2:
             if st.button("Clear Channels", key="clear_channels"):
                 st.session_state.channel_multiselect = []
+                # Also clear saved config so it doesn't restore on page reload
+                if "config_state" in st.session_state and "channels" in st.session_state.config_state:
+                    st.session_state.config_state["channels"] = []
                 st.rerun()
 
         # Channel selection multiselect
@@ -781,6 +784,9 @@ def show():
         with col_btn2:
             if st.button("Clear", key="clear_owned_media"):
                 st.session_state.owned_media_multiselect = []
+                # Also clear saved config so it doesn't restore on page reload
+                if "config_state" in st.session_state and "owned_media" in st.session_state.config_state:
+                    st.session_state.config_state["owned_media"] = []
                 st.rerun()
 
         selected_owned_media = st.multiselect(
