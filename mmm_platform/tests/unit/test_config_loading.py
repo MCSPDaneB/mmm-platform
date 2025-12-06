@@ -6,7 +6,8 @@ Tests for:
 """
 import pytest
 from mmm_platform.config.schema import (
-    ModelConfig, DataConfig, ChannelConfig, OwnedMediaConfig, KPIType
+    ModelConfig, DataConfig, ChannelConfig, OwnedMediaConfig, ControlConfig,
+    KPIType, AdstockType
 )
 
 
@@ -328,3 +329,170 @@ class TestEmptyOwnedMediaPreserved:
         # Should auto-detect because no owned_media key exists
         assert selection == auto_owned_media
         assert has_owned_media_key is False
+
+
+class TestPriorsPreserved:
+    """Tests to ensure all priors are preserved when loading configs."""
+
+    def test_channel_roi_priors_preserved(self):
+        """Verify ROI priors are correctly extracted from loaded config."""
+        from mmm_platform.ui.pages.saved_models import _build_config_state_from_model
+
+        config = ModelConfig(
+            name="test_model",
+            data=DataConfig(
+                date_column="date",
+                target_column="revenue",
+            ),
+            channels=[
+                ChannelConfig(
+                    name="channel_a_spend",
+                    roi_prior_low=1.5,
+                    roi_prior_mid=3.0,
+                    roi_prior_high=6.0,
+                    adstock_type=AdstockType.SHORT,
+                ),
+            ],
+        )
+
+        config_state = _build_config_state_from_model(config)
+
+        # Verify priors are preserved
+        assert len(config_state["channels"]) == 1
+        ch = config_state["channels"][0]
+        assert ch["roi_prior_low"] == 1.5
+        assert ch["roi_prior_mid"] == 3.0
+        assert ch["roi_prior_high"] == 6.0
+        assert ch["adstock_type"] == "short"
+
+    def test_channel_curve_sharpness_override_preserved(self):
+        """Verify curve_sharpness_override is preserved for channels."""
+        from mmm_platform.ui.pages.saved_models import _build_config_state_from_model
+
+        config = ModelConfig(
+            name="test_model",
+            data=DataConfig(
+                date_column="date",
+                target_column="revenue",
+            ),
+            channels=[
+                ChannelConfig(
+                    name="channel_a_spend",
+                    roi_prior_mid=2.0,
+                    curve_sharpness_override="gradual",
+                ),
+            ],
+        )
+
+        config_state = _build_config_state_from_model(config)
+
+        ch = config_state["channels"][0]
+        assert ch["curve_sharpness_override"] == "gradual"
+
+    def test_owned_media_roi_priors_preserved(self):
+        """Verify owned media ROI priors are preserved."""
+        from mmm_platform.ui.pages.saved_models import _build_config_state_from_model
+
+        config = ModelConfig(
+            name="test_model",
+            data=DataConfig(
+                date_column="date",
+                target_column="revenue",
+            ),
+            channels=[ChannelConfig(name="ch_spend", roi_prior_mid=2.0)],
+            owned_media=[
+                OwnedMediaConfig(
+                    name="email_opens",
+                    include_roi=True,
+                    roi_prior_low=0.5,
+                    roi_prior_mid=1.0,
+                    roi_prior_high=2.0,
+                    adstock_type=AdstockType.MEDIUM,
+                ),
+            ],
+        )
+
+        config_state = _build_config_state_from_model(config)
+
+        assert len(config_state["owned_media"]) == 1
+        om = config_state["owned_media"][0]
+        assert om["include_roi"] == True
+        assert om["roi_prior_low"] == 0.5
+        assert om["roi_prior_mid"] == 1.0
+        assert om["roi_prior_high"] == 2.0
+        assert om["adstock_type"] == "medium"
+
+    def test_control_settings_preserved(self):
+        """Verify control settings are preserved."""
+        from mmm_platform.ui.pages.saved_models import _build_config_state_from_model
+
+        config = ModelConfig(
+            name="test_model",
+            data=DataConfig(
+                date_column="date",
+                target_column="revenue",
+            ),
+            channels=[ChannelConfig(name="ch_spend", roi_prior_mid=2.0)],
+            controls=[
+                ControlConfig(
+                    name="gdp",
+                    sign_constraint="positive",
+                    apply_adstock=True,
+                    adstock_type=AdstockType.LONG,
+                ),
+            ],
+        )
+
+        config_state = _build_config_state_from_model(config)
+
+        assert len(config_state["controls"]) == 1
+        ctrl = config_state["controls"][0]
+        assert ctrl["sign_constraint"] == "positive"
+        assert ctrl["apply_adstock"] == True
+        assert ctrl["adstock_type"] == "long"
+
+    def test_multiple_channels_all_priors_preserved(self):
+        """Verify multiple channels each have their own priors preserved."""
+        from mmm_platform.ui.pages.saved_models import _build_config_state_from_model
+
+        config = ModelConfig(
+            name="test_model",
+            data=DataConfig(
+                date_column="date",
+                target_column="revenue",
+            ),
+            channels=[
+                ChannelConfig(
+                    name="channel_a_spend",
+                    roi_prior_low=1.0,
+                    roi_prior_mid=2.0,
+                    roi_prior_high=4.0,
+                    adstock_type=AdstockType.SHORT,
+                ),
+                ChannelConfig(
+                    name="channel_b_spend",
+                    roi_prior_low=0.5,
+                    roi_prior_mid=1.5,
+                    roi_prior_high=3.0,
+                    adstock_type=AdstockType.LONG,
+                ),
+            ],
+        )
+
+        config_state = _build_config_state_from_model(config)
+
+        assert len(config_state["channels"]) == 2
+
+        # Channel A
+        ch_a = next(ch for ch in config_state["channels"] if ch["name"] == "channel_a_spend")
+        assert ch_a["roi_prior_low"] == 1.0
+        assert ch_a["roi_prior_mid"] == 2.0
+        assert ch_a["roi_prior_high"] == 4.0
+        assert ch_a["adstock_type"] == "short"
+
+        # Channel B
+        ch_b = next(ch for ch in config_state["channels"] if ch["name"] == "channel_b_spend")
+        assert ch_b["roi_prior_low"] == 0.5
+        assert ch_b["roi_prior_mid"] == 1.5
+        assert ch_b["roi_prior_high"] == 3.0
+        assert ch_b["adstock_type"] == "long"

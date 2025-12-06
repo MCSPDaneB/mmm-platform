@@ -659,10 +659,13 @@ def _load_config(path: str):
             "competitor_multiselect",
             "control_multiselect",
             "channels_data_editor",
+            "channels_df_current",     # DataFrame state for channels (priors, adstock, etc.)
             "owned_media_data_editor",
             "owned_media_df_current",  # DataFrame state for owned media
             "competitor_data_editor",
+            "competitors_df_current",  # DataFrame state for competitors
             "controls_data_editor",
+            "controls_df_current",     # DataFrame state for controls
         ]
         for key in widget_keys_to_clear:
             if key in st.session_state:
@@ -877,10 +880,13 @@ def _load_model(path: str, navigate_to_results: bool = False):
             "competitor_multiselect",
             "control_multiselect",
             "channels_data_editor",
+            "channels_df_current",     # DataFrame state for channels (priors, adstock, etc.)
             "owned_media_data_editor",
             "owned_media_df_current",  # DataFrame state for owned media
             "competitor_data_editor",
+            "competitors_df_current",  # DataFrame state for competitors
             "controls_data_editor",
+            "controls_df_current",     # DataFrame state for controls
         ]
         for key in widget_keys_to_clear:
             if key in st.session_state:
