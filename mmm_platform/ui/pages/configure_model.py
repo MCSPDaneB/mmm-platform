@@ -288,58 +288,7 @@ def show():
                 value=st.session_state.get("dayfirst", saved_data.get("dayfirst", True))
             )
 
-        # Trend Detection section
-        st.markdown("---")
-        st.markdown("**Time Trend Analysis**")
-
-        # Run trend detection on selected KPI
-        if target_col and target_col in df.columns:
-            trend_result = detect_trend(df[target_col])
-
-            # Show mini chart with trend line
-            import matplotlib.pyplot as plt
-            fig, ax = plt.subplots(figsize=(6, 2.5))
-            ax.plot(df[target_col].values, alpha=0.7, linewidth=1, label='KPI')
-            ax.plot(trend_result['trend_line'], '--', color='red', linewidth=2, label='Trend')
-            ax.set_xlabel('Time Period', fontsize=9)
-            ax.set_ylabel(target_col, fontsize=9)
-            ax.tick_params(axis='both', labelsize=8)
-            ax.legend(fontsize=8)
-            plt.tight_layout()
-            st.pyplot(fig)
-            plt.close(fig)
-
-            # Show test result
-            trend_col1, trend_col2 = st.columns([2, 1])
-            with trend_col1:
-                if trend_result['has_trend']:
-                    direction_emoji = "📈" if trend_result['direction'] == 'increasing' else "📉"
-                    st.success(f"{direction_emoji} Significant {trend_result['direction']} trend detected (p={trend_result['p_value']:.3f}, R²={trend_result['r_squared']:.2f})")
-                    trend_default = True
-                else:
-                    st.info(f"No significant trend detected (p={trend_result['p_value']:.3f})")
-                    trend_default = False
-
-            with trend_col2:
-                # Use saved value if available, otherwise fall back to trend detection
-                saved_include_trend = saved_data.get("include_trend")
-                checkbox_default = saved_include_trend if saved_include_trend is not None else trend_default
-
-                include_trend = st.checkbox(
-                    "Include Trend",
-                    value=checkbox_default,
-                    key=f"include_trend_check_{config_version}",
-                    help="Add a linear time trend (t=1,2,3,...) as a control variable"
-                )
-        else:
-            include_trend = st.checkbox(
-                "Include Time Trend",
-                value=saved_data.get("include_trend", True),
-                key=f"include_trend_check_fallback_{config_version}",
-                help="Add a linear time trend (t=1,2,3,...) as a control variable"
-            )
-
-        # Model Date Range section
+        # Model Date Range section - MUST come before Trend Analysis so filtering works
         st.markdown("---")
         st.markdown("**Model Date Range**")
         st.caption("Optionally limit the date range used for modeling")
@@ -351,6 +300,7 @@ def show():
             data_min_date = df_dates.min().date()
             data_max_date = df_dates.max().date()
         except Exception:
+            df_dates = None
             data_min_date = None
             data_max_date = None
 
@@ -394,19 +344,73 @@ def show():
                 help="End date for modeling (leave at max to use all data)"
             )
 
-        # Show row count for selected range
-        if data_min_date and data_max_date:
+        # Show row count for selected range and create filtered dataframe
+        df_filtered = df  # Default to full dataframe
+        if data_min_date and data_max_date and df_dates is not None:
             try:
                 mask = (df_dates >= pd.Timestamp(model_start_date)) & (df_dates <= pd.Timestamp(model_end_date))
                 rows_in_range = mask.sum()
                 total_rows = len(df)
                 st.info(f"📊 Selected range: **{rows_in_range}** of {total_rows} rows ({model_start_date} to {model_end_date})")
+                # Create filtered dataframe for trend analysis
+                df_filtered = df[mask].reset_index(drop=True)
             except Exception:
                 pass
 
         # Convert to string for storage (None if using full range)
         model_start_str = model_start_date.strftime("%Y-%m-%d") if model_start_date and model_start_date != data_min_date else None
         model_end_str = model_end_date.strftime("%Y-%m-%d") if model_end_date and model_end_date != data_max_date else None
+
+        # Trend Detection section - uses filtered data based on date range
+        st.markdown("---")
+        st.markdown("**Time Trend Analysis**")
+
+        # Run trend detection on selected KPI using filtered data
+        if target_col and target_col in df_filtered.columns and len(df_filtered) > 2:
+            trend_result = detect_trend(df_filtered[target_col])
+
+            # Show mini chart with trend line
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots(figsize=(6, 2.5))
+            ax.plot(df_filtered[target_col].values, alpha=0.7, linewidth=1, label='KPI')
+            ax.plot(trend_result['trend_line'], '--', color='red', linewidth=2, label='Trend')
+            ax.set_xlabel('Time Period', fontsize=9)
+            ax.set_ylabel(target_col, fontsize=9)
+            ax.tick_params(axis='both', labelsize=8)
+            ax.legend(fontsize=8)
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+
+            # Show test result
+            trend_col1, trend_col2 = st.columns([2, 1])
+            with trend_col1:
+                if trend_result['has_trend']:
+                    direction_emoji = "📈" if trend_result['direction'] == 'increasing' else "📉"
+                    st.success(f"{direction_emoji} Significant {trend_result['direction']} trend detected (p={trend_result['p_value']:.3f}, R²={trend_result['r_squared']:.2f})")
+                    trend_default = True
+                else:
+                    st.info(f"No significant trend detected (p={trend_result['p_value']:.3f})")
+                    trend_default = False
+
+            with trend_col2:
+                # Use saved value if available, otherwise fall back to trend detection
+                saved_include_trend = saved_data.get("include_trend")
+                checkbox_default = saved_include_trend if saved_include_trend is not None else trend_default
+
+                include_trend = st.checkbox(
+                    "Include Trend",
+                    value=checkbox_default,
+                    key=f"include_trend_check_{config_version}",
+                    help="Add a linear time trend (t=1,2,3,...) as a control variable"
+                )
+        else:
+            include_trend = st.checkbox(
+                "Include Time Trend",
+                value=saved_data.get("include_trend", True),
+                key=f"include_trend_check_fallback_{config_version}",
+                help="Add a linear time trend (t=1,2,3,...) as a control variable"
+            )
 
         st.session_state.config_state.update({
             "name": model_name,
