@@ -117,15 +117,21 @@ def show_pre_fit_warnings(config, df):
         warnings = run_pre_fit_checks(config, df)
         if warnings:
             with st.expander(f"⚠️ Pre-Fit Warnings ({len(warnings)})", expanded=True):
-                st.caption("Issues detected that may affect model quality")
+                # Build table data
+                rows = []
                 for w in warnings:
-                    if w.severity == "critical":
-                        st.error(f"**{w.channel}**: {w.issue}")
-                    elif w.severity == "warning":
-                        st.warning(f"**{w.channel}**: {w.issue}")
-                    else:
-                        st.info(f"**{w.channel}**: {w.issue}")
-                    st.caption(f"💡 {w.recommendation}")
+                    severity_icon = {"critical": "🔴", "warning": "⚠️", "info": "ℹ️"}.get(w.severity, "")
+                    rows.append({
+                        "Channel": w.channel,
+                        "Severity": severity_icon,
+                        "Issue": w.issue,
+                        "Recommendation": w.recommendation
+                    })
+
+                # Display as table
+                import pandas as pd
+                df_warnings = pd.DataFrame(rows)
+                st.dataframe(df_warnings, hide_index=True)
     except Exception:
         pass  # Silently skip if pre-fit checks fail
 
