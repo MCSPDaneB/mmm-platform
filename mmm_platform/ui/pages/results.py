@@ -366,14 +366,23 @@ def show():
                     "contribution_real": "sum",
                 }).reset_index()
                 category_roi["roi"] = category_roi["contribution_real"] / (category_roi["spend_real"] + 1e-9)
-                category_roi = category_roi.sort_values("roi", ascending=False)
+
+                # Convert to display values for count KPIs (efficiency -> cost-per)
+                if kpi_labels.is_revenue_type:
+                    category_roi["roi_display"] = category_roi["roi"]
+                else:
+                    category_roi["roi_display"] = category_roi["roi"].apply(
+                        lambda x: kpi_labels.convert_internal_to_display(x) if x > 0 else 0
+                    )
+
+                category_roi = category_roi.sort_values("roi_display", ascending=kpi_labels.is_revenue_type is False)
 
                 fig = px.bar(
                     category_roi,
                     x="category",
-                    y="roi",
+                    y="roi_display",
                     title=f"{eff_label} by Category",
-                    labels={"category": "Category", "roi": eff_label},
+                    labels={"category": "Category", "roi_display": eff_label},
                     color="category",
                     color_discrete_map=CATEGORY_COLORS,
                 )
@@ -381,16 +390,24 @@ def show():
                 st.plotly_chart(fig, width="stretch")
 
                 # Category table
-                display_df = category_roi[["category", "spend_real", "contribution_real", "roi"]].copy()
+                display_df = category_roi[["category", "spend_real", "contribution_real", "roi_display"]].copy()
                 display_df.columns = ["Category", "Spend ($)", "Contribution ($)", eff_label]
             else:
+                # Convert to display values for count KPIs (efficiency -> cost-per)
+                if kpi_labels.is_revenue_type:
+                    roi_df["roi_display"] = roi_df["roi"]
+                else:
+                    roi_df["roi_display"] = roi_df["roi"].apply(
+                        lambda x: kpi_labels.convert_internal_to_display(x) if x > 0 else 0
+                    )
+
                 # Efficiency bar chart by channel, colored by category
                 fig = px.bar(
-                    roi_df.sort_values("roi", ascending=False),
+                    roi_df.sort_values("roi_display", ascending=kpi_labels.is_revenue_type is False),
                     x="display_name",
-                    y="roi",
+                    y="roi_display",
                     title=f"{eff_label} by Channel (colored by Category)",
-                    labels={"display_name": "Channel", "roi": eff_label},
+                    labels={"display_name": "Channel", "roi_display": eff_label},
                     color="category",
                     color_discrete_map=CATEGORY_COLORS,
                 )
@@ -398,7 +415,7 @@ def show():
                 st.plotly_chart(fig, width="stretch")
 
                 # Channel table
-                display_df = roi_df[["display_name", "category", "spend_real", "contribution_real", "roi"]].copy()
+                display_df = roi_df[["display_name", "category", "spend_real", "contribution_real", "roi_display"]].copy()
                 display_df.columns = ["Channel", "Category", "Spend ($)", "Contribution ($)", eff_label]
 
             # Format table
@@ -410,32 +427,34 @@ def show():
             st.dataframe(display_df, width="stretch", hide_index=True)
 
             # Spend vs Contribution scatter
-            st.subheader("Spend vs Contribution")
+            target_label = kpi_labels.target_name if not kpi_labels.is_revenue_type else "Contribution"
+            st.subheader(f"Spend vs {target_label}")
 
             fig2 = px.scatter(
                 roi_df,
                 x="spend_real",
                 y="contribution_real",
                 text="display_name",
-                title="Spend vs Contribution by Channel",
+                title=f"Spend vs {target_label} by Channel",
                 labels={
                     "spend_real": "Total Spend ($)",
-                    "contribution_real": "Total Contribution ($)"
+                    "contribution_real": f"Total {target_label}" + (" ($)" if kpi_labels.is_revenue_type else "")
                 },
                 color="category",
                 color_discrete_map=CATEGORY_COLORS,
             )
             fig2.update_traces(textposition="top center")
 
-            # Add break-even line
-            max_val = max(roi_df["spend_real"].max(), roi_df["contribution_real"].max())
-            fig2.add_trace(go.Scatter(
-                x=[0, max_val],
-                y=[0, max_val],
-                mode="lines",
-                name=f"Break-even ({eff_label}=1)",
-                line=dict(dash="dash", color="gray")
-            ))
+            # Add break-even line (only for revenue KPIs where ROI=1 is meaningful)
+            if kpi_labels.is_revenue_type:
+                max_val = max(roi_df["spend_real"].max(), roi_df["contribution_real"].max())
+                fig2.add_trace(go.Scatter(
+                    x=[0, max_val],
+                    y=[0, max_val],
+                    mode="lines",
+                    name=f"Break-even ({eff_label}=1)",
+                    line=dict(dash="dash", color="gray")
+                ))
 
             st.plotly_chart(fig2, width="stretch")
 
@@ -473,8 +492,19 @@ def show():
 
             display_df = priority_df.copy()
             display_df['current_spend'] = display_df['current_spend'].apply(lambda x: f"${x:,.0f}")
-            display_df['current_roi'] = display_df['current_roi'].apply(lambda x: f"${x:.2f}")
-            display_df['marginal_roi'] = display_df['marginal_roi'].apply(lambda x: f"${x:.2f}")
+
+            # Convert ROI values for count KPIs (efficiency -> cost-per)
+            if kpi_labels.is_revenue_type:
+                display_df['current_roi'] = display_df['current_roi'].apply(lambda x: f"{x:.2f}")
+                display_df['marginal_roi'] = display_df['marginal_roi'].apply(lambda x: f"{x:.2f}")
+            else:
+                display_df['current_roi'] = display_df['current_roi'].apply(
+                    lambda x: f"{kpi_labels.convert_internal_to_display(x):.2f}" if x > 0 else "N/A"
+                )
+                display_df['marginal_roi'] = display_df['marginal_roi'].apply(
+                    lambda x: f"{kpi_labels.convert_internal_to_display(x):.2f}" if x > 0 else "N/A"
+                )
+
             display_df['breakeven_spend'] = display_df['breakeven_spend'].apply(
                 lambda x: f"${x:,.0f}" if x is not None else "N/A"
             )
@@ -501,8 +531,22 @@ def show():
 
             result = marginal_analyzer.run_full_analysis()
             channel_names = [ch.channel_name for ch in result.channel_analysis]
-            current_rois = [ch.current_roi for ch in result.channel_analysis]
-            marginal_rois = [ch.marginal_roi for ch in result.channel_analysis]
+
+            # Convert ROI values for count KPIs (efficiency -> cost-per)
+            if kpi_labels.is_revenue_type:
+                current_rois = [ch.current_roi for ch in result.channel_analysis]
+                marginal_rois = [ch.marginal_roi for ch in result.channel_analysis]
+                breakeven_val = 1
+            else:
+                current_rois = [
+                    kpi_labels.convert_internal_to_display(ch.current_roi) if ch.current_roi > 0 else 0
+                    for ch in result.channel_analysis
+                ]
+                marginal_rois = [
+                    kpi_labels.convert_internal_to_display(ch.marginal_roi) if ch.marginal_roi > 0 else 0
+                    for ch in result.channel_analysis
+                ]
+                breakeven_val = 1  # $1 cost per target is still breakeven
 
             fig = go.Figure()
             fig.add_trace(go.Bar(
@@ -517,7 +561,7 @@ def show():
                 y=marginal_rois,
                 marker_color='orange'
             ))
-            fig.add_hline(y=1, line_dash="dash", line_color="red", annotation_text="Breakeven")
+            fig.add_hline(y=breakeven_val, line_dash="dash", line_color="red", annotation_text="Breakeven")
             fig.update_layout(
                 barmode='group',
                 title=f"Current {eff_label} vs Marginal {eff_label} by Channel",
@@ -767,12 +811,23 @@ def show():
 
                 roi_data = []
                 for roi in sig_report.roi_posteriors:
+                    # Convert efficiency to display value (inverts for count KPIs)
+                    display_mean = kpi_labels.convert_internal_to_display(roi.roi_mean)
+                    display_median = kpi_labels.convert_internal_to_display(roi.roi_median)
+                    display_5pct = kpi_labels.convert_internal_to_display(roi.roi_5pct)
+                    display_95pct = kpi_labels.convert_internal_to_display(roi.roi_95pct)
+
+                    # For count KPIs, inversion reverses ordering, so swap 5/95 percentiles
+                    # to maintain proper CI semantics (5% = lower bound, 95% = upper bound)
+                    if not kpi_labels.is_revenue_type:
+                        display_5pct, display_95pct = display_95pct, display_5pct
+
                     roi_data.append({
                         "Channel": roi.channel,
-                        f"{eff_label} Mean": f"{roi.roi_mean:.2f}",
-                        f"{eff_label} Median": f"{roi.roi_median:.2f}",
-                        f"{eff_label} 5%": f"{roi.roi_5pct:.2f}",
-                        f"{eff_label} 95%": f"{roi.roi_95pct:.2f}",
+                        f"{eff_label} Mean": f"{display_mean:.2f}",
+                        f"{eff_label} Median": f"{display_median:.2f}",
+                        f"{eff_label} 5%": f"{display_5pct:.2f}",
+                        f"{eff_label} 95%": f"{display_95pct:.2f}",
                         "Significant": "Yes" if roi.significant else "No"
                     })
 
@@ -782,9 +837,18 @@ def show():
                 # Visualization
                 st.markdown("---")
                 channels = [roi.channel for roi in sig_report.roi_posteriors]
-                roi_means = [roi.roi_mean for roi in sig_report.roi_posteriors]
-                roi_5s = [roi.roi_5pct for roi in sig_report.roi_posteriors]
-                roi_95s = [roi.roi_95pct for roi in sig_report.roi_posteriors]
+
+                # Convert values for chart display
+                if kpi_labels.is_revenue_type:
+                    roi_means = [roi.roi_mean for roi in sig_report.roi_posteriors]
+                    roi_5s = [roi.roi_5pct for roi in sig_report.roi_posteriors]
+                    roi_95s = [roi.roi_95pct for roi in sig_report.roi_posteriors]
+                else:
+                    # Invert for cost-per display, swap 5/95 to maintain proper CI bounds
+                    roi_means = [1/roi.roi_mean if roi.roi_mean > 0 else 0 for roi in sig_report.roi_posteriors]
+                    roi_5s = [1/roi.roi_95pct if roi.roi_95pct > 0 else 0 for roi in sig_report.roi_posteriors]
+                    roi_95s = [1/roi.roi_5pct if roi.roi_5pct > 0 else 0 for roi in sig_report.roi_posteriors]
+
                 colors = ['steelblue' if roi.significant else 'lightcoral' for roi in sig_report.roi_posteriors]
 
                 fig = go.Figure()
@@ -1426,9 +1490,15 @@ def show():
                 roi_df = contributions.get_channel_roi()
                 metrics = []
                 for _, row in roi_df.iterrows():
+                    # Convert ROI for count KPIs (efficiency -> cost-per)
+                    if kpi_labels.is_revenue_type:
+                        display_roi = row['roi']
+                    else:
+                        display_roi = kpi_labels.convert_internal_to_display(row['roi']) if row['roi'] > 0 else 0
+
                     metrics.append({
                         'channel': row['channel'].replace('_spend', ''),
-                        'roi': row['roi'],
+                        'roi': display_roi,
                         'spend': row['spend_real'],
                         'contribution': row['contribution_real'],
                     })
@@ -1947,20 +2017,43 @@ def show():
             if roi_report.channel_results:
                 roi_df = roi_report.to_dataframe()
 
-                display_df = pd.DataFrame({
-                    "Channel": roi_df["channel"],
-                    f"Prior {eff_label} (Low-Mid-High)": roi_df.apply(
-                        lambda r: f"{r['prior_roi_low']:.1f} - {r['prior_roi_mid']:.1f} - {r['prior_roi_high']:.1f}",
-                        axis=1
-                    ),
-                    f"Posterior {eff_label} [90% HDI]": roi_df.apply(
-                        lambda r: f"{r['posterior_roi_mean']:.2f} [{r['posterior_roi_hdi_low']:.2f}, {r['posterior_roi_hdi_high']:.2f}]",
-                        axis=1
-                    ),
-                    "Prior in HDI": roi_df["prior_in_hdi"].apply(lambda x: "✅" if x else "⚠️"),
-                    f"{eff_label} Shift": roi_df["roi_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
-                    "λ Shift": roi_df["lambda_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
-                })
+                # Convert values for display (invert for count KPIs)
+                def convert_for_display(val):
+                    return kpi_labels.convert_internal_to_display(val)
+
+                if kpi_labels.is_revenue_type:
+                    # Revenue KPI: display raw values
+                    display_df = pd.DataFrame({
+                        "Channel": roi_df["channel"],
+                        f"Prior {eff_label} (Low-Mid-High)": roi_df.apply(
+                            lambda r: f"{r['prior_roi_low']:.1f} - {r['prior_roi_mid']:.1f} - {r['prior_roi_high']:.1f}",
+                            axis=1
+                        ),
+                        f"Posterior {eff_label} [90% HDI]": roi_df.apply(
+                            lambda r: f"{r['posterior_roi_mean']:.2f} [{r['posterior_roi_hdi_low']:.2f}, {r['posterior_roi_hdi_high']:.2f}]",
+                            axis=1
+                        ),
+                        "Prior in HDI": roi_df["prior_in_hdi"].apply(lambda x: "✅" if x else "⚠️"),
+                        f"{eff_label} Shift": roi_df["roi_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
+                        "λ Shift": roi_df["lambda_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
+                    })
+                else:
+                    # Count KPI: convert efficiency to cost-per for display
+                    # For priors: low efficiency = high cost, so swap order for display
+                    display_df = pd.DataFrame({
+                        "Channel": roi_df["channel"],
+                        f"Prior {eff_label} (Low-Mid-High)": roi_df.apply(
+                            lambda r: f"{convert_for_display(r['prior_roi_high']):.1f} - {convert_for_display(r['prior_roi_mid']):.1f} - {convert_for_display(r['prior_roi_low']):.1f}",
+                            axis=1
+                        ),
+                        f"Posterior {eff_label} [90% HDI]": roi_df.apply(
+                            lambda r: f"{convert_for_display(r['posterior_roi_mean']):.2f} [{convert_for_display(r['posterior_roi_hdi_high']):.2f}, {convert_for_display(r['posterior_roi_hdi_low']):.2f}]",
+                            axis=1
+                        ),
+                        "Prior in HDI": roi_df["prior_in_hdi"].apply(lambda x: "✅" if x else "⚠️"),
+                        f"{eff_label} Shift": roi_df["roi_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
+                        "λ Shift": roi_df["lambda_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
+                    })
 
                 st.dataframe(display_df, hide_index=True, width='stretch')
 

@@ -200,6 +200,9 @@ class ModelPersistence:
             mmm_wrapper.df_scaled.to_parquet(path / "data_scaled.parquet")
             if mmm_wrapper.df_raw is not None:
                 mmm_wrapper.df_raw.to_parquet(path / "data_raw.parquet")
+            # Save original unfiltered data (preserves full timeseries)
+            if getattr(mmm_wrapper, "df_original", None) is not None:
+                mmm_wrapper.df_original.to_parquet(path / "data_original.parquet")
 
         logger.info(f"Model saved to {path}")
 
@@ -279,6 +282,11 @@ class ModelPersistence:
         data_raw_path = path / "data_raw.parquet"
         if data_raw_path.exists():
             wrapper.df_raw = pd.read_parquet(data_raw_path)
+
+        # Load original unfiltered data if available (for full timeseries in UI)
+        data_original_path = path / "data_original.parquet"
+        if data_original_path.exists():
+            wrapper.df_original = pd.read_parquet(data_original_path)
 
         # Restore metadata
         if metadata.get("fitted_at"):

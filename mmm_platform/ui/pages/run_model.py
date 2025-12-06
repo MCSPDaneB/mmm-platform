@@ -64,6 +64,38 @@ def show():
         except Exception:
             st.info("Fit statistics not available")
 
+        # Show convergence diagnostics if available
+        try:
+            from mmm_platform.model.fitter import ModelFitter
+            from mmm_platform.model.diagnostics import DiagnosticsAdvisor
+
+            convergence = ModelFitter.check_convergence(wrapper.idata)
+
+            advisor = DiagnosticsAdvisor()
+            sampling_config = {
+                "draws": wrapper.config.sampling.draws if wrapper.config.sampling else 1000,
+                "tune": wrapper.config.sampling.tune if wrapper.config.sampling else 1000,
+                "chains": wrapper.config.sampling.chains if wrapper.config.sampling else 4,
+                "target_accept": wrapper.config.sampling.target_accept if wrapper.config.sampling else 0.9,
+            }
+            diagnostics = advisor.analyze_from_convergence_dict(convergence, sampling_config)
+
+            if diagnostics:
+                with st.expander("⚠️ Convergence Recommendations", expanded=True):
+                    for diag in diagnostics:
+                        if diag.severity == "critical":
+                            st.error(f"**{diag.issue}**: {diag.details}")
+                        else:
+                            st.warning(f"**{diag.issue}**: {diag.details}")
+
+                        if diag.recommendations:
+                            st.markdown("**Suggested changes:**")
+                            for rec in diag.recommendations:
+                                st.write(f"- **{rec.setting}**: {rec.current} → {rec.suggested} ({rec.reason})")
+                    st.info("💡 To apply these changes, click 'New Model' and adjust the Advanced Settings.")
+        except Exception:
+            pass  # Silently skip if diagnostics unavailable
+
         st.markdown("---")
         col1, col2 = st.columns(2)
         with col1:
@@ -563,6 +595,14 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
                                 for rec in diag.recommendations:
                                     st.write(f"- **{rec.setting}**: {rec.current} → {rec.suggested} ({rec.reason})")
                         st.info("💡 Adjust these settings in the Advanced Settings section and re-run the model.")
+                else:
+                    # Show success message when no issues
+                    with st.expander("✅ Convergence Status", expanded=False):
+                        divergences = results.convergence.get("divergences", 0)
+                        st.success("**Model converged well!** No action required.")
+                        st.write(f"- Divergent transitions: {divergences}")
+                        st.write("- All R-hat values acceptable")
+                        st.write("- Effective sample sizes sufficient")
 
             # Save model if requested
             if save_model:
@@ -596,10 +636,6 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
                     st.warning(f"Could not save model: {e}")
 
             st.balloons()
-
-            # Rerun to show the fitted model view
-            time.sleep(1)
-            st.rerun()
 
         except Exception as e:
             progress_bar.progress(100)
@@ -726,6 +762,14 @@ def run_model_local(config, df, draws, tune, chains, save_model):
                             for rec in diag.recommendations:
                                 st.write(f"- **{rec.setting}**: {rec.current} → {rec.suggested} ({rec.reason})")
                     st.info("💡 Adjust these settings in the Advanced Settings section and re-run the model.")
+            else:
+                # Show success message when no issues
+                with st.expander("✅ Convergence Status", expanded=False):
+                    divergences = convergence_dict.get("divergences", 0)
+                    st.success("**Model converged well!** No action required.")
+                    st.write(f"- Divergent transitions: {divergences}")
+                    st.write("- All R-hat values acceptable")
+                    st.write("- Effective sample sizes sufficient")
 
             if save_model:
                 from mmm_platform.model.persistence import ModelPersistence, get_models_dir, get_client_models_dir
@@ -755,10 +799,6 @@ def run_model_local(config, df, draws, tune, chains, save_model):
                 st.info(f"Model saved to: {save_dir}")
 
             st.balloons()
-
-            # Rerun to show the fitted model view
-            time.sleep(1)
-            st.rerun()
 
         except Exception as e:
             progress_bar.progress(100)

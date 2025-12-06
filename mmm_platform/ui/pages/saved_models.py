@@ -773,7 +773,10 @@ def _load_model(path: str, navigate_to_results: bool = False):
         st.session_state.model_fitted = wrapper.idata is not None
 
         # Also restore data if available
-        if wrapper.df_raw is not None:
+        # Prefer df_original (full timeseries) over df_raw (date-filtered)
+        if getattr(wrapper, "df_original", None) is not None:
+            st.session_state.current_data = wrapper.df_original
+        elif wrapper.df_raw is not None:
             st.session_state.current_data = wrapper.df_raw
         elif wrapper.df_scaled is not None:
             st.session_state.current_data = wrapper.df_scaled

@@ -312,6 +312,11 @@ def show():
             if saved_start:
                 try:
                     default_start = pd.to_datetime(saved_start).date()
+                    # Clamp to data range to prevent Streamlit errors
+                    if data_min_date and default_start < data_min_date:
+                        default_start = data_min_date
+                    if data_max_date and default_start > data_max_date:
+                        default_start = data_max_date
                 except Exception:
                     default_start = data_min_date
             else:
@@ -331,6 +336,11 @@ def show():
             if saved_end:
                 try:
                     default_end = pd.to_datetime(saved_end).date()
+                    # Clamp to data range to prevent Streamlit errors
+                    if data_min_date and default_end < data_min_date:
+                        default_end = data_min_date
+                    if data_max_date and default_end > data_max_date:
+                        default_end = data_max_date
                 except Exception:
                     default_end = data_max_date
             else:
@@ -595,13 +605,30 @@ def show():
                 # Initialize priors_dict from saved config_state if available
                 priors_dict = {}
                 saved_channels = st.session_state.get("config_state", {}).get("channels", [])
+                kpi_type = st.session_state.get("config_state", {}).get("kpi_type", "revenue")
+
                 for ch_config in saved_channels:
+                    # Get stored efficiency values
+                    roi_low = ch_config.get("roi_prior_low", 0.5)
+                    roi_mid = ch_config.get("roi_prior_mid", 2.0)
+                    roi_high = ch_config.get("roi_prior_high", 5.0)
+
+                    # For count KPIs, convert efficiency back to cost-per-unit for display
+                    # Stored: efficiency (target per $), Display: cost ($ per target)
+                    if kpi_type == "count":
+                        # efficiency_low (from high cost) → cost_high
+                        # efficiency_high (from low cost) → cost_low
+                        cost_low = 1.0 / roi_high if roi_high > 0 else 1.0
+                        cost_mid = 1.0 / roi_mid if roi_mid > 0 else 5.0
+                        cost_high = 1.0 / roi_low if roi_low > 0 else 10.0
+                        roi_low, roi_mid, roi_high = cost_low, cost_mid, cost_high
+
                     priors_dict[ch_config["name"]] = {
                         "display_name": ch_config.get("display_name", ch_config["name"]),
                         "categories": ch_config.get("categories", {}),
-                        "roi_low": ch_config.get("roi_prior_low", 0.5),
-                        "roi_mid": ch_config.get("roi_prior_mid", 2.0),
-                        "roi_high": ch_config.get("roi_prior_high", 5.0),
+                        "roi_low": roi_low,
+                        "roi_mid": roi_mid,
+                        "roi_high": roi_high,
                         "adstock_type": ch_config.get("adstock_type", "medium"),
                         "curve_sharpness_override": ch_config.get("curve_sharpness_override"),
                     }

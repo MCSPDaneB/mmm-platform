@@ -50,6 +50,7 @@ class MMMWrapper:
         # State
         self.df_raw: Optional[pd.DataFrame] = None
         self.df_scaled: Optional[pd.DataFrame] = None
+        self.df_original: Optional[pd.DataFrame] = None  # Unfiltered data for UI
         self.control_cols: Optional[list[str]] = None
         self.lam_vec: Optional[np.ndarray] = None
         self.beta_mu: Optional[np.ndarray] = None
@@ -106,7 +107,11 @@ class MMMWrapper:
         if self.df_raw is None:
             raise ValueError("No data loaded. Call load_data() first.")
 
-        # Full preparation pipeline
+        # Save original unfiltered data before date filtering
+        # This preserves full timeseries for UI display after model is saved/loaded
+        self.df_original = self.df_raw.copy()
+
+        # Full preparation pipeline (may filter by date range)
         self.df_raw, self.df_scaled, _, self.control_cols = \
             self.data_loader.prepare_model_data(self.df_raw, self.config)
 

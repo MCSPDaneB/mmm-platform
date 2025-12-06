@@ -22,6 +22,53 @@ from mmm_platform.core.data_processing import (
 )
 
 
+def _merge_data_incrementally(
+    existing_data: pd.DataFrame,
+    new_data: pd.DataFrame,
+    date_col: str,
+    dayfirst: bool = True,
+) -> tuple[pd.DataFrame, list[str], list[str]]:
+    """Merge new data columns into existing data.
+
+    Used when a model is loaded and user uploads additional data columns.
+    New columns are added; existing columns with same name are overwritten.
+
+    Args:
+        existing_data: The current model's data
+        new_data: New data to merge in
+        date_col: Name of the date column to join on
+        dayfirst: Whether dates are day-first format
+
+    Returns:
+        Tuple of (merged_df, added_columns, overwritten_columns)
+    """
+    # Ensure date columns are datetime
+    existing_data = existing_data.copy()
+    new_data = new_data.copy()
+
+    if date_col in new_data.columns:
+        new_data[date_col] = pd.to_datetime(new_data[date_col], dayfirst=dayfirst)
+    if date_col in existing_data.columns:
+        existing_data[date_col] = pd.to_datetime(existing_data[date_col], dayfirst=dayfirst)
+
+    # Get new columns (excluding date)
+    new_cols = [c for c in new_data.columns if c != date_col]
+    existing_cols = [c for c in existing_data.columns if c != date_col]
+
+    # Identify what's being overwritten vs added
+    overwritten = [c for c in new_cols if c in existing_cols]
+    added = [c for c in new_cols if c not in existing_cols]
+
+    # Merge on date
+    merged_df = existing_data.copy()
+    for col in new_cols:
+        # Map new column values by date
+        date_to_value = dict(zip(new_data[date_col], new_data[col]))
+        merged_df[col] = merged_df[date_col].map(date_to_value)
+
+    return merged_df, added, overwritten
+
+
 def _check_config_compatibility(new_df: pd.DataFrame):
     """Check if existing config is compatible with new dataset columns.
 
@@ -391,33 +438,58 @@ def _show_merge_preview(media_df: pd.DataFrame, level_cols: list[str],
             with st.expander("Merged Dataset Preview", expanded=True):
                 st.dataframe(merged_df.head(20), width="stretch")
 
-            # Store merged data
-            st.session_state.current_data = merged_df
-            st.session_state.date_column = date_col
-            st.session_state.dayfirst = dayfirst
-            st.session_state.merge_complete = True
+            # Check if we should merge with existing model data (incremental add mode)
+            existing_config = st.session_state.get("current_config")
+            existing_data = st.session_state.get("current_data")
 
-            # RESET config_state for new data to prevent cross-brand contamination
-            # This ensures owned_media, dummies, etc. from previous brands don't carry over
-            st.session_state.config_state = {
-                "name": "my_mmm_model",
-                "channels": [],
-                "controls": [],
-                "owned_media": [],
-                "competitors": [],
-                "dummy_variables": [],
-            }
-            # Clear widget multiselect states so they re-initialize from fresh config_state
-            for key in ["channel_multiselect", "owned_media_multiselect",
-                        "competitor_multiselect", "control_multiselect"]:
-                if key in st.session_state:
-                    del st.session_state[key]
-            # Clear category columns
-            st.session_state.category_columns = []
-            # Clear current_config and model state
-            st.session_state.current_config = None
-            st.session_state.model_fitted = False
-            st.session_state.current_model = None
+            if existing_config is not None and existing_data is not None:
+                # Incremental add mode - merge this new data with existing model data
+                final_merged_df, added, overwritten = _merge_data_incrementally(
+                    existing_data, merged_df, date_col, dayfirst
+                )
+
+                st.session_state.current_data = final_merged_df
+                st.session_state.date_column = date_col
+                st.session_state.dayfirst = dayfirst
+                st.session_state.merge_complete = True
+
+                # Show what happened
+                if added:
+                    st.success(f"Added new columns to model: {', '.join(added)}")
+                if overwritten:
+                    st.info(f"Overwritten columns: {', '.join(overwritten)}")
+
+                st.success(f"Data merged with existing model! Total: {len(final_merged_df)} rows, {len(final_merged_df.columns)} columns")
+
+                # DO NOT reset config_state - keep existing config
+            else:
+                # Fresh upload mode - existing behavior
+                st.session_state.current_data = merged_df
+                st.session_state.date_column = date_col
+                st.session_state.dayfirst = dayfirst
+                st.session_state.merge_complete = True
+
+                # RESET config_state for new data to prevent cross-brand contamination
+                # This ensures owned_media, dummies, etc. from previous brands don't carry over
+                st.session_state.config_state = {
+                    "name": "my_mmm_model",
+                    "channels": [],
+                    "controls": [],
+                    "owned_media": [],
+                    "competitors": [],
+                    "dummy_variables": [],
+                }
+                # Clear widget multiselect states so they re-initialize from fresh config_state
+                for key in ["channel_multiselect", "owned_media_multiselect",
+                            "competitor_multiselect", "control_multiselect"]:
+                    if key in st.session_state:
+                        del st.session_state[key]
+                # Clear category columns
+                st.session_state.category_columns = []
+                # Clear current_config and model state
+                st.session_state.current_config = None
+                st.session_state.model_fitted = False
+                st.session_state.current_model = None
 
 
 def _show_final_configuration():
@@ -517,7 +589,44 @@ def _show_single_file_upload():
             df = pd.read_csv(uploaded_file)
             st.success(f"File loaded: {len(df)} rows, {len(df.columns)} columns")
 
-            # Store in session state
+            # Check if we should merge with existing data (incremental add mode)
+            existing_config = st.session_state.get("current_config")
+            existing_data = st.session_state.get("current_data")
+
+            if existing_config is not None and existing_data is not None:
+                # Incremental add mode - merge new data with existing
+                date_col = st.session_state.get("date_column", "date")
+                dayfirst = st.session_state.get("dayfirst", True)
+
+                if date_col not in df.columns:
+                    st.error(f"Date column '{date_col}' not found in uploaded file. "
+                             f"Available columns: {list(df.columns)}")
+                else:
+                    # Merge the data
+                    merged_df, added, overwritten = _merge_data_incrementally(
+                        existing_data, df, date_col, dayfirst
+                    )
+
+                    st.session_state.current_data = merged_df
+                    st.session_state.uploaded_filename = uploaded_file.name
+
+                    # Show what happened
+                    if added:
+                        st.success(f"Added new columns: {', '.join(added)}")
+                    if overwritten:
+                        st.info(f"Overwritten columns: {', '.join(overwritten)}")
+
+                    # DO NOT reset config_state - keep existing config
+                    # Just update the data reference
+
+                    # Show merged data preview
+                    st.subheader("Merged Data Preview")
+                    st.dataframe(merged_df.head(20), width="stretch")
+
+                    st.success(f"Data merged! Total: {len(merged_df)} rows, {len(merged_df.columns)} columns")
+                    return  # Exit early - no need to show the rest of the single file flow
+
+            # Fresh upload mode - existing behavior
             st.session_state.current_data = df
             st.session_state.uploaded_filename = uploaded_file.name
 
@@ -716,6 +825,40 @@ def show():
             st.subheader("Demo Data Preview")
             st.dataframe(demo.df_scaled.head(10), width="stretch")
         st.stop()
+
+    # Check if model is loaded - show incremental add message
+    if st.session_state.get("current_config") is not None:
+        config_name = st.session_state.current_config.name
+        st.info(
+            f"**Model loaded: {config_name}**\n\n"
+            "Any data uploaded will be **merged** with the existing model's data "
+            "(joined on date column). New columns will be added; existing columns "
+            "with the same name will be overwritten."
+        )
+
+        # Option to start fresh
+        if st.button("Start Fresh (Clear Model)", key="clear_model_for_new_data"):
+            st.session_state.current_config = None
+            st.session_state.current_model = None
+            st.session_state.model_fitted = False
+            st.session_state.current_data = None
+            st.session_state.config_state = {
+                "name": "my_mmm_model",
+                "channels": [],
+                "controls": [],
+                "owned_media": [],
+                "competitors": [],
+                "dummy_variables": [],
+            }
+            # Clear widget multiselect states
+            for key in ["channel_multiselect", "owned_media_multiselect",
+                        "competitor_multiselect", "control_multiselect"]:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.session_state.category_columns = []
+            st.rerun()
+
+        st.markdown("---")
 
     # Upload mode selection
     upload_mode = st.radio(
