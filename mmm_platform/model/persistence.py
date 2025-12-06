@@ -993,9 +993,38 @@ def load_disaggregation_configs(model_path: Union[str, Path]) -> list[dict]:
         return []
 
 
+def load_disaggregation_weights(model_path: Union[str, Path], config_id: str) -> pd.DataFrame | None:
+    """
+    Load saved weighting DataFrame for a disaggregation config.
+
+    Parameters
+    ----------
+    model_path : Union[str, Path]
+        Path to the model directory.
+    config_id : str
+        ID of the disaggregation config.
+
+    Returns
+    -------
+    pd.DataFrame | None
+        The weighting DataFrame if found, None otherwise.
+    """
+    model_path = Path(model_path)
+    weights_file = model_path / f"disagg_weights_{config_id}.parquet"
+
+    if weights_file.exists():
+        try:
+            return pd.read_parquet(weights_file)
+        except Exception as e:
+            logger.warning(f"Could not load disaggregation weights from {weights_file}: {e}")
+            return None
+    return None
+
+
 def save_disaggregation_config(
     model_path: Union[str, Path],
     config: dict,
+    weighting_df: pd.DataFrame = None,
     set_active: bool = True
 ) -> None:
     """
@@ -1009,6 +1038,8 @@ def save_disaggregation_config(
         Disaggregation configuration dict with keys:
         - id, name, created_at, granular_name_cols, date_column, weight_column,
         - entity_to_channel_mapping, notes (optional)
+    weighting_df : pd.DataFrame, optional
+        The weighting DataFrame to save alongside the config.
     set_active : bool
         If True, set this config as active and deactivate others.
     """
@@ -1055,6 +1086,12 @@ def save_disaggregation_config(
     with open(session_file, "w") as f:
         json.dump(session_state, f, indent=2)
 
+    # Save weighting DataFrame if provided
+    if weighting_df is not None:
+        weights_file = model_path / f"disagg_weights_{config['id']}.parquet"
+        weighting_df.to_parquet(weights_file)
+        logger.info(f"Saved disaggregation weights to {weights_file}")
+
     logger.info(f"Saved disaggregation config '{config['name']}' to {model_path}")
 
 
@@ -1095,6 +1132,13 @@ def delete_disaggregation_config(model_path: Union[str, Path], config_id: str) -
     if len(session_state["disaggregation"]["saved_configs"]) < original_count:
         with open(session_file, "w") as f:
             json.dump(session_state, f, indent=2)
+
+        # Also delete the weights file if it exists
+        weights_file = model_path / f"disagg_weights_{config_id}.parquet"
+        if weights_file.exists():
+            weights_file.unlink()
+            logger.info(f"Deleted disaggregation weights file {weights_file}")
+
         logger.info(f"Deleted disaggregation config {config_id} from {model_path}")
         return True
 

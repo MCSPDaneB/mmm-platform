@@ -1022,6 +1022,7 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
     """
     from mmm_platform.model.persistence import (
         load_disaggregation_configs,
+        load_disaggregation_weights,
         save_disaggregation_config,
         validate_disaggregation_config
     )
@@ -1063,6 +1064,14 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
                 selected_saved_config = None
             else:
                 st.success(f"Using saved config: **{selected_saved_config['name']}**")
+
+                # Load saved weights DataFrame if available
+                granular_df_key = f"granular_df{key_suffix}"
+                if granular_df_key not in st.session_state:
+                    saved_weights = load_disaggregation_weights(model_path, selected_saved_config['id'])
+                    if saved_weights is not None:
+                        st.session_state[granular_df_key] = saved_weights
+                        st.info(f"Loaded saved weights: {len(saved_weights):,} rows")
 
                 # Explicitly set widget session state values from saved config
                 # This is needed because Streamlit ignores `default` after first render
@@ -1426,7 +1435,7 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
                         "include_columns": include_cols,
                         "entity_to_channel_mapping": dict(st.session_state[mapping_key]),
                     }
-                    save_disaggregation_config(model_path, new_config)
+                    save_disaggregation_config(model_path, new_config, weighting_df=mapped_df)
                     st.success(f"Saved configuration: {config_name}")
                     st.rerun()
                 else:
