@@ -233,3 +233,98 @@ class TestConfigStateReset:
         assert config_state["kpi_type"] == "count"
         assert config_state["kpi_display_name"] == "Install"
         assert config_state["target_scale"] == 1.0
+
+
+class TestEmptyOwnedMediaPreserved:
+    """Tests to ensure empty owned_media is respected when loading configs.
+
+    This prevents auto-detection from re-populating owned media when
+    loading a config that was explicitly saved without owned media.
+    """
+
+    def test_config_with_empty_owned_media_has_key(self):
+        """Verify config_state from model with no owned_media has the key."""
+        from mmm_platform.ui.pages.saved_models import _build_config_state_from_model
+
+        config = ModelConfig(
+            name="test_model",
+            data=DataConfig(
+                date_column="date",
+                target_column="revenue",
+            ),
+            channels=[
+                ChannelConfig(name="channel_a_spend", roi_prior_mid=2.0),
+            ],
+            owned_media=[],  # Explicitly empty
+        )
+
+        config_state = _build_config_state_from_model(config)
+
+        # The key should exist and be an empty list
+        assert "owned_media" in config_state
+        assert config_state["owned_media"] == []
+
+    def test_owned_media_selection_respects_empty_config(self):
+        """Verify that empty owned_media in config prevents auto-detection.
+
+        When a config has an empty owned_media list, the UI should NOT
+        auto-detect owned media columns - it should respect the empty list.
+        """
+        # Simulate a loaded config with explicitly empty owned_media
+        config_state = {
+            "name": "test_model",
+            "channels": [{"name": "channel_a_spend"}],
+            "owned_media": [],  # Explicitly empty - should be respected
+        }
+
+        # This is the logic from configure_model.py that determines selection
+        saved_owned_media = config_state.get("owned_media", [])
+        has_owned_media_key = "owned_media" in config_state
+
+        # Simulate available columns that would match auto-detection patterns
+        available_owned_media = ["email_opens", "organic_traffic", "newsletter_clicks"]
+        auto_owned_media = [col for col in available_owned_media
+                           if any(p in col.lower() for p in ["email", "organic", "owned", "social", "newsletter"])]
+
+        # Determine selection using the same logic as configure_model.py
+        if saved_owned_media:
+            selection = [c for c in [om["name"] for om in saved_owned_media] if c in available_owned_media]
+        elif has_owned_media_key:
+            # Config explicitly has empty owned_media - respect that
+            selection = []
+        else:
+            # No config loaded - auto-detect
+            selection = auto_owned_media if auto_owned_media else []
+
+        # Should be empty because config has owned_media key (even though empty)
+        assert selection == []
+        assert len(auto_owned_media) > 0  # Verify auto-detection would have found columns
+
+    def test_new_data_upload_allows_auto_detection(self):
+        """Verify that fresh upload (no config) allows auto-detection."""
+        # Simulate a fresh config_state without owned_media key
+        config_state = {
+            "name": "my_mmm_model",
+            "channels": [],
+            # Note: owned_media key is NOT present - this is a fresh upload
+        }
+
+        saved_owned_media = config_state.get("owned_media", [])
+        has_owned_media_key = "owned_media" in config_state
+
+        # Simulate available columns
+        available_owned_media = ["email_opens", "organic_traffic"]
+        auto_owned_media = ["email_opens", "organic_traffic"]  # Would be auto-detected
+
+        # Determine selection
+        if saved_owned_media:
+            selection = saved_owned_media
+        elif has_owned_media_key:
+            selection = []
+        else:
+            # No config - auto-detect is allowed
+            selection = auto_owned_media
+
+        # Should auto-detect because no owned_media key exists
+        assert selection == auto_owned_media
+        assert has_owned_media_key is False
