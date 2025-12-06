@@ -529,7 +529,40 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
                 rmse = fit_stats.get("rmse", "N/A")
                 st.metric("RMSE", f"{rmse:.1f}" if isinstance(rmse, (int, float)) else rmse)
             with col4:
-                st.metric("Location", "EC2")
+                # Show convergence status
+                convergence_data = results.convergence
+                if convergence_data:
+                    converged = convergence_data.get("converged", True)
+                    st.metric("Converged", "Yes" if converged else "No")
+                else:
+                    st.metric("Location", "EC2")
+
+            # Show convergence diagnostics and recommendations
+            if results.convergence:
+                from mmm_platform.model.diagnostics import DiagnosticsAdvisor
+
+                advisor = DiagnosticsAdvisor()
+                sampling_config = {
+                    "draws": draws,
+                    "tune": tune,
+                    "chains": chains,
+                    "target_accept": config.sampling.target_accept if config.sampling else 0.9,
+                }
+                diagnostics = advisor.analyze_from_convergence_dict(results.convergence, sampling_config)
+
+                if diagnostics:
+                    with st.expander("⚠️ Convergence Recommendations", expanded=True):
+                        for diag in diagnostics:
+                            if diag.severity == "critical":
+                                st.error(f"**{diag.issue}**: {diag.details}")
+                            else:
+                                st.warning(f"**{diag.issue}**: {diag.details}")
+
+                            if diag.recommendations:
+                                st.markdown("**Suggested changes:**")
+                                for rec in diag.recommendations:
+                                    st.write(f"- **{rec.setting}**: {rec.current} → {rec.suggested} ({rec.reason})")
+                        st.info("💡 Adjust these settings in the Advanced Settings section and re-run the model.")
 
             # Save model if requested
             if save_model:
@@ -657,10 +690,42 @@ def run_model_local(config, df, draws, tune, chains, save_model):
                 convergence_status = "Yes" if convergence["converged"] else "No"
                 st.metric("Converged", convergence_status)
 
-            if convergence["warnings"]:
-                st.warning("Convergence warnings:")
-                for warn in convergence["warnings"]:
-                    st.write(f"- {warn}")
+            # Show convergence diagnostics and recommendations
+            ess_stats = ModelFitter.get_effective_sample_size(wrapper.idata)
+            convergence_dict = {
+                "converged": convergence["converged"],
+                "divergences": convergence["divergences"],
+                "high_rhat_params": convergence["high_rhat_params"],
+                "warnings": convergence["warnings"],
+                "ess_bulk_min": ess_stats.get("ess_bulk_min"),
+                "ess_tail_min": ess_stats.get("ess_tail_min"),
+                "ess_sufficient": ess_stats.get("sufficient", True),
+            }
+
+            from mmm_platform.model.diagnostics import DiagnosticsAdvisor
+
+            advisor = DiagnosticsAdvisor()
+            sampling_config = {
+                "draws": draws,
+                "tune": tune,
+                "chains": chains,
+                "target_accept": config.sampling.target_accept if config.sampling else 0.9,
+            }
+            diagnostics = advisor.analyze_from_convergence_dict(convergence_dict, sampling_config)
+
+            if diagnostics:
+                with st.expander("⚠️ Convergence Recommendations", expanded=True):
+                    for diag in diagnostics:
+                        if diag.severity == "critical":
+                            st.error(f"**{diag.issue}**: {diag.details}")
+                        else:
+                            st.warning(f"**{diag.issue}**: {diag.details}")
+
+                        if diag.recommendations:
+                            st.markdown("**Suggested changes:**")
+                            for rec in diag.recommendations:
+                                st.write(f"- **{rec.setting}**: {rec.current} → {rec.suggested} ({rec.reason})")
+                    st.info("💡 Adjust these settings in the Advanced Settings section and re-run the model.")
 
             if save_model:
                 from mmm_platform.model.persistence import ModelPersistence, get_models_dir, get_client_models_dir

@@ -372,6 +372,11 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
         fit_stats = wrapper.get_fit_statistics()
         contributions = wrapper.get_contributions()
 
+        # Get convergence diagnostics
+        from mmm_platform.model.fitting import ModelFitter
+        convergence = ModelFitter.check_convergence(wrapper.idata)
+        ess_stats = ModelFitter.get_effective_sample_size(wrapper.idata)
+
         # Get channel ROI
         from mmm_platform.analysis.contributions import ContributionAnalyzer
         contrib_analyzer = ContributionAnalyzer.from_mmm_wrapper(wrapper)
@@ -433,6 +438,15 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
                 "mape": fit_stats.get("mape"),
                 "rmse": fit_stats.get("rmse"),
                 "n_observations": fit_stats.get("n_observations"),
+            },
+            "convergence": {
+                "converged": convergence["converged"],
+                "divergences": convergence["divergences"],
+                "high_rhat_params": convergence["high_rhat_params"],
+                "warnings": convergence["warnings"],
+                "ess_bulk_min": ess_stats.get("ess_bulk_min"),
+                "ess_tail_min": ess_stats.get("ess_tail_min"),
+                "ess_sufficient": ess_stats.get("sufficient", True),
             },
             "model_info": {
                 "channels": config.get_channel_columns(),

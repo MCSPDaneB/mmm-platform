@@ -45,6 +45,7 @@ class ModelResults:
     channel_roi: List[Dict[str, Any]]
     contributions: Dict[str, Any]
     diagnostics: Dict[str, Any]
+    convergence: Optional[Dict[str, Any]] = None
     inference_data_path: Optional[str] = None
 
 
@@ -240,6 +241,7 @@ class EC2ModelClient:
             channel_roi=data["channel_roi"],
             contributions=data["contributions"],
             diagnostics=data["diagnostics"],
+            convergence=data.get("convergence"),
             inference_data_path=data.get("inference_data_path"),
         )
 
