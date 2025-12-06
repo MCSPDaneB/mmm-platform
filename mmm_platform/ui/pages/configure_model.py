@@ -276,12 +276,8 @@ def show():
                     help="Name for the KPI in labels (e.g., 'Install', 'Lead', 'Conversion')"
                 )
 
-            target_scale = st.number_input(
-                "Target/Spend Scale Factor",
-                value=saved_data.get("target_scale", saved_data.get("revenue_scale", 1000.0)),
-                min_value=1.0,
-                help="Divide values by this factor for numerical stability"
-            )
+            # Scale factor is now always 1.0 - PyMC-Marketing handles scaling internally
+            target_scale = 1.0
 
             dayfirst = st.checkbox(
                 "Dates are day-first",
@@ -2031,8 +2027,8 @@ def build_config_from_state() -> ModelConfig:
             date_column=state.get("date_col", "time"),
             target_column=state.get("target_col", "revenue"),
             dayfirst=state.get("dayfirst", True),
-            target_scale=state.get("target_scale", state.get("revenue_scale", 1000.0)),
-            spend_scale=state.get("target_scale", state.get("revenue_scale", 1000.0)),
+            target_scale=1.0,  # PyMC-Marketing handles scaling internally
+            spend_scale=1.0,  # PyMC-Marketing handles scaling internally
             kpi_type=state.get("kpi_type", "revenue"),
             kpi_display_name=state.get("kpi_display_name"),
             model_start_date=state.get("model_start_date"),

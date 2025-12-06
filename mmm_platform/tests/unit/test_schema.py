@@ -225,8 +225,9 @@ class TestDataConfig:
         """Data config should have sensible defaults for optional fields."""
         data = DataConfig(target_column="revenue")
         assert data.date_column == "time"  # Default from schema
-        assert data.spend_scale == 1000.0
-        assert data.revenue_scale == 1000.0
+        # Scale defaults are now 1.0 - PyMC-Marketing handles scaling internally
+        assert data.spend_scale == 1.0
+        assert data.revenue_scale == 1.0
 
 
 class TestAdstockConfig:

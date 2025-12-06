@@ -316,6 +316,10 @@ class DataLoader:
         """
         Scale numeric columns according to configuration.
 
+        NOTE: This method is now a no-op. PyMC-Marketing handles scaling
+        internally via MaxAbsScaler. Custom scaling was causing double-scaling
+        issues that broke ROI calculations.
+
         Parameters
         ----------
         df : pd.DataFrame
@@ -326,33 +330,11 @@ class DataLoader:
         Returns
         -------
         pd.DataFrame
-            Scaled dataframe.
+            Unmodified dataframe (scaling disabled).
         """
-        df = df.copy()
-        scale_factor = config.data.spend_scale
-
-        # Columns to scale: target + channels + owned media + competitors + scalable controls
-        scale_cols = [config.data.target_column] + config.get_channel_columns()
-
-        # Add owned media columns
-        scale_cols.extend(config.get_owned_media_columns())
-
-        # Add competitor columns
-        scale_cols.extend(config.get_competitor_columns())
-
-        # Add scalable control columns
-        for ctrl in config.controls:
-            if ctrl.scale and ctrl.name in df.columns:
-                scale_cols.append(ctrl.name)
-
-        # Apply scaling
-        for col in scale_cols:
-            if col in df.columns:
-                df[col] = df[col] / scale_factor
-
-        logger.info(f"Scaled {len(scale_cols)} columns by factor {scale_factor}")
-
-        return df
+        # Return unmodified copy - PyMC-Marketing handles scaling internally
+        logger.info("Scaling disabled - PyMC-Marketing handles scaling via MaxAbsScaler")
+        return df.copy()
 
     def prepare_model_data(
         self,

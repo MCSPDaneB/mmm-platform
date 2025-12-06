@@ -66,8 +66,8 @@ class ContributionAnalyzer:
         control_cols: list[str],
         target_col: str,
         date_col: str,
-        revenue_scale: float = 1000.0,
-        spend_scale: float = 1000.0,
+        revenue_scale: float = 1.0,
+        spend_scale: float = 1.0,
         display_names: Optional[Dict[str, str]] = None,
     ):
         """
@@ -78,7 +78,7 @@ class ContributionAnalyzer:
         contribs : pd.DataFrame
             Contribution dataframe from model.
         df_scaled : pd.DataFrame
-            Scaled data used for modeling.
+            Data used for modeling (no longer scaled - PyMC-Marketing handles scaling).
         channel_cols : list[str]
             Channel column names.
         control_cols : list[str]
@@ -88,9 +88,9 @@ class ContributionAnalyzer:
         date_col : str
             Date column name.
         revenue_scale : float
-            Scale factor for revenue.
+            Scale factor for revenue (deprecated, default 1.0).
         spend_scale : float
-            Scale factor for spend.
+            Scale factor for spend (deprecated, default 1.0).
         display_names : dict, optional
             Mapping from column names to display names.
         """

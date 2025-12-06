@@ -26,8 +26,8 @@ def basic_config() -> ModelConfig:
         data=DataConfig(
             date_column="date",
             target_column="revenue",
-            spend_scale=1000.0,
-            target_scale=1000.0,
+            spend_scale=1.0,  # PyMC-Marketing handles scaling internally
+            target_scale=1.0,  # PyMC-Marketing handles scaling internally
             dayfirst=False,  # Test data uses YYYY-MM-DD format
         ),
         adstock=AdstockConfig(
@@ -79,8 +79,8 @@ def complex_config() -> ModelConfig:
         data=DataConfig(
             date_column="date",
             target_column="revenue",
-            spend_scale=1000.0,
-            target_scale=1000.0,
+            spend_scale=1.0,  # PyMC-Marketing handles scaling internally
+            target_scale=1.0,  # PyMC-Marketing handles scaling internally
             dayfirst=False,  # Test data uses YYYY-MM-DD format
         ),
         adstock=AdstockConfig(l_max=12),
