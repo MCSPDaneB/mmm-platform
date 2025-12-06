@@ -1704,61 +1704,148 @@ def show():
         })
 
     # =========================================================================
-    # Build and Save Configuration
+    # Run Model Section
     # =========================================================================
     st.markdown("---")
-    st.subheader("Build Configuration")
+    st.subheader("🚀 Run Model")
 
-    if st.button("🔨 Build Configuration", type="primary", width="stretch"):
+    # Check for demo mode
+    if st.session_state.get("demo_mode", False):
+        st.info("**Demo Mode**: The model is already fitted with simulated data. Go to **Results** to explore!")
+
+    # Check if model is already fitted
+    elif st.session_state.get("model_fitted", False) and st.session_state.get("current_model") is not None:
+        wrapper = st.session_state.current_model
+        st.success("Model is fitted! Go to **Results** to view the full analysis.")
+
+        # Show quick summary stats
         try:
-            # Auto-sync data editor values to config_state before building
-            # This ensures edits are saved even without clicking individual "Save" buttons
-            _sync_data_editors_to_config_state()
+            fit_stats = wrapper.get_fit_statistics()
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("R²", f"{fit_stats['r2']:.3f}")
+            with col2:
+                st.metric("MAPE", f"{fit_stats['mape']:.1f}%")
+            with col3:
+                if fit_stats.get('fit_duration_seconds'):
+                    st.metric("Fit Time", f"{fit_stats['fit_duration_seconds']:.0f}s")
+                else:
+                    st.metric("Fit Time", "N/A")
+        except Exception:
+            st.info("Fit statistics not available")
 
-            # Build the config
-            config = build_config_from_state()
-            st.session_state.current_config = config
+        col1, col2 = st.columns(2)
+        with col1:
+            st.info("Navigate to **Results** in the sidebar to explore model output.")
+        with col2:
+            if st.button("Run New Model", type="primary"):
+                st.session_state.model_fitted = False
+                st.session_state.current_model = None
+                st.rerun()
 
-            # Auto-save to workspace
-            from mmm_platform.model.persistence import ConfigPersistence
+    else:
+        # Model not yet fitted - show run options
+        from mmm_platform.ui.run_utils import (
+            ec2_available, show_ec2_config, show_pre_fit_warnings,
+            run_model_ec2, run_model_local
+        )
 
-            session_state = {
-                "category_columns": st.session_state.get("category_columns", []),
-                "config_state": st.session_state.get("config_state", {}),
-                "date_column": st.session_state.get("date_column"),
-                "target_column": st.session_state.get("target_column"),
-                "detected_channels": st.session_state.get("detected_channels", []),
-                "dayfirst": st.session_state.get("dayfirst", False),
-            }
+        # Run location selection
+        run_location = st.radio(
+            "Where to run the model?",
+            options=["local", "ec2"],
+            format_func=lambda x: "Local (slow, 2-4 hours)" if x == "local" else "EC2 GPU (fast, 5-15 min)",
+            horizontal=True,
+            index=1 if ec2_available() else 0,
+        )
 
-            path = ConfigPersistence.save(
-                name=config.name,
-                config=config,
-                data=st.session_state.current_data,
-                session_state=session_state,
+        # EC2 Configuration
+        ec2_ok = True
+        if run_location == "ec2":
+            ec2_ok = show_ec2_config()
+
+        # Run options
+        col1, col2 = st.columns(2)
+        with col1:
+            quick_run = st.checkbox(
+                "Quick run (fewer samples)",
+                value=False,
+                help="Use fewer samples for faster testing"
             )
 
-            st.success(f"Configuration '{config.name}' built and saved!")
+        with col2:
+            save_model = st.checkbox(
+                "Save model after fitting",
+                value=True,
+            )
 
-            # Show summary
-            col1, col2, col3, col4, col5, col6 = st.columns(6)
-            with col1:
-                st.metric("Paid Media", len(config.channels))
-            with col2:
-                st.metric("Owned Media", len(config.owned_media))
-            with col3:
-                st.metric("Competitors", len(config.competitors))
-            with col4:
-                st.metric("Controls", len(config.controls))
-            with col5:
-                st.metric("Dummies", len(config.dummy_variables))
-            with col6:
-                st.metric("Status", "Ready")
+        # Sampling parameters from config_state
+        sampling = st.session_state.config_state.get("sampling", {})
+        if quick_run:
+            draws = 500
+            tune = 500
+            chains = 2
+            st.info(f"Quick run: {draws} draws, {tune} tune, {chains} chains")
+        else:
+            draws = sampling.get("draws", 1500)
+            tune = sampling.get("tune", 1500)
+            chains = sampling.get("chains", 4)
 
-            st.caption(f"Saved to: `{path}`")
+        # Estimated time
+        if run_location == "ec2":
+            est_time = "5-15 minutes" if not quick_run else "2-5 minutes"
+        else:
+            est_time = "2-4 hours" if not quick_run else "30-60 minutes"
+        st.info(f"Estimated time: {est_time}")
 
-        except Exception as e:
-            st.error(f"Error building configuration: {e}")
+        # Pre-fit warnings (need to build config first to check)
+        try:
+            _sync_data_editors_to_config_state()
+            temp_config = build_config_from_state()
+            show_pre_fit_warnings(temp_config, st.session_state.current_data)
+        except Exception:
+            pass  # Skip if config can't be built yet
+
+        # Run button
+        st.markdown("---")
+
+        can_run = run_location == "local" or ec2_ok
+        if st.button("🚀 Run Model", type="primary", disabled=not can_run):
+            try:
+                # 1. Sync data editors and build config
+                _sync_data_editors_to_config_state()
+                config = build_config_from_state()
+                st.session_state.current_config = config
+
+                # 2. Save config to workspace
+                from mmm_platform.model.persistence import ConfigPersistence
+
+                session_state_dict = {
+                    "category_columns": st.session_state.get("category_columns", []),
+                    "config_state": st.session_state.get("config_state", {}),
+                    "date_column": st.session_state.get("date_column"),
+                    "target_column": st.session_state.get("target_column"),
+                    "detected_channels": st.session_state.get("detected_channels", []),
+                    "dayfirst": st.session_state.get("dayfirst", False),
+                }
+
+                ConfigPersistence.save(
+                    name=config.name,
+                    config=config,
+                    data=st.session_state.current_data,
+                    session_state=session_state_dict,
+                )
+
+                # 3. Run the model
+                df = st.session_state.current_data
+                if run_location == "ec2":
+                    run_model_ec2(config, df, draws, tune, chains, save_model)
+                else:
+                    run_model_local(config, df, draws, tune, chains, save_model)
+
+            except Exception as e:
+                st.error(f"Error: {e}")
+                st.exception(e)
 
 
 def _sync_data_editors_to_config_state():

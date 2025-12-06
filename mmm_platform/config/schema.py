@@ -547,6 +547,10 @@ class SaturationConfig(BaseModel):
     lam_sigma: float = Field(0.3, gt=0, description="Sigma for lambda prior")
     curve_sharpness: int = Field(50, ge=0, le=100,
         description="Curve sharpness: 0=very gradual, 50=balanced, 100=very sharp")
+    beta_sigma_multiplier: float = Field(
+        1.0, ge=0.1, le=3.0,
+        description="Multiplier for beta prior sigma. <1 = tighter ROI priors, >1 = looser"
+    )
 
 
 class SeasonalityConfig(BaseModel):

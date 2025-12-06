@@ -139,7 +139,15 @@ class PriorCalibrator:
         mu = np.log(beta_mid)
         sigma = np.clip((np.log(beta_high) - np.log(beta_low)) / 4.0, 0.1, 1.5)
 
-        logger.info(f"Calibrated beta priors: mu range [{mu.min():.2f}, {mu.max():.2f}]")
+        # Apply beta_sigma_multiplier for prior tightening control
+        # <1 = tighter priors (less posterior drift), >1 = looser priors
+        beta_sigma_multiplier = getattr(self.config.saturation, 'beta_sigma_multiplier', 1.0)
+        if beta_sigma_multiplier != 1.0:
+            sigma = sigma * beta_sigma_multiplier
+            logger.info(f"Applied beta_sigma_multiplier={beta_sigma_multiplier:.2f}")
+
+        logger.info(f"Calibrated beta priors: mu range [{mu.min():.2f}, {mu.max():.2f}], "
+                   f"sigma range [{sigma.min():.2f}, {sigma.max():.2f}]")
 
         return mu, sigma
 

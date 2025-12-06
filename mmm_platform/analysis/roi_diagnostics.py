@@ -50,6 +50,22 @@ class ChannelROIResult:
     posterior_vs_prior_shift: Optional[float] = None  # (posterior - prior) / prior
     lambda_shift: Optional[float] = None  # (posterior_λ - prior_λ) / prior_λ
 
+    # Extended diagnostics (Phase 1)
+    raw_sample_count: Optional[int] = None
+    filtered_sample_count: Optional[int] = None
+    samples_filtered_pct: Optional[float] = None
+    raw_sample_mean: Optional[float] = None
+    raw_sample_percentiles: Optional[Dict[int, float]] = None  # P5, P25, P50, P75, P95
+
+    # Beta diagnostics
+    prior_beta_median: Optional[float] = None
+    posterior_beta_mean: Optional[float] = None
+    beta_shift: Optional[float] = None  # (posterior - prior) / prior
+
+    # Spend diagnostics
+    channel_spend_total: Optional[float] = None
+    channel_spend_pct: Optional[float] = None  # % of total spend across all channels
+
     # Warnings and recommendations
     warnings: List[str] = field(default_factory=list)
 
@@ -66,6 +82,11 @@ class ChannelROIResult:
             "prior_in_hdi": self.prior_belief_in_posterior_hdi,
             "roi_shift_pct": self.posterior_vs_prior_shift,
             "lambda_shift_pct": self.lambda_shift,
+            "beta_shift_pct": self.beta_shift,
+            "raw_sample_count": self.raw_sample_count,
+            "filtered_sample_count": self.filtered_sample_count,
+            "samples_filtered_pct": self.samples_filtered_pct,
+            "channel_spend_pct": self.channel_spend_pct,
             "warnings": self.warnings,
         }
 
@@ -95,6 +116,11 @@ class ROIDiagnosticReport:
                 "prior_in_hdi": result.prior_belief_in_posterior_hdi,
                 "roi_shift_pct": result.posterior_vs_prior_shift,
                 "lambda_shift_pct": result.lambda_shift,
+                "beta_shift_pct": result.beta_shift,
+                "raw_sample_count": result.raw_sample_count,
+                "filtered_sample_count": result.filtered_sample_count,
+                "samples_filtered_pct": result.samples_filtered_pct,
+                "channel_spend_pct": result.channel_spend_pct,
             })
         return pd.DataFrame(rows)
 
@@ -209,7 +235,7 @@ class ROIDiagnostics:
 
         return beliefs
 
-    def _compute_posterior_roi_samples(self, channel: str) -> np.ndarray:
+    def _compute_posterior_roi_samples(self, channel: str, log_scales: bool = True) -> tuple[np.ndarray, int]:
         """
         Compute ROI samples from posterior using PyMC-Marketing's contribution calculation.
 
@@ -222,11 +248,13 @@ class ROIDiagnostics:
         ----------
         channel : str
             Channel name.
+        log_scales : bool
+            If True, log scale factor comparisons for debugging.
 
         Returns
         -------
-        np.ndarray
-            Array of ROI samples, one per posterior draw.
+        tuple[np.ndarray, int]
+            (Array of ROI samples, channel index in PyMC ordering)
         """
         df = self.wrapper.df_scaled
 
@@ -241,9 +269,36 @@ class ROIDiagnostics:
         pymc_channels = list(self.wrapper.mmm.channel_columns)
         if channel not in pymc_channels:
             logger.warning(f"Channel {channel} not found in PyMC channel_columns")
-            return np.array([])
+            return np.array([]), -1
 
         ch_idx = pymc_channels.index(channel)
+
+        # Phase 0: Scale verification logging
+        if log_scales:
+            try:
+                # Compare our target_scale with PyMC's
+                our_target_scale = df[self.config.data.target_column].max()
+                pymc_target_transformer = self.wrapper.mmm.get_target_transformer()
+                if hasattr(pymc_target_transformer, 'scale_'):
+                    pymc_target_scale = pymc_target_transformer.scale_[0]
+                    scale_match = abs(our_target_scale - pymc_target_scale) < 0.01
+                    logger.info(f"[{channel}] Target scale - Ours: {our_target_scale:.2f}, "
+                               f"PyMC: {pymc_target_scale:.2f}, Match: {scale_match}")
+                    if not scale_match:
+                        logger.warning(f"[{channel}] TARGET SCALE MISMATCH! This may cause ROI discrepancies.")
+
+                # Compare channel scale
+                our_channel_max = df[channel].max()
+                pymc_channel_transformer = self.wrapper.mmm.get_channel_transformer()
+                if hasattr(pymc_channel_transformer, 'scale_'):
+                    pymc_channel_scale = pymc_channel_transformer.scale_[ch_idx]
+                    channel_match = abs(our_channel_max - pymc_channel_scale) < 0.01
+                    logger.info(f"[{channel}] Channel scale - Ours: {our_channel_max:.2f}, "
+                               f"PyMC: {pymc_channel_scale:.2f}, Match: {channel_match}")
+                    if not channel_match:
+                        logger.warning(f"[{channel}] CHANNEL SCALE MISMATCH! This may cause ROI discrepancies.")
+            except Exception as e:
+                logger.debug(f"[{channel}] Could not verify scales: {e}")
 
         # Select this channel and sum over time dimension
         # Result has dims (chain, draw) after summing over date
@@ -255,7 +310,7 @@ class ROIDiagnostics:
         # Compute ROI for each sample
         roi_samples = contrib_flat / (total_spend + 1e-9)
 
-        return roi_samples
+        return roi_samples, ch_idx
 
     def validate_posterior(self) -> ROIDiagnosticReport:
         """
@@ -274,33 +329,56 @@ class ROIDiagnostics:
 
         results = {}
 
+        # Compute total spend across all channels for spend % calculation
+        effective_channels = self.wrapper.transform_engine.get_effective_channel_columns()
+        total_all_channel_spend = sum(
+            self.wrapper.df_scaled[ch].sum() for ch in effective_channels
+            if ch in self.wrapper.df_scaled.columns
+        )
+
         for channel, beliefs in self.roi_beliefs.items():
             # Compute ROI samples from posterior
             try:
-                roi_samples = self._compute_posterior_roi_samples(channel)
+                roi_samples_raw, pymc_ch_idx = self._compute_posterior_roi_samples(channel)
             except Exception as e:
                 logger.warning(f"Could not compute ROI for {channel}: {e}")
                 continue
 
-            # Filter extreme values (numerical issues)
-            roi_samples = roi_samples[np.isfinite(roi_samples)]
-            roi_samples = roi_samples[(roi_samples > 0) & (roi_samples < 100)]
+            if pymc_ch_idx < 0:
+                continue
 
-            if len(roi_samples) < 50:
+            # Store raw sample statistics BEFORE filtering
+            raw_sample_count = len(roi_samples_raw)
+            raw_sample_mean = float(np.mean(roi_samples_raw)) if raw_sample_count > 0 else None
+
+            # Compute percentiles on raw samples
+            raw_sample_percentiles = {}
+            if raw_sample_count > 0:
+                for p in [5, 25, 50, 75, 95]:
+                    raw_sample_percentiles[p] = float(np.percentile(roi_samples_raw, p))
+
+            # FIXED: Only filter infinites and negatives, NOT high values
+            # The old filter (roi_samples < 100) was causing massive underreporting
+            roi_samples = roi_samples_raw[np.isfinite(roi_samples_raw)]
+            roi_samples = roi_samples[roi_samples > 0]
+
+            filtered_sample_count = len(roi_samples)
+            samples_filtered_pct = 1.0 - (filtered_sample_count / raw_sample_count) if raw_sample_count > 0 else 0.0
+
+            # Log if many samples were filtered (shouldn't happen now without the < 100 filter)
+            if samples_filtered_pct > 0.1:
+                logger.warning(f"[{channel}] {samples_filtered_pct:.1%} of ROI samples were filtered out")
+
+            if filtered_sample_count < 50:
                 logger.warning(f"Too few valid ROI samples for {channel} "
-                              f"({len(roi_samples)} samples)")
+                              f"({filtered_sample_count} samples)")
                 continue
 
             # Compute HDI
             hdi = az.hdi(roi_samples, hdi_prob=self.hdi_prob)
 
             # Get λ shift (prior vs posterior)
-            # Use PyMC's channel ordering for posterior access
-            pymc_channels = list(self.wrapper.mmm.channel_columns)
-            pymc_ch_idx = pymc_channels.index(channel)
-
             # Use our effective_channels ordering for prior (lam_vec)
-            effective_channels = self.wrapper.transform_engine.get_effective_channel_columns()
             our_ch_idx = effective_channels.index(channel)
             prior_lam = self.wrapper.lam_vec[our_ch_idx]
 
@@ -310,7 +388,19 @@ class ROIDiagnostics:
             )
             lam_shift = (posterior_lam - prior_lam) / (prior_lam + 1e-9)
 
-            # Build result
+            # Get β shift (prior vs posterior)
+            prior_beta_median = float(np.exp(self.wrapper.beta_mu[our_ch_idx]))
+            posterior_beta_mean = float(
+                self.wrapper.idata.posterior["saturation_beta"]
+                .isel(channel=pymc_ch_idx).mean()
+            )
+            beta_shift = (posterior_beta_mean - prior_beta_median) / (prior_beta_median + 1e-9)
+
+            # Compute channel spend metrics
+            channel_spend = self.wrapper.df_scaled[channel].sum()
+            channel_spend_pct = channel_spend / (total_all_channel_spend + 1e-9)
+
+            # Build result with all new diagnostic fields
             result = ChannelROIResult(
                 channel_name=channel,
                 prior_roi_low=beliefs["low"],
@@ -327,6 +417,17 @@ class ROIDiagnostics:
                     (np.mean(roi_samples) - beliefs["mid"]) / (beliefs["mid"] + 1e-9)
                 ),
                 lambda_shift=lam_shift,
+                # New diagnostic fields
+                raw_sample_count=raw_sample_count,
+                filtered_sample_count=filtered_sample_count,
+                samples_filtered_pct=samples_filtered_pct,
+                raw_sample_mean=raw_sample_mean,
+                raw_sample_percentiles=raw_sample_percentiles,
+                prior_beta_median=prior_beta_median,
+                posterior_beta_mean=posterior_beta_mean,
+                beta_shift=beta_shift,
+                channel_spend_total=float(channel_spend),
+                channel_spend_pct=float(channel_spend_pct),
             )
 
             # Add warnings based on diagnostics
@@ -345,6 +446,18 @@ class ROIDiagnostics:
                 result.warnings.append(
                     f"Saturation curve changed significantly "
                     f"(λ shifted {lam_shift:+.1%} from prior)"
+                )
+
+            if abs(beta_shift) > 0.5:
+                result.warnings.append(
+                    f"Beta coefficient shifted significantly "
+                    f"(β shifted {beta_shift:+.1%} from prior)"
+                )
+
+            if channel_spend_pct < 0.05:
+                result.warnings.append(
+                    f"Low spend channel ({channel_spend_pct:.1%} of total) - "
+                    f"ROI may be unstable"
                 )
 
             results[channel] = result

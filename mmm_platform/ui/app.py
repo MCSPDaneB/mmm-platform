@@ -87,7 +87,6 @@ def main():
             "🏠 Home",
             "📁 Upload Data",
             "⚙️ Configure Model",
-            "🚀 Run Model",
             "📈 Results",
             "📤 Export",
             "📊 Combined Analysis",
@@ -117,9 +116,6 @@ def main():
     elif page == "⚙️ Configure Model":
         from mmm_platform.ui.pages import configure_model
         configure_model.show()
-    elif page == "🚀 Run Model":
-        from mmm_platform.ui.pages import run_model
-        run_model.show()
     elif page == "📈 Results":
         from mmm_platform.ui.pages import results
         results.show()
@@ -211,9 +207,8 @@ def show_home():
     Follow these steps to build your model:
 
     1. **📁 Upload Data** - Upload your marketing data (CSV format)
-    2. **⚙️ Configure Model** - Define channels, controls, and priors
-    3. **🚀 Run Model** - Fit the Bayesian model
-    4. **📈 Results** - Analyze ROI, contributions, and diagnostics
+    2. **⚙️ Configure Model** - Define channels, controls, priors, and run the model
+    3. **📈 Results** - Analyze ROI, contributions, and diagnostics
 
     ## Features
 

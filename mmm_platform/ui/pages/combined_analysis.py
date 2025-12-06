@@ -60,7 +60,7 @@ def show():
 
     if not saved_models:
         st.warning("No fitted models found. Please run and save at least 2 models first.")
-        st.info("Go to **Run Model** to fit a model, then it will be automatically saved.")
+        st.info("Go to **Configure Model** to set up and run a model, then it will be automatically saved.")
         return
 
     if len(saved_models) < 2:
