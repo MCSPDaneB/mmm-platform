@@ -548,7 +548,7 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
 
             fit_stats = results.fit_statistics or {}
 
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2, col3 = st.columns(3)
             with col1:
                 r2 = fit_stats.get("r2", "N/A")
                 st.metric("R²", f"{r2:.3f}" if isinstance(r2, (int, float)) else r2)
@@ -556,9 +556,6 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
                 mape = fit_stats.get("mape", "N/A")
                 st.metric("MAPE", f"{mape:.1f}%" if isinstance(mape, (int, float)) else mape)
             with col3:
-                rmse = fit_stats.get("rmse", "N/A")
-                st.metric("RMSE", f"{rmse:.1f}" if isinstance(rmse, (int, float)) else rmse)
-            with col4:
                 # Show convergence status
                 convergence_data = results.convergence
                 if convergence_data:
@@ -713,14 +710,12 @@ def run_model_local(config, df, draws, tune, chains, save_model):
 
             st.success(f"Model fitted successfully in {wrapper.fit_duration_seconds:.1f} seconds!")
 
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("R2", f"{fit_stats['r2']:.3f}")
+                st.metric("R²", f"{fit_stats['r2']:.3f}")
             with col2:
                 st.metric("MAPE", f"{fit_stats['mape']:.1f}%")
             with col3:
-                st.metric("RMSE", f"{fit_stats['rmse']:.1f}")
-            with col4:
                 convergence_status = "Yes" if convergence["converged"] else "No"
                 st.metric("Converged", convergence_status)
 
