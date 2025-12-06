@@ -771,11 +771,20 @@ def show():
 
         # Initialize owned media selection state
         if "_owned_media_selection" not in st.session_state:
-            saved_owned_media = st.session_state.get("config_state", {}).get("owned_media", [])
+            config_state = st.session_state.get("config_state", {})
+            saved_owned_media = config_state.get("owned_media", [])
+            # Check if owned_media key exists in config (even if empty) vs not existing at all
+            has_owned_media_key = "owned_media" in config_state
+
             if saved_owned_media:
+                # Config has owned media - use them
                 saved_om_names = [om["name"] for om in saved_owned_media]
                 st.session_state._owned_media_selection = [c for c in saved_om_names if c in available_owned_media]
+            elif has_owned_media_key:
+                # Config explicitly has empty owned_media - respect that (don't auto-detect)
+                st.session_state._owned_media_selection = []
             else:
+                # No config loaded yet - auto-detect for new configs only
                 st.session_state._owned_media_selection = auto_owned_media if auto_owned_media else []
 
         # Version counter for widget key - increment to force new widget instance

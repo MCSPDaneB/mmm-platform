@@ -654,10 +654,13 @@ def _load_config(path: str):
         widget_keys_to_clear = [
             "channel_multiselect",
             "owned_media_multiselect",
+            "_owned_media_selection",  # Internal state for owned media selection
+            "_owned_media_version",    # Version counter for owned media widget
             "competitor_multiselect",
             "control_multiselect",
             "channels_data_editor",
             "owned_media_data_editor",
+            "owned_media_df_current",  # DataFrame state for owned media
             "competitor_data_editor",
             "controls_data_editor",
         ]
@@ -869,10 +872,13 @@ def _load_model(path: str, navigate_to_results: bool = False):
         widget_keys_to_clear = [
             "channel_multiselect",
             "owned_media_multiselect",
+            "_owned_media_selection",  # Internal state for owned media selection
+            "_owned_media_version",    # Version counter for owned media widget
             "competitor_multiselect",
             "control_multiselect",
             "channels_data_editor",
             "owned_media_data_editor",
+            "owned_media_df_current",  # DataFrame state for owned media
             "competitor_data_editor",
             "controls_data_editor",
         ]
