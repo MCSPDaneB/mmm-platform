@@ -320,7 +320,19 @@ class MMMWrapper:
         if self.idata is None:
             raise ValueError("Model not fitted. Call fit() first.")
 
-        contribs = self.mmm.compute_mean_contributions_over_time(self.idata, original_scale=True)
+        # Handle different PyMC-Marketing versions:
+        # - v0.17+: compute_mean_contributions_over_time(original_scale=False) - uses self.idata internally
+        # - older: compute_mean_contributions_over_time(idata, original_scale=False) - needs idata passed
+        import inspect
+        sig = inspect.signature(self.mmm.compute_mean_contributions_over_time)
+        params = list(sig.parameters.keys())
+
+        if 'idata' in params:
+            # Older version - pass idata explicitly
+            contribs = self.mmm.compute_mean_contributions_over_time(idata=self.idata, original_scale=True)
+        else:
+            # Newer version (0.17+) - idata is stored internally
+            contribs = self.mmm.compute_mean_contributions_over_time(original_scale=True)
         return contribs
 
     def get_contributions_real_units(self) -> pd.DataFrame:
