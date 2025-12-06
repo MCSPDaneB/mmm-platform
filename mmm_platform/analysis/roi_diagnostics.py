@@ -269,6 +269,18 @@ class ROIDiagnostics:
         target_scale = df[config.data.target_column].max()
         l_max = config.adstock.l_max
 
+        # DEBUG: Log intermediate values for TikTok
+        if "tiktok" in channel.lower():
+            print(f"DEBUG ROI CALC - {channel}:")
+            print(f"  x_max (spend max): {x_max}")
+            print(f"  total_spend: {total_spend}")
+            print(f"  target_scale (target max): {target_scale}")
+            print(f"  l_max: {l_max}")
+            print(f"  n_samples: {n_samples}")
+            print(f"  beta mean: {beta_flat.mean():.6f}, std: {beta_flat.std():.6f}")
+            print(f"  lam mean: {lam_flat.mean():.6f}")
+            print(f"  alpha mean: {alpha_flat.mean():.6f}")
+
         # Compute ROI for each posterior sample
         roi_samples = np.zeros(n_samples)
 
@@ -286,6 +298,20 @@ class ROIDiagnostics:
             # Compute contribution and ROI
             contribution = target_scale * beta * x_sat.sum()
             roi_samples[i] = contribution / (total_spend + 1e-9)
+
+            # DEBUG: Log first sample details for TikTok
+            if i == 0 and "tiktok" in channel.lower():
+                print(f"  Sample 0 details:")
+                print(f"    x_ad.sum(): {x_ad.sum():.6f}")
+                print(f"    x_sat.sum(): {x_sat.sum():.6f}")
+                print(f"    beta: {beta:.6f}")
+                print(f"    contribution: {contribution:.2f}")
+                print(f"    ROI: {roi_samples[i]:.6f}")
+
+        # DEBUG: Log final ROI stats for TikTok
+        if "tiktok" in channel.lower():
+            print(f"  Final ROI mean: {roi_samples.mean():.6f}")
+            print(f"  Final ROI std: {roi_samples.std():.6f}")
 
         return roi_samples
 
