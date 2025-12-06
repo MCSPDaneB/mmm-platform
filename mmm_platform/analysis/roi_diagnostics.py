@@ -237,17 +237,17 @@ class ROIDiagnostics:
         effective_channels = self.wrapper.transform_engine.get_effective_channel_columns()
         ch_idx = effective_channels.index(channel)
 
-        # DEBUG: Log channel ordering to diagnose mismatches
+        # DEBUG: Log channel ordering to diagnose mismatches (using print for visibility)
         pymc_channels = list(self.wrapper.mmm.channel_columns) if hasattr(self.wrapper.mmm, 'channel_columns') else []
-        logger.info(f"DEBUG ROI - Channel: {channel}")
-        logger.info(f"DEBUG ROI - Our effective_channels: {effective_channels}")
-        logger.info(f"DEBUG ROI - PyMC channel_columns: {pymc_channels}")
-        logger.info(f"DEBUG ROI - Our ch_idx for {channel}: {ch_idx}")
+        print(f"DEBUG ROI - Channel: {channel}")
+        print(f"DEBUG ROI - Our effective_channels: {effective_channels}")
+        print(f"DEBUG ROI - PyMC channel_columns: {pymc_channels}")
+        print(f"DEBUG ROI - Our ch_idx for {channel}: {ch_idx}")
         if pymc_channels and channel in pymc_channels:
             pymc_idx = pymc_channels.index(channel)
-            logger.info(f"DEBUG ROI - PyMC idx for {channel}: {pymc_idx}")
+            print(f"DEBUG ROI - PyMC idx for {channel}: {pymc_idx}")
             if ch_idx != pymc_idx:
-                logger.warning(f"DEBUG ROI - INDEX MISMATCH! Our idx={ch_idx}, PyMC idx={pymc_idx}")
+                print(f"DEBUG ROI - INDEX MISMATCH! Our idx={ch_idx}, PyMC idx={pymc_idx}")
 
         # Get posterior samples for all three parameters
         beta_samples = idata.posterior["saturation_beta"].isel(channel=ch_idx).values
