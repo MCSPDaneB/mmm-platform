@@ -320,7 +320,7 @@ class MMMWrapper:
         if self.idata is None:
             raise ValueError("Model not fitted. Call fit() first.")
 
-        contribs = self.mmm.compute_mean_contributions_over_time(self.idata)
+        contribs = self.mmm.compute_mean_contributions_over_time(self.idata, original_scale=True)
         return contribs
 
     def get_contributions_real_units(self) -> pd.DataFrame:
