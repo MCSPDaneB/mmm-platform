@@ -232,14 +232,12 @@ def show():
         # Key metrics
         fit_stats = wrapper.get_fit_statistics()
 
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
         with col1:
             st.metric("R²", f"{fit_stats['r2']:.2f}")
         with col2:
             st.metric("MAPE", f"{fit_stats['mape']:.2f}%")
         with col3:
-            st.metric("RMSE", f"{fit_stats['rmse']:.2f}")
-        with col4:
             st.metric("Fit Time", f"{fit_stats['fit_duration_seconds']:.2f}s")
 
         st.markdown("---")
@@ -2836,7 +2834,7 @@ def show_ec2_results():
         fit_stats = results.get("fit_statistics", {})
         diagnostics = results.get("diagnostics", {})
 
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
         with col1:
             r2 = diagnostics.get("r2") or fit_stats.get("r2", "N/A")
             st.metric("R²", f"{r2:.2f}" if isinstance(r2, (int, float)) else r2)
@@ -2844,9 +2842,6 @@ def show_ec2_results():
             mape = diagnostics.get("mape") or fit_stats.get("mape", "N/A")
             st.metric("MAPE", f"{mape:.2f}%" if isinstance(mape, (int, float)) else mape)
         with col3:
-            rmse = diagnostics.get("rmse") or fit_stats.get("rmse", "N/A")
-            st.metric("RMSE", f"{rmse:.2f}" if isinstance(rmse, (int, float)) else rmse)
-        with col4:
             n_obs = diagnostics.get("n_observations") or fit_stats.get("n_observations", "N/A")
             st.metric("Observations", n_obs)
 

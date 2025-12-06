@@ -218,18 +218,6 @@ def _show_overview_tab(data: Dict[str, Any]):
         delta = mape_b - mape_a
         st.markdown(f"**{delta:+.2f}%**" + (" ✓" if delta < 0 else (" ✗" if delta > 0 else "")))
 
-    # RMSE (lower is better)
-    rmse_a = stats_a.get("rmse", 0)
-    rmse_b = stats_b.get("rmse", 0)
-    col1, col2, col3 = st.columns([2, 2, 1])
-    with col1:
-        st.metric("RMSE", f"{rmse_a:.2f}")
-    with col2:
-        st.metric("RMSE", f"{rmse_b:.2f}")
-    with col3:
-        delta = rmse_b - rmse_a
-        st.markdown(f"**{delta:+.2f}**" + (" ✓" if delta < 0 else (" ✗" if delta > 0 else "")))
-
     # Fit Duration
     duration_a = stats_a.get("fit_duration_seconds", 0)
     duration_b = stats_b.get("fit_duration_seconds", 0)

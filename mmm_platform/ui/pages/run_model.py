@@ -49,14 +49,12 @@ def show():
         st.subheader("Fit Summary")
         try:
             fit_stats = wrapper.get_fit_statistics()
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("R²", f"{fit_stats['r2']:.3f}")
             with col2:
                 st.metric("MAPE", f"{fit_stats['mape']:.1f}%")
             with col3:
-                st.metric("RMSE", f"{fit_stats['rmse']:.1f}")
-            with col4:
                 if fit_stats.get('fit_duration_seconds'):
                     st.metric("Fit Time", f"{fit_stats['fit_duration_seconds']:.0f}s")
                 else:

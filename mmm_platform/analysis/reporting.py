@@ -218,10 +218,6 @@ class ReportGenerator:
                 <div class="metric-label">MAPE</div>
             </div>
             <div class="metric-card">
-                <div class="metric-value">{summary['fit_statistics']['rmse']:.1f}</div>
-                <div class="metric-label">RMSE</div>
-            </div>
-            <div class="metric-card">
                 <div class="metric-value">{summary['fit_statistics']['n_observations']}</div>
                 <div class="metric-label">Observations</div>
             </div>
