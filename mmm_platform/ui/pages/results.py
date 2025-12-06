@@ -1962,7 +1962,7 @@ def show():
                     "λ Shift": roi_df["lambda_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
                 })
 
-                st.dataframe(display_df, hide_index=True, use_container_width=True)
+                st.dataframe(display_df, hide_index=True, width='stretch')
 
             # Warnings
             if roi_report.channels_with_prior_tension:
