@@ -211,13 +211,12 @@ class ROIDiagnostics:
 
     def _compute_posterior_roi_samples(self, channel: str) -> np.ndarray:
         """
-        Compute ROI samples from posterior by properly applying transforms.
+        Compute ROI samples from posterior using PyMC-Marketing's contribution calculation.
 
-        ROI = Σ contribution / Σ spend
-            = target_scale × β × Σ sat(adstock(x_norm)) / Σ spend
+        Uses compute_channel_contribution_original_scale() to get contribution samples
+        that properly account for PyMC-Marketing's internal scaling.
 
-        We sample over (β, λ, α) jointly to capture correlations.
-        This is more accurate than using mean λ/α as in bayesian_significance.py.
+        ROI = Σ contribution / Σ spend (per posterior sample)
 
         Parameters
         ----------
@@ -229,134 +228,34 @@ class ROIDiagnostics:
         np.ndarray
             Array of ROI samples, one per posterior draw.
         """
-        idata = self.wrapper.idata
         df = self.wrapper.df_scaled
-        config = self.config
 
-        # Get channel index in effective channels list
-        effective_channels = self.wrapper.transform_engine.get_effective_channel_columns()
-        ch_idx = effective_channels.index(channel)
+        # Get total spend for this channel
+        total_spend = df[channel].sum()
 
-        # DEBUG: Log channel ordering to diagnose mismatches (using print for visibility)
-        pymc_channels = list(self.wrapper.mmm.channel_columns) if hasattr(self.wrapper.mmm, 'channel_columns') else []
-        print(f"DEBUG ROI - Channel: {channel}")
-        print(f"DEBUG ROI - Our effective_channels: {effective_channels}")
-        print(f"DEBUG ROI - PyMC channel_columns: {pymc_channels}")
-        print(f"DEBUG ROI - Our ch_idx for {channel}: {ch_idx}")
-        if pymc_channels and channel in pymc_channels:
-            pymc_idx = pymc_channels.index(channel)
-            print(f"DEBUG ROI - PyMC idx for {channel}: {pymc_idx}")
-            if ch_idx != pymc_idx:
-                print(f"DEBUG ROI - INDEX MISMATCH! Our idx={ch_idx}, PyMC idx={pymc_idx}")
+        # Get contribution samples from PyMC-Marketing (posterior=True by default)
+        # This returns a DataArray with dims (chain, draw, date, channel)
+        contrib_samples = self.wrapper.mmm.compute_channel_contribution_original_scale(prior=False)
 
-        # Get posterior samples for all three parameters
-        beta_samples = idata.posterior["saturation_beta"].isel(channel=ch_idx).values
-        lam_samples = idata.posterior["saturation_lam"].isel(channel=ch_idx).values
-        alpha_samples = idata.posterior["adstock_alpha"].isel(channel=ch_idx).values
+        # Get channel index in PyMC's channel ordering
+        pymc_channels = list(self.wrapper.mmm.channel_columns)
+        if channel not in pymc_channels:
+            logger.warning(f"Channel {channel} not found in PyMC channel_columns")
+            return np.array([])
 
-        # Flatten chains × draws to single dimension
-        beta_flat = beta_samples.flatten()
-        lam_flat = lam_samples.flatten()
-        alpha_flat = alpha_samples.flatten()
+        ch_idx = pymc_channels.index(channel)
 
-        n_samples = len(beta_flat)
+        # Select this channel and sum over time dimension
+        # Result has dims (chain, draw) after summing over date
+        channel_contribs = contrib_samples.isel(channel=ch_idx).sum(dim="date")
 
-        # Get data for this channel
-        x = df[channel].values.astype(float)
-        x_max = x.max()
-        x_norm = x / (x_max + 1e-9)
-        total_spend = x.sum()
-        target_scale = df[config.data.target_column].max()
-        l_max = config.adstock.l_max
+        # Flatten to 1D array of samples
+        contrib_flat = channel_contribs.values.flatten()
 
-        # DEBUG: Log intermediate values for TikTok
-        if "tiktok" in channel.lower():
-            print(f"DEBUG ROI CALC - {channel}:")
-            print(f"  x_max (spend max): {x_max}")
-            print(f"  total_spend: {total_spend}")
-            print(f"  target_scale (target max): {target_scale}")
-            print(f"  l_max: {l_max}")
-            print(f"  n_samples: {n_samples}")
-            print(f"  beta mean: {beta_flat.mean():.6f}, std: {beta_flat.std():.6f}")
-            print(f"  lam mean: {lam_flat.mean():.6f}")
-            print(f"  alpha mean: {alpha_flat.mean():.6f}")
-
-        # Compute ROI for each posterior sample
-        roi_samples = np.zeros(n_samples)
-
-        for i in range(n_samples):
-            alpha = alpha_flat[i]
-            lam = lam_flat[i]
-            beta = beta_flat[i]
-
-            # Apply adstock transformation
-            x_ad = self._geometric_adstock(x_norm, alpha, l_max)
-
-            # Apply saturation transformation
-            x_sat = self._logistic_saturation(x_ad, lam)
-
-            # Compute contribution and ROI
-            contribution = target_scale * beta * x_sat.sum()
-            roi_samples[i] = contribution / (total_spend + 1e-9)
-
-            # DEBUG: Log first sample details for TikTok
-            if i == 0 and "tiktok" in channel.lower():
-                print(f"  Sample 0 details:")
-                print(f"    x_ad.sum(): {x_ad.sum():.6f}")
-                print(f"    x_sat.sum(): {x_sat.sum():.6f}")
-                print(f"    beta: {beta:.6f}")
-                print(f"    contribution: {contribution:.2f}")
-                print(f"    ROI: {roi_samples[i]:.6f}")
-
-        # DEBUG: Log final ROI stats for TikTok
-        if "tiktok" in channel.lower():
-            print(f"  Final ROI mean: {roi_samples.mean():.6f}")
-            print(f"  Final ROI std: {roi_samples.std():.6f}")
+        # Compute ROI for each sample
+        roi_samples = contrib_flat / (total_spend + 1e-9)
 
         return roi_samples
-
-    def _geometric_adstock(self, x: np.ndarray, alpha: float, l_max: int) -> np.ndarray:
-        """
-        Apply geometric adstock transformation.
-
-        Matches the implementation in transforms.py with backward-looking weights.
-
-        Parameters
-        ----------
-        x : np.ndarray
-            Input time series (normalized).
-        alpha : float
-            Decay rate.
-        l_max : int
-            Maximum lag.
-
-        Returns
-        -------
-        np.ndarray
-            Adstocked time series.
-        """
-        weights = np.array([alpha ** i for i in range(l_max)])
-        weights = weights / weights.sum()
-        weights = weights[::-1]  # Reverse for backward-looking
-        return np.convolve(x, weights, mode='full')[:len(x)]
-
-    def _logistic_saturation(self, x: np.ndarray, lam: float) -> np.ndarray:
-        """
-        Apply logistic saturation transformation.
-
-        Parameters
-        ----------
-        x : np.ndarray
-            Input time series.
-        lam : float
-            Saturation parameter.
-
-        Returns
-        -------
-        np.ndarray
-            Saturated time series.
-        """
-        return (1 - np.exp(-lam * x)) / (1 + np.exp(-lam * x))
 
     def validate_posterior(self) -> ROIDiagnosticReport:
         """
@@ -396,12 +295,18 @@ class ROIDiagnostics:
             hdi = az.hdi(roi_samples, hdi_prob=self.hdi_prob)
 
             # Get λ shift (prior vs posterior)
+            # Use PyMC's channel ordering for posterior access
+            pymc_channels = list(self.wrapper.mmm.channel_columns)
+            pymc_ch_idx = pymc_channels.index(channel)
+
+            # Use our effective_channels ordering for prior (lam_vec)
             effective_channels = self.wrapper.transform_engine.get_effective_channel_columns()
-            ch_idx = effective_channels.index(channel)
-            prior_lam = self.wrapper.lam_vec[ch_idx]
+            our_ch_idx = effective_channels.index(channel)
+            prior_lam = self.wrapper.lam_vec[our_ch_idx]
+
             posterior_lam = float(
                 self.wrapper.idata.posterior["saturation_lam"]
-                .isel(channel=ch_idx).mean()
+                .isel(channel=pymc_ch_idx).mean()
             )
             lam_shift = (posterior_lam - prior_lam) / (prior_lam + 1e-9)
 

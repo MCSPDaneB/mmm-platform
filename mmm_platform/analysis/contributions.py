@@ -140,15 +140,6 @@ class ContributionAnalyzer:
             spend = self.df_scaled[ch].sum()
             roi = contrib / (spend + 1e-9)
 
-            # DEBUG: Log TikTok values from Channel ROI calculation
-            if "tiktok" in ch.lower():
-                print(f"DEBUG CHANNEL ROI - {ch}:")
-                print(f"  contrib (from PyMC contribs): {contrib:.2f}")
-                print(f"  spend (from df_scaled): {spend:.2f}")
-                print(f"  ROI: {roi:.6f}")
-                print(f"  revenue_scale: {self.revenue_scale}")
-                print(f"  spend_scale: {self.spend_scale}")
-
             # Real units
             contrib_real = contrib * self.revenue_scale
             spend_real = spend * self.spend_scale

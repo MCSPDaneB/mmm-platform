@@ -171,50 +171,6 @@ class TestROIDiagnostics:
         assert "search_spend" in beliefs
         assert beliefs["search_spend"]["mid"] == 2.5
 
-    def test_geometric_adstock_matches_transforms(self, basic_config):
-        """Adstock implementation should match TransformEngine."""
-        from mmm_platform.core.transforms import TransformEngine
-
-        class MockWrapper:
-            def __init__(self, config):
-                self.config = config
-                self.idata = None
-
-        wrapper = MockWrapper(basic_config)
-        diagnostics = ROIDiagnostics(wrapper)
-        engine = TransformEngine(basic_config)
-
-        np.random.seed(42)
-        x = np.random.rand(50)
-        alpha = 0.5
-        l_max = 8
-
-        result_diag = diagnostics._geometric_adstock(x, alpha, l_max)
-        result_engine = engine.compute_geometric_adstock(x, alpha, l_max)
-
-        assert_allclose(result_diag, result_engine, rtol=1e-10)
-
-    def test_logistic_saturation_matches_transforms(self, basic_config):
-        """Saturation implementation should match TransformEngine."""
-        from mmm_platform.core.transforms import TransformEngine
-
-        class MockWrapper:
-            def __init__(self, config):
-                self.config = config
-                self.idata = None
-
-        wrapper = MockWrapper(basic_config)
-        diagnostics = ROIDiagnostics(wrapper)
-        engine = TransformEngine(basic_config)
-
-        x = np.linspace(0, 1, 50)
-        lam = 3.0
-
-        result_diag = diagnostics._logistic_saturation(x, lam)
-        result_engine = engine.compute_logistic_saturation(x, lam)
-
-        assert_allclose(result_diag, result_engine, rtol=1e-10)
-
     def test_validate_posterior_requires_fitted_model(self, basic_config):
         """validate_posterior should raise if model not fitted."""
         class MockWrapper:
@@ -241,52 +197,3 @@ class TestROIDiagnostics:
         assert diagnostics.hdi_prob == 0.95
 
 
-class TestROIDiagnosticsTransformConsistency:
-    """Tests to ensure transform implementations are consistent."""
-
-    def test_adstock_output_shape(self, basic_config):
-        """Adstock should preserve input shape."""
-        class MockWrapper:
-            def __init__(self, config):
-                self.config = config
-                self.idata = None
-
-        wrapper = MockWrapper(basic_config)
-        diagnostics = ROIDiagnostics(wrapper)
-
-        x = np.random.rand(100)
-        result = diagnostics._geometric_adstock(x, alpha=0.5, l_max=8)
-
-        assert result.shape == x.shape
-
-    def test_saturation_output_range(self, basic_config):
-        """Saturation output should be bounded."""
-        class MockWrapper:
-            def __init__(self, config):
-                self.config = config
-                self.idata = None
-
-        wrapper = MockWrapper(basic_config)
-        diagnostics = ROIDiagnostics(wrapper)
-
-        x = np.linspace(0, 10, 100)
-        result = diagnostics._logistic_saturation(x, lam=2.0)
-
-        assert np.all(result >= -1)
-        assert np.all(result <= 1)
-
-    def test_saturation_monotonic(self, basic_config):
-        """Saturation should be monotonically increasing."""
-        class MockWrapper:
-            def __init__(self, config):
-                self.config = config
-                self.idata = None
-
-        wrapper = MockWrapper(basic_config)
-        diagnostics = ROIDiagnostics(wrapper)
-
-        x = np.linspace(0, 5, 100)
-        result = diagnostics._logistic_saturation(x, lam=2.0)
-
-        diffs = np.diff(result)
-        assert np.all(diffs >= 0)
