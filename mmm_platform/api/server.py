@@ -443,13 +443,13 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
                 "n_observations": fit_stats.get("n_observations"),
             },
             "convergence": {
-                "converged": convergence["converged"],
-                "divergences": convergence["divergences"],
+                "converged": bool(convergence["converged"]),
+                "divergences": int(convergence["divergences"]),
                 "high_rhat_params": convergence["high_rhat_params"],
                 "warnings": convergence["warnings"],
-                "ess_bulk_min": ess_stats.get("ess_bulk_min"),
-                "ess_tail_min": ess_stats.get("ess_tail_min"),
-                "ess_sufficient": ess_stats.get("sufficient", True),
+                "ess_bulk_min": float(ess_stats["ess_bulk_min"]) if ess_stats.get("ess_bulk_min") is not None else None,
+                "ess_tail_min": float(ess_stats["ess_tail_min"]) if ess_stats.get("ess_tail_min") is not None else None,
+                "ess_sufficient": bool(ess_stats.get("sufficient", True)),
             },
             "model_info": {
                 "channels": config.get_channel_columns(),
