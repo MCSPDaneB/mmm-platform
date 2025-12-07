@@ -511,7 +511,7 @@ class DataConfig(BaseModel):
     brand: Optional[str] = Field(None, description="Brand name for exports")
     model_start_date: Optional[str] = Field(None, description="Start date for modeling (YYYY-MM-DD)")
     model_end_date: Optional[str] = Field(None, description="End date for modeling (YYYY-MM-DD)")
-    include_trend: bool = Field(True, description="Include linear time trend as control variable")
+    include_trend: bool = Field(False, description="Include linear time trend as control variable")
 
     # KPI type configuration for dynamic labeling
     kpi_type: KPIType = Field(KPIType.REVENUE, description="Type of KPI (revenue/count) for display terminology")

@@ -149,6 +149,7 @@ def show():
             "name": "my_mmm_model",
             "channels": [],
             "controls": [],
+            "include_trend": False,
         }
 
     # =========================================================================
@@ -413,7 +414,7 @@ def show():
         else:
             include_trend = st.checkbox(
                 "Include Time Trend",
-                value=saved_data.get("include_trend", True),
+                value=saved_data.get("include_trend", False),
                 key=f"include_trend_check_fallback_{config_version}",
                 help="Add a linear time trend (t=1,2,3,...) as a control variable"
             )
@@ -2131,7 +2132,7 @@ def build_config_from_state() -> ModelConfig:
             kpi_display_name=state.get("kpi_display_name"),
             model_start_date=state.get("model_start_date"),
             model_end_date=state.get("model_end_date"),
-            include_trend=state.get("include_trend", True),
+            include_trend=state.get("include_trend", False),
         ),
         channels=channels,
         owned_media=owned_media,
