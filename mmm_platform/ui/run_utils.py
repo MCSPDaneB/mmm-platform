@@ -228,6 +228,7 @@ def run_model_ec2(config, df, draws, tune, chains, save_model):
                 "model_start_date": config.data.model_start_date,
                 "model_end_date": config.data.model_end_date,
                 "dayfirst": config.data.dayfirst,
+                "include_trend": config.data.include_trend,
             }
 
             # Sampling config

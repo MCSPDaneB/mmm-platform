@@ -89,6 +89,7 @@ class DataConfig(BaseModel):
     model_start_date: Optional[str] = None
     model_end_date: Optional[str] = None
     dayfirst: bool = True
+    include_trend: bool = False
 
 
 class SamplingConfig(BaseModel):
@@ -320,6 +321,7 @@ async def run_model_task(job_id: str, request: ModelRunRequest):
                 model_start_date=request.data_config.model_start_date,
                 model_end_date=request.data_config.model_end_date,
                 dayfirst=request.data_config.dayfirst,
+                include_trend=request.data_config.include_trend,
             ),
             sampling=SchemaSamplingConfig(
                 draws=request.sampling_config.draws,
