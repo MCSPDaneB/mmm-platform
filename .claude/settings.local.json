@@ -27,7 +27,9 @@
       "Bash(\"C:\\localProjects\\pymc_testing\\mmm_platform\\venv\\Scripts\\python.exe\" -m pytest:*)",
       "Bash(C:localProjectspymc_testingmmm_platformvenvScriptspython.exe -m pytest mmm_platform/tests/unit/test_contributions.py mmm_platform/tests/unit/test_pre_fit_checks.py -v --tb=short)",
       "Bash(\"C:\\localProjects\\pymc_testing\\mmm_platform\\venv\\Scripts\\python.exe\" -m pytest \"C:\\localProjects\\pymc_testing\\mmm_platform\\mmm_platform\\tests\\unit\\test_compare_models_regression.py\" -v --tb=short)",
-      "Bash(\"C:\\localProjects\\pymc_testing\\mmm_platform\\venv\\Scripts\\python.exe\" -m pytest \"C:\\localProjects\\pymc_testing\\mmm_platform\\mmm_platform\\tests\\unit\\test_ui_pages.py::TestDeprecatedParameters::test_no_use_container_width_parameter\" -v --tb=short)"
+      "Bash(\"C:\\localProjects\\pymc_testing\\mmm_platform\\venv\\Scripts\\python.exe\" -m pytest \"C:\\localProjects\\pymc_testing\\mmm_platform\\mmm_platform\\tests\\unit\\test_ui_pages.py::TestDeprecatedParameters::test_no_use_container_width_parameter\" -v --tb=short)",
+      "Bash(\"C:\\localProjects\\pymc_testing\\mmm_platform\\venv\\Scripts\\python.exe\" -m pytest \"C:\\localProjects\\pymc_testing\\mmm_platform\\mmm_platform\\tests\" -v --tb=short)",
+      "Bash(\"C:\\localProjects\\pymc_testing\\mmm_platform\\venv\\Scripts\\python.exe\" -m pytest \"C:\\localProjects\\pymc_testing\\mmm_platform\\mmm_platform\\tests\" --tb=short)"
     ],
     "deny": [],
     "ask": []

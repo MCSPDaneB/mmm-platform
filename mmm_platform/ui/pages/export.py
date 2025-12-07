@@ -1047,6 +1047,82 @@ def show():
         )
 
 
+def _get_latest_disagg_config(model_path: str, model_channels: list, key_suffix: str = ""):
+    """
+    Get the latest valid disaggregation config for auto-apply.
+
+    Returns tuple of (config, weights_df) if valid config exists, (None, None) otherwise.
+    """
+    from mmm_platform.model.persistence import (
+        load_disaggregation_configs,
+        load_disaggregation_weights,
+        validate_disaggregation_config
+    )
+
+    if not model_path:
+        return None, None
+
+    saved_configs = load_disaggregation_configs(model_path)
+    if not saved_configs:
+        return None, None
+
+    # Sort by created_at descending to get most recent first
+    saved_configs_sorted = sorted(
+        saved_configs,
+        key=lambda c: c.get('created_at', ''),
+        reverse=True
+    )
+
+    # Find the first valid config
+    for cfg in saved_configs_sorted:
+        is_valid, _ = validate_disaggregation_config(cfg, model_channels)
+        if is_valid:
+            # Load the weights
+            weights_df = load_disaggregation_weights(model_path, cfg['id'])
+            if weights_df is not None:
+                return cfg, weights_df
+
+    return None, None
+
+
+def _build_disagg_config_tuple(saved_config: dict, weights_df, key_suffix: str = ""):
+    """
+    Build the disagg_config tuple from a saved config and weights DataFrame.
+
+    Returns tuple (mapped_df, granular_name_cols, date_col, weight_col, include_cols)
+    """
+    granular_name_cols = saved_config['granular_name_cols']
+    date_col = saved_config['date_column']
+    weight_col = saved_config['weight_column']
+    include_cols = saved_config.get('include_columns', [])
+
+    # The weights_df should already have _model_channel column from when it was saved
+    # Filter to only mapped rows (exclude "-- Not Mapped --")
+    if '_model_channel' in weights_df.columns:
+        mapped_df = weights_df[weights_df['_model_channel'] != "-- Not Mapped --"].copy()
+    else:
+        # Need to apply mappings from saved config
+        entity_mapping = saved_config.get('entity_to_channel_mapping', {})
+        if len(granular_name_cols) == 1:
+            entity_key_col = granular_name_cols[0]
+            weights_df['_model_channel'] = weights_df[entity_key_col].map(
+                lambda x: entity_mapping.get(str(x), "-- Not Mapped --")
+            )
+        else:
+            weights_df['_entity_key'] = weights_df[granular_name_cols].apply(
+                lambda row: " | ".join(str(v) for v in row), axis=1
+            )
+            weights_df['_model_channel'] = weights_df['_entity_key'].map(
+                lambda x: entity_mapping.get(x, "-- Not Mapped --")
+            )
+        mapped_df = weights_df[weights_df['_model_channel'] != "-- Not Mapped --"].copy()
+
+    if len(mapped_df) == 0:
+        return None
+
+    return (mapped_df, granular_name_cols, date_col, weight_col, include_cols)
+
+
 def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None, key_suffix: str = ""):
     """
     Show disaggregation UI for a single model.
@@ -1552,12 +1628,53 @@ def _show_single_model_export(
     disagg_config = None
     if enable_disagg:
         st.markdown("---")
-        st.subheader("Disaggregation Settings")
-        st.caption(
-            "Split model results to a more granular level (e.g., placements, campaigns) "
-            "using proportional weighting from an uploaded file."
-        )
-        disagg_config = _show_disaggregation_ui(wrapper, config, brand, model_path=model_path, key_suffix="")
+
+        # Try to auto-apply latest saved config
+        model_channels = [ch.name for ch in config.channels]
+        latest_config, latest_weights = _get_latest_disagg_config(model_path, model_channels, key_suffix="")
+
+        if latest_config is not None and latest_weights is not None:
+            # Auto-apply the latest config
+            disagg_config = _build_disagg_config_tuple(latest_config, latest_weights, key_suffix="")
+
+            if disagg_config is not None:
+                st.success(f"✓ Disaggregation applied using '{latest_config['name']}'")
+
+                # Show config details in a compact format
+                cols = st.columns([3, 1])
+                with cols[0]:
+                    st.caption(
+                        f"Entity: {', '.join(latest_config['granular_name_cols'])} · "
+                        f"Weight: {latest_config['weight_column']} · "
+                        f"{len(disagg_config[0]):,} mapped rows"
+                    )
+
+                # Option to update settings
+                with st.expander("Update disaggregation settings"):
+                    st.caption(
+                        "Split model results to a more granular level (e.g., placements, campaigns) "
+                        "using proportional weighting from an uploaded file."
+                    )
+                    # Show full UI - user can modify and it will override the auto-applied config
+                    manual_config = _show_disaggregation_ui(wrapper, config, brand, model_path=model_path, key_suffix="")
+                    if manual_config is not None:
+                        disagg_config = manual_config
+            else:
+                # Config exists but no mapped rows - show full UI
+                st.subheader("Disaggregation Settings")
+                st.caption(
+                    "Split model results to a more granular level (e.g., placements, campaigns) "
+                    "using proportional weighting from an uploaded file."
+                )
+                disagg_config = _show_disaggregation_ui(wrapper, config, brand, model_path=model_path, key_suffix="")
+        else:
+            # No saved config - show full UI
+            st.subheader("Disaggregation Settings")
+            st.caption(
+                "Split model results to a more granular level (e.g., placements, campaigns) "
+                "using proportional weighting from an uploaded file."
+            )
+            disagg_config = _show_disaggregation_ui(wrapper, config, brand, model_path=model_path, key_suffix="")
 
     # Column Schema Selection
     st.markdown("---")
@@ -2025,26 +2142,76 @@ def _show_combined_model_export(
     disagg_configs = {}
     if enable_disagg:
         st.markdown("---")
-        st.subheader("Disaggregation Settings")
-        st.caption(
-            "Split each model's results independently to granular level (e.g., placements, campaigns) "
-            "using proportional weighting from uploaded files."
-        )
+
+        # Try to auto-apply latest configs for each model
+        auto_applied_count = 0
+        models_needing_config = []
 
         for idx, row in edited_config.iterrows():
             wrapper = next(w for w, n, p in loaded_wrappers if p == row["Path"])
             label = row["Label"]
             model_path = row["Path"]
-            with st.expander(f"Disaggregation for {label}", expanded=False):
-                disagg_config = _show_disaggregation_ui(
-                    wrapper=wrapper,
-                    config=wrapper.config,
-                    brand=brand,
-                    model_path=model_path,
-                    key_suffix=f"_{idx}_{label}"
-                )
-                if disagg_config is not None:
-                    disagg_configs[label] = (wrapper, disagg_config)
+            model_channels = [ch.name for ch in wrapper.config.channels]
+            key_suffix = f"_{idx}_{label}"
+
+            latest_config, latest_weights = _get_latest_disagg_config(model_path, model_channels, key_suffix)
+
+            if latest_config is not None and latest_weights is not None:
+                disagg_tuple = _build_disagg_config_tuple(latest_config, latest_weights, key_suffix)
+                if disagg_tuple is not None:
+                    disagg_configs[label] = (wrapper, disagg_tuple)
+                    auto_applied_count += 1
+                else:
+                    models_needing_config.append((idx, row, wrapper, label, model_path, key_suffix))
+            else:
+                models_needing_config.append((idx, row, wrapper, label, model_path, key_suffix))
+
+        # Show success message if any configs were auto-applied
+        if auto_applied_count > 0:
+            st.success(f"✓ Disaggregation applied for {auto_applied_count} model(s) using saved configs")
+
+            # Show which models have auto-applied configs
+            applied_labels = [label for label in disagg_configs.keys()]
+            st.caption(f"Applied: {', '.join(applied_labels)}")
+
+        # Show models that need configuration
+        if models_needing_config:
+            if auto_applied_count > 0:
+                st.info(f"{len(models_needing_config)} model(s) need disaggregation configuration")
+
+            for idx, row, wrapper, label, model_path, key_suffix in models_needing_config:
+                with st.expander(f"Configure disaggregation for {label}", expanded=len(models_needing_config) == 1):
+                    disagg_config = _show_disaggregation_ui(
+                        wrapper=wrapper,
+                        config=wrapper.config,
+                        brand=brand,
+                        model_path=model_path,
+                        key_suffix=key_suffix
+                    )
+                    if disagg_config is not None:
+                        disagg_configs[label] = (wrapper, disagg_config)
+
+        # Option to update auto-applied configs
+        if auto_applied_count > 0:
+            with st.expander("Update auto-applied disaggregation settings"):
+                st.caption("Modify settings for models with auto-applied configs")
+                for idx, row in edited_config.iterrows():
+                    label = row["Label"]
+                    if label in disagg_configs and (idx, row) not in [(m[0], m[1]) for m in models_needing_config]:
+                        wrapper = next(w for w, n, p in loaded_wrappers if p == row["Path"])
+                        model_path = row["Path"]
+                        key_suffix = f"_{idx}_{label}"
+                        st.markdown(f"**{label}**")
+                        manual_config = _show_disaggregation_ui(
+                            wrapper=wrapper,
+                            config=wrapper.config,
+                            brand=brand,
+                            model_path=model_path,
+                            key_suffix=key_suffix
+                        )
+                        if manual_config is not None:
+                            disagg_configs[label] = (wrapper, manual_config)
+                        st.markdown("---")
 
         # Store in session state so it persists when button is clicked
         if disagg_configs:
