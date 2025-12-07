@@ -1773,9 +1773,25 @@ def _show_single_model_export(
                 st.session_state["export_files_ready"] = True
                 st.session_state["export_brand"] = brand
 
-                # Validate schema if one is selected
-                if st.session_state.get("export_selected_schema"):
-                    st.session_state["export_schema_validated"] = False
+                # Store original DataFrames IMMEDIATELY after generation
+                # These are needed by _apply_schema_to_exports() before schema application
+                st.session_state["export_df_decomps_original"] = st.session_state["export_df_decomps"].copy()
+                st.session_state["export_df_media_original"] = st.session_state["export_df_media"].copy()
+                st.session_state["export_df_fit_original"] = st.session_state["export_df_fit"].copy()
+                st.session_state["export_df_decomps_disagg_original"] = (
+                    st.session_state["export_df_decomps_disagg"].copy()
+                    if st.session_state.get("export_df_decomps_disagg") is not None else None
+                )
+                st.session_state["export_df_media_disagg_original"] = (
+                    st.session_state["export_df_media_disagg"].copy()
+                    if st.session_state.get("export_df_media_disagg") is not None else None
+                )
+
+                # Apply schema immediately if one is selected
+                selected_schema = st.session_state.get("export_selected_schema")
+                if selected_schema:
+                    _apply_schema_to_exports()
+                    st.session_state["export_schema_validated"] = True
                 else:
                     st.session_state["export_schema_validated"] = True
 
@@ -1817,14 +1833,6 @@ def _show_single_model_export(
     if st.session_state.get("export_files_ready", False):
         st.markdown("---")
         st.subheader("Platform Export Files")
-
-        # Store original DataFrames for column editing (before schema was applied)
-        if "export_df_decomps_original" not in st.session_state:
-            st.session_state["export_df_decomps_original"] = st.session_state.get("export_df_decomps")
-            st.session_state["export_df_media_original"] = st.session_state.get("export_df_media")
-            st.session_state["export_df_fit_original"] = st.session_state.get("export_df_fit")
-            st.session_state["export_df_decomps_disagg_original"] = st.session_state.get("export_df_decomps_disagg")
-            st.session_state["export_df_media_disagg_original"] = st.session_state.get("export_df_media_disagg")
 
         # Column schema editor expander
         # Track if user has opened the expander (stays open once opened until page refresh)
@@ -2295,9 +2303,25 @@ def _show_combined_model_export(
                 st.session_state["combined_labels"] = [label for _, label in wrappers_with_labels]
                 st.session_state["combined_first_model_path"] = loaded_wrappers[0][2] if loaded_wrappers else None
 
-                # Validate schema if one is selected
-                if st.session_state.get("combined_selected_schema"):
-                    st.session_state["combined_schema_validated"] = False
+                # Store original DataFrames IMMEDIATELY after generation
+                # These are needed by _apply_schema_to_combined_exports() before schema application
+                st.session_state["combined_df_decomps_original"] = st.session_state["combined_df_decomps"].copy()
+                st.session_state["combined_df_media_original"] = st.session_state["combined_df_media"].copy()
+                st.session_state["combined_df_fit_original"] = st.session_state["combined_df_fit"].copy()
+                st.session_state["combined_df_decomps_disagg_original"] = (
+                    st.session_state["combined_df_decomps_disagg"].copy()
+                    if st.session_state.get("combined_df_decomps_disagg") is not None else None
+                )
+                st.session_state["combined_df_media_disagg_original"] = (
+                    st.session_state["combined_df_media_disagg"].copy()
+                    if st.session_state.get("combined_df_media_disagg") is not None else None
+                )
+
+                # Apply schema immediately if one is selected
+                selected_schema = st.session_state.get("combined_selected_schema")
+                if selected_schema:
+                    _apply_schema_to_combined_exports()
+                    st.session_state["combined_schema_validated"] = True
                 else:
                     st.session_state["combined_schema_validated"] = True
 
@@ -2347,14 +2371,6 @@ def _show_combined_model_export(
             f"These CSV files combine data from all models with separate columns: "
             f"{label_display}, kpi_total"
         )
-
-        # Store original DataFrames for column editing (before schema was applied)
-        if "combined_df_decomps_original" not in st.session_state:
-            st.session_state["combined_df_decomps_original"] = st.session_state.get("combined_df_decomps")
-            st.session_state["combined_df_media_original"] = st.session_state.get("combined_df_media")
-            st.session_state["combined_df_fit_original"] = st.session_state.get("combined_df_fit")
-            st.session_state["combined_df_decomps_disagg_original"] = st.session_state.get("combined_df_decomps_disagg")
-            st.session_state["combined_df_media_disagg_original"] = st.session_state.get("combined_df_media_disagg")
 
         # Column schema editor expander
         combined_brand = st.session_state.get("combined_brand", brand)
