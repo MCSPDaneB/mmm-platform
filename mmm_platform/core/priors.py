@@ -133,9 +133,28 @@ class PriorCalibrator:
                 r_high = roi_high[ch]
 
                 # Calculate beta values that produce expected ROI
-                beta_low_list.append(r_low * total_spend / (target_scale * denom))
-                beta_mid_list.append(r_mid * total_spend / (target_scale * denom))
-                beta_high_list.append(r_high * total_spend / (target_scale * denom))
+                beta_low_val = r_low * total_spend / (target_scale * denom)
+                beta_mid_val = r_mid * total_spend / (target_scale * denom)
+                beta_high_val = r_high * total_spend / (target_scale * denom)
+
+                beta_low_list.append(beta_low_val)
+                beta_mid_list.append(beta_mid_val)
+                beta_high_list.append(beta_high_val)
+
+                # Debug: Print calibration details for each channel
+                print(f"\n=== PRIOR CALIBRATION DEBUG: {ch} ===")
+                print(f"  x.sum() (total_spend) = {total_spend:.2f}")
+                print(f"  x_max = {x_max:.2f}")
+                print(f"  x_normalized non-zero count = {np.sum(x_normalized > 0)}")
+                print(f"  x_normalized.sum() = {x_normalized.sum():.4f}")
+                print(f"  adstock x_ad.sum() = {x_ad.sum():.4f}")
+                print(f"  saturation x_sat.sum() (denom) = {denom:.4f}")
+                print(f"  target_scale = {target_scale:.2f}")
+                print(f"  prior_roi (low/mid/high) = {r_low:.4f} / {r_mid:.4f} / {r_high:.4f}")
+                print(f"  beta_mid = {beta_mid_val:.8f}")
+                print(f"  lam = {lam:.4f}")
+                print(f"  alpha (adstock) = {alpha:.4f}")
+                print(f"========================================")
             else:
                 # Uninformative priors for owned media without ROI
                 # Use generic LogNormal priors - let the data determine effect size
@@ -265,45 +284,129 @@ class PriorCalibrator:
 
         return pd.DataFrame(results)
 
-    def get_adstock_prior_params(self) -> tuple[np.ndarray, np.ndarray]:
+    def get_adstock_prior_params(
+        self,
+        df_scaled: Optional[pd.DataFrame] = None
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
         Get Beta distribution parameters for adstock priors.
+
+        For low-spend channels, uses higher concentration (K) to constrain
+        the adstock alpha closer to the prior mean, preventing drift.
+
+        Parameters
+        ----------
+        df_scaled : pd.DataFrame, optional
+            Scaled dataframe for calculating spend percentages.
 
         Returns
         -------
         tuple[np.ndarray, np.ndarray]
             (alpha, beta) parameters for Beta distribution.
         """
-        K = self.config.adstock.prior_concentration
-        # Use effective channel adstock means (includes owned media with adstock+saturation)
+        base_K = self.config.adstock.prior_concentration
         adstock_means = self.transform_engine.get_all_channel_adstock_means()
+        effective_channels = self.transform_engine.get_effective_channel_columns()
 
-        alpha_params = adstock_means * K
-        beta_params = (1 - adstock_means) * K
+        # Calculate per-channel K based on spend percentage
+        if df_scaled is not None:
+            total_spend = sum(
+                df_scaled[ch].sum() for ch in effective_channels
+                if ch in df_scaled.columns
+            )
+
+            K_values = []
+            for ch in effective_channels:
+                if ch in df_scaled.columns and total_spend > 0:
+                    spend_pct = df_scaled[ch].sum() / total_spend
+
+                    # Higher K = tighter prior for low-spend channels
+                    if spend_pct >= 0.10:
+                        K = base_K           # Normal
+                    elif spend_pct >= 0.05:
+                        K = base_K * 2.5     # 50 - slightly tighter
+                    elif spend_pct >= 0.01:
+                        K = base_K * 5       # 100 - tighter
+                    else:
+                        K = base_K * 10      # 200 - very tight for <1% spend
+
+                    if K > base_K:
+                        logger.info(f"Adstock prior tightened for {ch}: "
+                                   f"spend={spend_pct:.1%}, K={K:.0f}")
+                else:
+                    K = base_K
+                K_values.append(K)
+
+            K_array = np.array(K_values)
+        else:
+            K_array = np.full(len(adstock_means), base_K)
+
+        alpha_params = adstock_means * K_array
+        beta_params = (1 - adstock_means) * K_array
 
         return alpha_params, beta_params
 
     def get_saturation_prior_params(
         self,
-        lam_vec: np.ndarray
-    ) -> tuple[np.ndarray, float]:
+        lam_vec: np.ndarray,
+        df_scaled: Optional[pd.DataFrame] = None
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
         Get LogNormal parameters for saturation lambda priors.
+
+        For low-spend channels, uses tighter sigma to constrain lambda
+        closer to the calibrated value, preventing drift.
 
         Parameters
         ----------
         lam_vec : np.ndarray
             Computed lambda values.
+        df_scaled : pd.DataFrame, optional
+            Scaled dataframe for calculating spend percentages.
 
         Returns
         -------
-        tuple[np.ndarray, float]
-            (mu, sigma) for LogNormal distribution.
+        tuple[np.ndarray, np.ndarray]
+            (mu, sigma) arrays for LogNormal distribution.
         """
         mu = np.log(lam_vec)
-        sigma = self.config.saturation.lam_sigma
+        base_sigma = self.config.saturation.lam_sigma
+        effective_channels = self.transform_engine.get_effective_channel_columns()
 
-        return mu, sigma
+        # Calculate per-channel sigma based on spend percentage
+        if df_scaled is not None:
+            total_spend = sum(
+                df_scaled[ch].sum() for ch in effective_channels
+                if ch in df_scaled.columns
+            )
+
+            sigma_values = []
+            for ch in effective_channels:
+                if ch in df_scaled.columns and total_spend > 0:
+                    spend_pct = df_scaled[ch].sum() / total_spend
+
+                    # Lower sigma = tighter prior for low-spend channels
+                    if spend_pct >= 0.10:
+                        sigma = base_sigma           # Normal (0.5)
+                    elif spend_pct >= 0.05:
+                        sigma = base_sigma * 0.6     # 0.3 - slightly tighter
+                    elif spend_pct >= 0.01:
+                        sigma = base_sigma * 0.4     # 0.2 - tighter
+                    else:
+                        sigma = base_sigma * 0.2     # 0.1 - very tight for <1% spend
+
+                    if sigma < base_sigma:
+                        logger.info(f"Saturation prior tightened for {ch}: "
+                                   f"spend={spend_pct:.1%}, lam_sigma={sigma:.2f}")
+                else:
+                    sigma = base_sigma
+                sigma_values.append(sigma)
+
+            sigma_array = np.array(sigma_values)
+        else:
+            sigma_array = np.full(len(lam_vec), base_sigma)
+
+        return mu, sigma_array
 
     def get_all_priors_summary(
         self,

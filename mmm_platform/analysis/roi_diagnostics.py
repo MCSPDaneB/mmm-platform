@@ -310,6 +310,25 @@ class ROIDiagnostics:
         # Compute ROI for each sample
         roi_samples = contrib_flat / (total_spend + 1e-9)
 
+        # Debug: Print posterior ROI calculation details
+        print(f"\n=== POSTERIOR ROI DEBUG: {channel} ===")
+        print(f"  total_spend (from df_scaled) = {total_spend:.2f}")
+        print(f"  contrib_flat median = {np.median(contrib_flat):.2f}")
+        print(f"  contrib_flat mean = {np.mean(contrib_flat):.2f}")
+        print(f"  roi_samples median = {np.median(roi_samples):.4f}")
+        print(f"  roi_samples mean = {np.mean(roi_samples):.4f}")
+        # Infer denom from contribution: contrib = target_scale * beta * denom
+        try:
+            target_scale = df[self.config.data.target_column].max()
+            beta_mean = float(self.wrapper.idata.posterior["saturation_beta"].isel(channel=ch_idx).mean())
+            inferred_denom = np.median(contrib_flat) / (target_scale * beta_mean + 1e-9)
+            print(f"  target_scale = {target_scale:.2f}")
+            print(f"  posterior beta_mean = {beta_mean:.8f}")
+            print(f"  inferred denom (from contrib/(ts*beta)) = {inferred_denom:.4f}")
+        except Exception as e:
+            print(f"  Could not compute inferred denom: {e}")
+        print(f"========================================")
+
         return roi_samples, ch_idx
 
     def validate_posterior(self) -> ROIDiagnosticReport:

@@ -255,8 +255,10 @@ class MMMWrapper:
             dims="channel",
         )
 
-        # Adstock prior
-        adstock_alpha, adstock_beta = self.prior_calibrator.get_adstock_prior_params()
+        # Adstock prior (per-channel K based on spend %)
+        adstock_alpha, adstock_beta = self.prior_calibrator.get_adstock_prior_params(
+            df_scaled=self.df_scaled
+        )
         adstock_prior = Prior(
             "Beta",
             alpha=adstock_alpha,
@@ -264,9 +266,9 @@ class MMMWrapper:
             dims="channel",
         )
 
-        # Saturation lambda prior
+        # Saturation lambda prior (per-channel sigma based on spend %)
         lam_mu, lam_sigma = self.prior_calibrator.get_saturation_prior_params(
-            self.lam_vec
+            self.lam_vec, df_scaled=self.df_scaled
         )
         saturation_lam_prior = Prior(
             "LogNormal",
