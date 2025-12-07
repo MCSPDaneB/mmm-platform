@@ -356,6 +356,9 @@ class ROIDiagnostics:
             if ch in self.wrapper.df_scaled.columns
         )
 
+        # Effective channels for indexing into lam_vec/beta_mu (includes owned media)
+        effective_channels = self.wrapper.transform_engine.get_effective_channel_columns()
+
         for channel, beliefs in self.roi_beliefs.items():
             # Compute ROI samples from posterior
             try:
