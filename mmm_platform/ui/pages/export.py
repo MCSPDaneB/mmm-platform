@@ -1844,18 +1844,9 @@ def _show_single_model_export(
         st.markdown("---")
         st.subheader("Platform Export Files")
 
-        # Column schema editor expander
-        # Track if user has opened the expander (stays open once opened until page refresh)
+        # Column schema editor expander (starts closed)
         if "column_editor_opened_single" not in st.session_state:
             st.session_state["column_editor_opened_single"] = False
-
-        # Check if any working schema exists (indicates user was editing)
-        has_working_schema = any(
-            k.startswith("working_schema_") and k.endswith("_single")
-            for k in st.session_state.keys()
-        )
-        if has_working_schema:
-            st.session_state["column_editor_opened_single"] = True
 
         with st.expander("Configure Column Schema", expanded=st.session_state["column_editor_opened_single"]):
             st.caption("Customize column names, order, and visibility before download")
@@ -2442,17 +2433,9 @@ def _show_combined_model_export(
         combined_brand = st.session_state.get("combined_brand", brand)
         combined_model_path = st.session_state.get("combined_first_model_path", "")
 
-        # Track if user has opened the expander (stays open once opened until page refresh)
+        # Column schema editor expander (starts closed)
         if "column_editor_opened_combined" not in st.session_state:
             st.session_state["column_editor_opened_combined"] = False
-
-        # Check if any working schema exists (indicates user was editing)
-        has_working_schema = any(
-            k.startswith("working_schema_") and k.endswith("_combined")
-            for k in st.session_state.keys()
-        )
-        if has_working_schema:
-            st.session_state["column_editor_opened_combined"] = True
 
         with st.expander("Configure Column Schema", expanded=st.session_state["column_editor_opened_combined"]):
             st.caption("Customize column names, order, and visibility before download")
