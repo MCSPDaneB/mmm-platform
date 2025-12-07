@@ -326,7 +326,7 @@ def show():
         # Jump link to validation section at bottom
         st.markdown(
             '<a href="#roi-prior-validation" style="text-decoration: none;">'
-            f'<button style="background-color: #f0f2f6; border: 1px solid #ddd; padding: 0.25rem 0.75rem; '
+            f'<button style="background-color: #f0f2f6; color: #333; border: 1px solid #ddd; padding: 0.25rem 0.75rem; '
             f'border-radius: 0.25rem; cursor: pointer;">🔍 Jump to Prior Validation</button></a>',
             unsafe_allow_html=True
         )
