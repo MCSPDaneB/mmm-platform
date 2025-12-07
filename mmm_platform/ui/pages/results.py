@@ -208,17 +208,16 @@ def show():
 
     # Tabs - use dynamic labels based on KPI type
     # Note: ROI Prior Validation is now integrated into Channel ROI tab
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
         "Overview",
         f"Channel {eff_label}",
         f"Marginal {eff_label} & Priority",
         "Executive Summary",
         "Bayesian Significance",
-        "Diagnostics",
+        "Model Details",
         "Time Series",
         "Export",
         "Visualizations",
-        "Model Coefficients",
         "Media Curves",
         "Owned Media",
     ])
@@ -1090,10 +1089,10 @@ def show():
             st.info("Make sure the model has been properly fitted with posterior samples available.")
 
     # =========================================================================
-    # Tab 6: Diagnostics
+    # Tab 6: Model Details (Diagnostics + Coefficients)
     # =========================================================================
     with tab6:
-        st.subheader("Model Diagnostics")
+        st.subheader("Model Details")
 
         # Run diagnostics
         diag_report = diagnostics.run_all_diagnostics()
@@ -1144,6 +1143,135 @@ def show():
                 width="stretch",
                 hide_index=True
             )
+
+        # Model Coefficients section
+        st.markdown("---")
+        st.subheader("Model Coefficients")
+        st.caption("All variables in the model with their posterior statistics")
+
+        # Build the variables table from posterior
+        variables_data = []
+
+        try:
+            idata = wrapper.idata
+
+            # Channels (saturation_beta) - paid media
+            if "saturation_beta" in idata.posterior:
+                beta_summary = az.summary(idata, var_names=["saturation_beta"], hdi_prob=0.95)
+                channel_cols = config.get_channel_columns()
+                for i, ch in enumerate(channel_cols):
+                    try:
+                        row = beta_summary.iloc[i]
+                        hdi_low = row["hdi_2.5%"]
+                        hdi_high = row["hdi_97.5%"]
+                        significant = "Yes" if (hdi_low > 0 or hdi_high < 0) else "No"
+                        variables_data.append({
+                            "Variable": ch,
+                            "Type": "Channel",
+                            "Coef Mean": f"{row['mean']:.2f}",
+                            "Coef Std": f"{row['sd']:.2f}",
+                            "95% HDI": f"[{hdi_low:.2f}, {hdi_high:.2f}]",
+                            "Significant": significant
+                        })
+                    except Exception:
+                        pass
+
+                # Owned media (also in saturation_beta, after paid channels)
+                owned_media_cols = config.get_owned_media_columns()
+                paid_channel_count = len(channel_cols)
+                for i, om in enumerate(owned_media_cols):
+                    try:
+                        idx = paid_channel_count + i
+                        row = beta_summary.iloc[idx]
+                        hdi_low = row["hdi_2.5%"]
+                        hdi_high = row["hdi_97.5%"]
+                        significant = "Yes" if (hdi_low > 0 or hdi_high < 0) else "No"
+                        variables_data.append({
+                            "Variable": om,
+                            "Type": "Owned Media",
+                            "Coef Mean": f"{row['mean']:.2f}",
+                            "Coef Std": f"{row['sd']:.2f}",
+                            "95% HDI": f"[{hdi_low:.2f}, {hdi_high:.2f}]",
+                            "Significant": significant
+                        })
+                    except Exception:
+                        pass
+
+            # Controls (gamma_control)
+            if "gamma_control" in idata.posterior:
+                gamma_summary = az.summary(idata, var_names=["gamma_control"], hdi_prob=0.95)
+                control_cols = wrapper.control_cols or []
+                for i, ctrl in enumerate(control_cols):
+                    try:
+                        row = gamma_summary.iloc[i]
+                        hdi_low = row["hdi_2.5%"]
+                        hdi_high = row["hdi_97.5%"]
+                        significant = "Yes" if (hdi_low > 0 or hdi_high < 0) else "No"
+
+                        # Determine if this is a dummy variable
+                        dummy_names = [dv.name for dv in config.dummy_variables]
+                        is_dummy = ctrl in dummy_names or ctrl.replace("_inv", "") in dummy_names
+                        var_type = "Dummy" if is_dummy else "Control"
+
+                        variables_data.append({
+                            "Variable": ctrl,
+                            "Type": var_type,
+                            "Coef Mean": f"{row['mean']:.2f}",
+                            "Coef Std": f"{row['sd']:.2f}",
+                            "95% HDI": f"[{hdi_low:.2f}, {hdi_high:.2f}]",
+                            "Significant": significant
+                        })
+                    except Exception:
+                        pass
+
+            # Intercept
+            if "intercept" in idata.posterior:
+                intercept_summary = az.summary(idata, var_names=["intercept"], hdi_prob=0.95)
+                row = intercept_summary.iloc[0]
+                hdi_low = row["hdi_2.5%"]
+                hdi_high = row["hdi_97.5%"]
+                variables_data.append({
+                    "Variable": "intercept",
+                    "Type": "Intercept",
+                    "Coef Mean": f"{row['mean']:.2f}",
+                    "Coef Std": f"{row['sd']:.2f}",
+                    "95% HDI": f"[{hdi_low:.2f}, {hdi_high:.2f}]",
+                    "Significant": "Yes"
+                })
+
+        except Exception as e:
+            st.warning(f"Could not extract all variable statistics: {e}")
+
+        # Display the table
+        if variables_data:
+            df_vars = pd.DataFrame(variables_data)
+            st.dataframe(df_vars, width="stretch", hide_index=True)
+
+            # Summary counts
+            st.markdown("---")
+            st.subheader("Summary")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Channels", len([v for v in variables_data if v["Type"] == "Channel"]))
+            with col2:
+                st.metric("Controls", len([v for v in variables_data if v["Type"] == "Control"]))
+            with col3:
+                st.metric("Dummies", len([v for v in variables_data if v["Type"] == "Dummy"]))
+            with col4:
+                sig_count = len([v for v in variables_data if v["Significant"] == "Yes"])
+                st.metric("Significant", f"{sig_count}/{len(variables_data)}")
+
+            # Download button
+            st.markdown("---")
+            csv_data = df_vars.to_csv(index=False)
+            st.download_button(
+                "Download Coefficients (CSV)",
+                data=csv_data,
+                file_name="model_coefficients.csv",
+                mime="text/csv"
+            )
+        else:
+            st.warning("No variable statistics available.")
 
     # =========================================================================
     # Tab 7: Time Series
@@ -1721,140 +1849,9 @@ def show():
             st.info("Some visualizations require specific model outputs. Try a different visualization.")
 
     # =========================================================================
-    # Tab 10: Model Coefficients
+    # Tab 10: Media Curves
     # =========================================================================
     with tab10:
-        st.subheader("Model Coefficients")
-        st.caption("All variables in the model with their posterior statistics")
-
-        # Build the variables table from posterior
-        variables_data = []
-
-        try:
-            idata = wrapper.idata
-
-            # Channels (saturation_beta) - paid media
-            if "saturation_beta" in idata.posterior:
-                beta_summary = az.summary(idata, var_names=["saturation_beta"], hdi_prob=0.95)
-                channel_cols = config.get_channel_columns()
-                for i, ch in enumerate(channel_cols):
-                    try:
-                        row = beta_summary.iloc[i]
-                        hdi_low = row["hdi_2.5%"]
-                        hdi_high = row["hdi_97.5%"]
-                        significant = "Yes" if (hdi_low > 0 or hdi_high < 0) else "No"
-                        variables_data.append({
-                            "Variable": ch,
-                            "Type": "Channel",
-                            "Coef Mean": f"{row['mean']:.2f}",
-                            "Coef Std": f"{row['sd']:.2f}",
-                            "95% HDI": f"[{hdi_low:.2f}, {hdi_high:.2f}]",
-                            "Significant": significant
-                        })
-                    except Exception:
-                        pass
-
-                # Owned media (also in saturation_beta, after paid channels)
-                owned_media_cols = config.get_owned_media_columns()
-                paid_channel_count = len(channel_cols)
-                for i, om in enumerate(owned_media_cols):
-                    try:
-                        idx = paid_channel_count + i
-                        row = beta_summary.iloc[idx]
-                        hdi_low = row["hdi_2.5%"]
-                        hdi_high = row["hdi_97.5%"]
-                        significant = "Yes" if (hdi_low > 0 or hdi_high < 0) else "No"
-                        variables_data.append({
-                            "Variable": om,
-                            "Type": "Owned Media",
-                            "Coef Mean": f"{row['mean']:.2f}",
-                            "Coef Std": f"{row['sd']:.2f}",
-                            "95% HDI": f"[{hdi_low:.2f}, {hdi_high:.2f}]",
-                            "Significant": significant
-                        })
-                    except Exception:
-                        pass
-
-            # Controls (gamma_control)
-            if "gamma_control" in idata.posterior:
-                gamma_summary = az.summary(idata, var_names=["gamma_control"], hdi_prob=0.95)
-                control_cols = wrapper.control_cols or []
-                for i, ctrl in enumerate(control_cols):
-                    try:
-                        row = gamma_summary.iloc[i]
-                        hdi_low = row["hdi_2.5%"]
-                        hdi_high = row["hdi_97.5%"]
-                        significant = "Yes" if (hdi_low > 0 or hdi_high < 0) else "No"
-
-                        # Determine if this is a dummy variable
-                        dummy_names = [dv.name for dv in config.dummy_variables]
-                        is_dummy = ctrl in dummy_names or ctrl.replace("_inv", "") in dummy_names
-                        var_type = "Dummy" if is_dummy else "Control"
-
-                        variables_data.append({
-                            "Variable": ctrl,
-                            "Type": var_type,
-                            "Coef Mean": f"{row['mean']:.2f}",
-                            "Coef Std": f"{row['sd']:.2f}",
-                            "95% HDI": f"[{hdi_low:.2f}, {hdi_high:.2f}]",
-                            "Significant": significant
-                        })
-                    except Exception:
-                        pass
-
-            # Intercept
-            if "intercept" in idata.posterior:
-                intercept_summary = az.summary(idata, var_names=["intercept"], hdi_prob=0.95)
-                row = intercept_summary.iloc[0]
-                hdi_low = row["hdi_2.5%"]
-                hdi_high = row["hdi_97.5%"]
-                variables_data.append({
-                    "Variable": "intercept",
-                    "Type": "Intercept",
-                    "Coef Mean": f"{row['mean']:.2f}",
-                    "Coef Std": f"{row['sd']:.2f}",
-                    "95% HDI": f"[{hdi_low:.2f}, {hdi_high:.2f}]",
-                    "Significant": "Yes"
-                })
-
-        except Exception as e:
-            st.warning(f"Could not extract all variable statistics: {e}")
-
-        # Display the table
-        if variables_data:
-            df_vars = pd.DataFrame(variables_data)
-            st.dataframe(df_vars, width="stretch", hide_index=True)
-
-            # Summary counts
-            st.markdown("---")
-            st.subheader("Summary")
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Channels", len([v for v in variables_data if v["Type"] == "Channel"]))
-            with col2:
-                st.metric("Controls", len([v for v in variables_data if v["Type"] == "Control"]))
-            with col3:
-                st.metric("Dummies", len([v for v in variables_data if v["Type"] == "Dummy"]))
-            with col4:
-                sig_count = len([v for v in variables_data if v["Significant"] == "Yes"])
-                st.metric("Significant", f"{sig_count}/{len(variables_data)}")
-
-            # Download button
-            st.markdown("---")
-            csv_data = df_vars.to_csv(index=False)
-            st.download_button(
-                "Download Coefficients (CSV)",
-                data=csv_data,
-                file_name="model_coefficients.csv",
-                mime="text/csv"
-            )
-        else:
-            st.warning("No variable statistics available.")
-
-    # =========================================================================
-    # Tab 11: Media Curves
-    # =========================================================================
-    with tab11:
         st.subheader("Interactive Media Curves")
         st.caption("Explore saturation curves and adstock decay for each channel")
 
@@ -1916,9 +1913,9 @@ def show():
                     )
 
     # =========================================================================
-    # Tab 12: Owned Media
+    # Tab 11: Owned Media
     # =========================================================================
-    with tab12:
+    with tab11:
         st.header("Owned Media Analysis")
 
         owned_media_cols = config.get_owned_media_columns()
