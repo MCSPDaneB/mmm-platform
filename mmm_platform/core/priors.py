@@ -172,26 +172,28 @@ class PriorCalibrator:
         mu = np.log(beta_mid)
         sigma = np.clip((np.log(beta_high) - np.log(beta_low)) / 4.0, 0.1, 1.5)
 
-        # Apply per-channel sigma multiplier based on spend percentage
+        # Apply per-channel sigma multiplier based on spend percentage (if enabled)
         # Low-spend channels get tighter priors (trust prior more, less data to learn from)
-        sigma_multipliers = []
-        for i, ch in enumerate(effective_channels):
-            spend_pct = spend_pcts[i]
-            if spend_pct >= 0.10:
-                ch_sigma_mult = 1.0  # Normal sigma for high-spend channels
-            elif spend_pct >= 0.05:
-                ch_sigma_mult = 0.7  # Slightly tighter
-            elif spend_pct >= 0.01:
-                ch_sigma_mult = 0.4  # Tighter
-            else:
-                ch_sigma_mult = 0.2  # Very tight for <1% spend
+        auto_tighten = getattr(self.config.saturation, 'auto_tighten_low_spend_priors', False)
+        if auto_tighten:
+            sigma_multipliers = []
+            for i, ch in enumerate(effective_channels):
+                spend_pct = spend_pcts[i]
+                if spend_pct >= 0.10:
+                    ch_sigma_mult = 1.0  # Normal sigma for high-spend channels
+                elif spend_pct >= 0.05:
+                    ch_sigma_mult = 0.7  # Slightly tighter
+                elif spend_pct >= 0.01:
+                    ch_sigma_mult = 0.4  # Tighter
+                else:
+                    ch_sigma_mult = 0.2  # Very tight for <1% spend
 
-            sigma_multipliers.append(ch_sigma_mult)
+                sigma_multipliers.append(ch_sigma_mult)
 
-            if ch_sigma_mult < 1.0:
-                logger.info(f"Channel {ch}: spend={spend_pct:.1%}, auto sigma_mult={ch_sigma_mult:.1f}")
+                if ch_sigma_mult < 1.0:
+                    logger.info(f"Channel {ch}: spend={spend_pct:.1%}, auto sigma_mult={ch_sigma_mult:.1f}")
 
-        sigma = sigma * np.array(sigma_multipliers)
+            sigma = sigma * np.array(sigma_multipliers)
 
         # Also apply global beta_sigma_multiplier if set
         # <1 = tighter priors (less posterior drift), >1 = looser priors
@@ -320,9 +322,10 @@ class PriorCalibrator:
                 if ch in df_scaled.columns
             )
 
+            auto_tighten = getattr(self.config.saturation, 'auto_tighten_low_spend_priors', False)
             K_values = []
             for ch in effective_channels:
-                if ch in df_scaled.columns and total_spend > 0:
+                if ch in df_scaled.columns and total_spend > 0 and auto_tighten:
                     spend_pct = df_scaled[ch].sum() / total_spend
 
                     # Higher K = tighter prior for low-spend channels
@@ -388,9 +391,10 @@ class PriorCalibrator:
                 if ch in df_scaled.columns
             )
 
+            auto_tighten = getattr(self.config.saturation, 'auto_tighten_low_spend_priors', False)
             sigma_values = []
             for ch in effective_channels:
-                if ch in df_scaled.columns and total_spend > 0:
+                if ch in df_scaled.columns and total_spend > 0 and auto_tighten:
                     spend_pct = df_scaled[ch].sum() / total_spend
 
                     # Lower sigma = tighter prior for low-spend channels

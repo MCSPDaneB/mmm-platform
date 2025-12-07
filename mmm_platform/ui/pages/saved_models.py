@@ -720,6 +720,7 @@ def _build_config_state_from_model(config: ModelConfig) -> dict:
     # Saturation settings
     if config.saturation:
         config_state["curve_sharpness"] = config.saturation.curve_sharpness
+        config_state["auto_tighten_low_spend_priors"] = config.saturation.auto_tighten_low_spend_priors
 
     # Sampling settings - include all fields
     if config.sampling:

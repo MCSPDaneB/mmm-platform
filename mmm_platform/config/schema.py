@@ -551,6 +551,10 @@ class SaturationConfig(BaseModel):
         1.0, ge=0.1, le=3.0,
         description="Multiplier for beta prior sigma. <1 = tighter ROI priors, >1 = looser"
     )
+    auto_tighten_low_spend_priors: bool = Field(
+        False,
+        description="Automatically tighten priors for channels with <10% of total spend"
+    )
 
 
 class SeasonalityConfig(BaseModel):
