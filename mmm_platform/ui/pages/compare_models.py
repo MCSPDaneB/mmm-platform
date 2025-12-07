@@ -10,7 +10,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from typing import Dict, Any, Optional
 
-from mmm_platform.model.persistence import ModelPersistence, get_models_dir
+from mmm_platform.model.persistence import ModelPersistence, get_models_dir, list_clients
 from mmm_platform.analysis.contributions import ContributionAnalyzer
 
 
@@ -25,20 +25,57 @@ def show():
             "Go to **Saved Configs & Models** and select 2 models to compare."
         )
 
-        # Show quick selection if models exist
-        models_dir = get_models_dir()
-        models = ModelPersistence.list_saved_models(models_dir)
+        # Client filter
+        clients = list_clients()
+        if clients:
+            client_options = ["All Clients"] + clients
 
-        if len(models) >= 2:
+            # Sync widget state FROM active_client before render
+            active = st.session_state.get("active_client")
+            widget_value = active if active and active in clients else "All Clients"
+            st.session_state.compare_models_client_filter = widget_value
+
+            def on_compare_client_change():
+                val = st.session_state.compare_models_client_filter
+                st.session_state.active_client = None if val == "All Clients" else val
+
+            selected_client = st.selectbox(
+                "Filter by Client",
+                options=client_options,
+                key="compare_models_client_filter",
+                on_change=on_compare_client_change,
+                help="Show models for a specific client"
+            )
+
+            client_filter = "all" if selected_client == "All Clients" else selected_client
+        else:
+            client_filter = "all"
+
+        # Get saved models (client-aware)
+        saved_models = ModelPersistence.list_saved_models(client=client_filter)
+
+        if len(saved_models) >= 2:
             st.markdown("---")
             st.subheader("Quick Selection")
 
-            col1, col2 = st.columns(2)
+            # Create options with rich labels (matching combined_analysis.py)
+            model_options = {}
+            for model in saved_models:
+                r2 = model.get("r2")
+                r2_str = f"R²={r2:.3f}" if r2 is not None else "R²=N/A"
+                n_channels = model.get("n_channels", "?")
+                created = model.get("created_at", "")[:10]
+                name = model.get("config_name", "Unknown")
+                model_client = model.get("client", "")
 
-            model_options = {
-                f"{m.get('config_name', 'Unknown')} ({m.get('created_at', '')[:10]})": m.get("path")
-                for m in models
-            }
+                # Show client in label when viewing all clients
+                if client_filter == "all" and model_client:
+                    option_label = f"[{model_client}] {name} ({created}) - {n_channels} channels, {r2_str}"
+                else:
+                    option_label = f"{name} ({created}) - {n_channels} channels, {r2_str}"
+                model_options[option_label] = model["path"]
+
+            col1, col2 = st.columns(2)
 
             with col1:
                 model_a_name = st.selectbox(
