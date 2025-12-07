@@ -83,11 +83,13 @@ class PriorCalibrator:
         effective_channels = self.transform_engine.get_effective_channel_columns()
         adstock_means = self.transform_engine.get_all_channel_adstock_means()
 
-        # Calculate total spend across all channels for per-channel sigma adjustment
-        total_spend_all = 0.0
-        for ch in effective_channels:
-            if ch in df_scaled.columns:
-                total_spend_all += df_scaled[ch].sum()
+        # Calculate total spend across PAID media channels only for per-channel sigma adjustment
+        # (owned media uses different units like sends/impressions, not dollars)
+        paid_channels = self.config.get_channel_columns()
+        total_spend_all = sum(
+            df_scaled[ch].sum() for ch in paid_channels
+            if ch in df_scaled.columns
+        )
 
         beta_low_list = []
         beta_mid_list = []
@@ -309,9 +311,12 @@ class PriorCalibrator:
         effective_channels = self.transform_engine.get_effective_channel_columns()
 
         # Calculate per-channel K based on spend percentage
+        # Use PAID media channels only for spend % denominator
+        # (owned media uses different units like sends/impressions, not dollars)
         if df_scaled is not None:
+            paid_channels = self.config.get_channel_columns()
             total_spend = sum(
-                df_scaled[ch].sum() for ch in effective_channels
+                df_scaled[ch].sum() for ch in paid_channels
                 if ch in df_scaled.columns
             )
 
@@ -374,9 +379,12 @@ class PriorCalibrator:
         effective_channels = self.transform_engine.get_effective_channel_columns()
 
         # Calculate per-channel sigma based on spend percentage
+        # Use PAID media channels only for spend % denominator
+        # (owned media uses different units like sends/impressions, not dollars)
         if df_scaled is not None:
+            paid_channels = self.config.get_channel_columns()
             total_spend = sum(
-                df_scaled[ch].sum() for ch in effective_channels
+                df_scaled[ch].sum() for ch in paid_channels
                 if ch in df_scaled.columns
             )
 
