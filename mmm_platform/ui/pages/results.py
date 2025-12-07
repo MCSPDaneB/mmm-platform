@@ -2068,52 +2068,56 @@ def show():
                 for rec in roi_report.recommendations:
                     st.info(rec)
 
-            # Detailed Prior Diagnostics (new expanded section)
+            # Detailed Prior Diagnostics (compact table view)
             with st.expander("Detailed Prior Diagnostics", expanded=False):
-                st.markdown("### Parameter Shifts by Channel")
-                st.caption("Deep dive into what changed between prior beliefs and posterior learnings")
+                st.caption("Parameter shifts between prior beliefs and posterior learnings")
+
+                # Build table data
+                table_data = []
+                warnings_data = []
 
                 for channel, result in roi_report.channel_results.items():
-                    st.markdown(f"#### {channel}")
+                    row = {
+                        "Channel": channel,
+                        "β Shift": f"{result.beta_shift:+.1%}" if result.beta_shift is not None else "N/A",
+                        "Prior β": f"{result.prior_beta_median:.6f}" if result.prior_beta_median is not None else "N/A",
+                        "Post β": f"{result.posterior_beta_mean:.6f}" if result.posterior_beta_mean is not None else "N/A",
+                        "λ Shift": f"{result.lambda_shift:+.1%}" if result.lambda_shift is not None else "N/A",
+                        "Spend %": f"{result.channel_spend_pct:.1%}" if result.channel_spend_pct is not None else "N/A",
+                        "Filtered %": f"{result.samples_filtered_pct:.1%}" if result.samples_filtered_pct is not None else "N/A",
+                    }
 
-                    col1, col2, col3, col4 = st.columns(4)
-
-                    with col1:
-                        beta_shift_str = f"{result.beta_shift:+.1%}" if result.beta_shift is not None else "N/A"
-                        st.metric("β Shift", beta_shift_str)
-                        if result.prior_beta_median is not None:
-                            st.caption(f"Prior: {result.prior_beta_median:.4f}")
-                        if result.posterior_beta_mean is not None:
-                            st.caption(f"Posterior: {result.posterior_beta_mean:.4f}")
-
-                    with col2:
-                        lam_shift_str = f"{result.lambda_shift:+.1%}" if result.lambda_shift is not None else "N/A"
-                        st.metric("λ Shift", lam_shift_str)
-
-                    with col3:
-                        spend_pct_str = f"{result.channel_spend_pct:.1%}" if result.channel_spend_pct is not None else "N/A"
-                        st.metric("Spend % of Total", spend_pct_str)
-
-                    with col4:
-                        filtered_str = f"{result.samples_filtered_pct:.1%}" if result.samples_filtered_pct is not None else "N/A"
-                        st.metric("Samples Filtered", filtered_str)
-
-                    # Raw ROI sample distribution
+                    # Add ROI percentiles
                     if result.raw_sample_percentiles:
-                        st.markdown(f"**{eff_label} Sample Distribution (Raw):**")
-                        percentiles = result.raw_sample_percentiles
-                        st.text(f"P5: {percentiles.get(5, 0):.2f} | "
-                               f"P25: {percentiles.get(25, 0):.2f} | "
-                               f"Median: {percentiles.get(50, 0):.2f} | "
-                               f"P75: {percentiles.get(75, 0):.2f} | "
-                               f"P95: {percentiles.get(95, 0):.2f}")
+                        p = result.raw_sample_percentiles
+                        row["P5"] = f"{p.get(5, 0):.2f}"
+                        row["P25"] = f"{p.get(25, 0):.2f}"
+                        row["Median"] = f"{p.get(50, 0):.2f}"
+                        row["P75"] = f"{p.get(75, 0):.2f}"
+                        row["P95"] = f"{p.get(95, 0):.2f}"
+                    else:
+                        row["P5"] = "N/A"
+                        row["P25"] = "N/A"
+                        row["Median"] = "N/A"
+                        row["P75"] = "N/A"
+                        row["P95"] = "N/A"
 
-                    # Warnings for this channel
+                    table_data.append(row)
+
+                    # Collect warnings separately
                     if result.warnings:
                         for w in result.warnings:
-                            st.warning(w)
+                            warnings_data.append({"Channel": channel, "Warning": w})
 
-                    st.divider()
+                # Display table
+                df_diagnostics = pd.DataFrame(table_data)
+                st.dataframe(df_diagnostics, use_container_width=True, hide_index=True)
+
+                # Show warnings if any
+                if warnings_data:
+                    st.markdown("#### Warnings")
+                    for item in warnings_data:
+                        st.warning(f"**{item['Channel']}:** {item['Warning']}")
 
         except Exception as e:
             st.info(f"ROI prior validation not available: {str(e)}")
