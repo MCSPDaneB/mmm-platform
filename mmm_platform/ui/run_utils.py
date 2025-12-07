@@ -508,12 +508,14 @@ def _show_fit_results(wrapper, fit_stats, convergence, draws, tune, chains, conf
                             st.write(f"- **{rec.setting}**: {rec.current} → {rec.suggested} ({rec.reason})")
                 st.info("💡 Adjust these settings in the Sampling Settings tab and re-run the model.")
         else:
-            with st.expander("✅ Convergence Status", expanded=False):
+            with st.expander("✅ Convergence Status", expanded=True):
                 divergences = convergence.get("divergences", 0)
-                st.success("**Model converged well!** No action required.")
-                st.write(f"- Divergent transitions: {divergences}")
-                st.write("- All R-hat values acceptable")
-                st.write("- Effective sample sizes sufficient")
+                if divergences == 0:
+                    st.success("**Model converged well!** No divergent transitions detected.")
+                else:
+                    st.success(f"**Model converged well!** Only {divergences} divergent transitions (below warning threshold).")
+                st.write("- All R-hat values acceptable (chains mixed properly)")
+                st.write("- Effective sample sizes sufficient for reliable inference")
 
 
 def _save_model(wrapper, config):

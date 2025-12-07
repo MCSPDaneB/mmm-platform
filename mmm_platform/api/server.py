@@ -132,6 +132,7 @@ class ModelResultResponse(BaseModel):
     channel_roi: Optional[List[Dict[str, Any]]] = None
     contributions: Optional[Dict[str, Any]] = None
     diagnostics: Optional[Dict[str, Any]] = None
+    convergence: Optional[Dict[str, Any]] = None
     inference_data_path: Optional[str] = None
 
 
@@ -580,6 +581,7 @@ async def get_results(job_id: str):
         channel_roi=result.get("channel_roi"),
         contributions=result.get("contributions"),
         diagnostics=result.get("diagnostics"),
+        convergence=result.get("convergence"),
         inference_data_path=result.get("inference_data_path")
     )
 
