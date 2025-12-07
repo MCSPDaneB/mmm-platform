@@ -179,3 +179,74 @@ def mock_posterior_samples():
         "saturation_lam": np.random.lognormal(1, 0.3, (n_chains, n_draws, n_channels)),
         "adstock_alpha": np.random.beta(2, 3, (n_chains, n_draws, n_channels)),
     }
+
+
+# =============================================================================
+# Contribution Analysis Fixtures
+# =============================================================================
+
+@pytest.fixture
+def sample_contributions(sample_df) -> pd.DataFrame:
+    """Sample contribution DataFrame for analysis tests."""
+    np.random.seed(42)
+    n_rows = len(sample_df)
+
+    return pd.DataFrame({
+        "intercept": np.random.uniform(30000, 50000, n_rows),
+        "tv_spend": np.random.uniform(5000, 15000, n_rows),
+        "search_spend": np.random.uniform(3000, 10000, n_rows),
+        "promo_flag": np.random.uniform(1000, 5000, n_rows),
+        "revenue": np.random.uniform(50000, 100000, n_rows),
+    })
+
+
+@pytest.fixture
+def contribution_analyzer(sample_contributions, sample_df):
+    """Initialized ContributionAnalyzer for testing."""
+    from mmm_platform.analysis.contributions import ContributionAnalyzer
+
+    return ContributionAnalyzer(
+        contribs=sample_contributions,
+        df_scaled=sample_df,
+        channel_cols=["tv_spend", "search_spend"],
+        control_cols=["promo_flag"],
+        target_col="revenue",
+        date_col="date",
+        revenue_scale=1000.0,
+        spend_scale=1000.0,
+        display_names={
+            "tv_spend": "TV Advertising",
+            "search_spend": "Paid Search",
+            "promo_flag": "Promotions",
+        }
+    )
+
+
+# =============================================================================
+# Validation Fixtures
+# =============================================================================
+
+@pytest.fixture
+def sample_validation_df() -> pd.DataFrame:
+    """DataFrame with various validation issues for testing."""
+    np.random.seed(42)
+    n_rows = 50
+
+    dates = pd.date_range(start="2022-01-01", periods=n_rows, freq="W")
+
+    return pd.DataFrame({
+        "date": dates,
+        "revenue": np.concatenate([
+            np.random.uniform(50000, 150000, n_rows - 5),
+            [np.nan, -1000, 0, 0, 1000000],  # Issues: NaN, negative, zeros, outlier
+        ]),
+        "tv_spend": np.concatenate([
+            np.random.uniform(5000, 20000, n_rows - 10),
+            np.zeros(10),  # Low activity
+        ]),
+        "search_spend": np.random.uniform(3000, 15000, n_rows),
+        "promo_flag": np.concatenate([
+            np.random.choice([0, 1], n_rows - 5),
+            [0, 1, 2, 3, 4],  # Non-binary values for dummy
+        ]),
+    })
