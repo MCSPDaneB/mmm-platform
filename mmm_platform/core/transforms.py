@@ -205,14 +205,17 @@ class TransformEngine:
             l_max = self.config.adstock.l_max
 
         # Geometric weights for adstock carryover
-        # Adstock: past spend affects current period
+        # Match PyMC-Marketing's ConvMode.After: spend at time T affects T, T+1, T+2...
+        # weights[i] = alpha^i, so weights = [1, α, α², α³, ...]
         weights = np.array([alpha ** i for i in range(l_max)])
-        weights = weights / weights.sum()  # Normalize
-        # Reverse weights so convolution looks BACKWARD (past affects current)
-        weights = weights[::-1]
+        weights = weights / weights.sum()  # Normalize (PyMC defaults normalize=True in MMM)
 
-        # Apply convolution
-        x_adstocked = np.convolve(x, weights, mode='full')[:len(x)]
+        # PyMC's ConvMode.After pads zeros at the START, then convolves
+        # This achieves forward carry (current spend affects future periods)
+        # np.convolve with 'full' mode and taking first len(x) elements achieves this
+        # when we DON'T reverse the weights
+        padded_x = np.concatenate([np.zeros(l_max - 1), x])
+        x_adstocked = np.convolve(padded_x, weights, mode='valid')
 
         return x_adstocked
 
