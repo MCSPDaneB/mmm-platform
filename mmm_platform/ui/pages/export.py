@@ -1858,7 +1858,6 @@ def _show_single_model_export(
             st.session_state["column_editor_opened_single"] = True
 
         with st.expander("Configure Column Schema", expanded=st.session_state["column_editor_opened_single"]):
-            st.session_state["column_editor_opened_single"] = True  # Mark as opened once user sees it
             st.caption("Customize column names, order, and visibility before download")
             _show_column_editor_section_single(brand, model_path)
 
@@ -2456,7 +2455,6 @@ def _show_combined_model_export(
             st.session_state["column_editor_opened_combined"] = True
 
         with st.expander("Configure Column Schema", expanded=st.session_state["column_editor_opened_combined"]):
-            st.session_state["column_editor_opened_combined"] = True  # Mark as opened once user sees it
             st.caption("Customize column names, order, and visibility before download")
             _show_column_editor_section_combined(combined_brand, combined_model_path)
 
