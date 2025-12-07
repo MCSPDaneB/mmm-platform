@@ -55,45 +55,55 @@ class PreFitChecker:
             List of warnings found.
         """
         warnings = []
-        warnings.extend(self._check_low_spend_channels())
+        warnings.extend(self._check_channel_data_quality())
         warnings.extend(self._check_wide_roi_priors())
-        warnings.extend(self._check_spend_variance())
-        warnings.extend(self._check_zero_spend_periods())
         return warnings
 
-    def _check_low_spend_channels(self) -> List[PreFitWarning]:
-        """Flag channels with <5% of total spend - ROI may be unstable."""
+    def _check_channel_data_quality(self) -> List[PreFitWarning]:
+        """
+        Single consolidated check for channel data quality.
+
+        Combines spend %, zero periods, and variance into one warning per channel.
+        """
         warnings = []
         channel_cols = self.config.get_channel_columns()
 
         # Calculate total spend across all channels
-        total_spend = 0
-        for ch in channel_cols:
-            if ch in self.df.columns:
-                total_spend += self.df[ch].sum()
+        total_spend = sum(
+            self.df[ch].sum() for ch in channel_cols if ch in self.df.columns
+        )
 
         if total_spend == 0:
             return warnings
 
         for ch in channel_cols:
-            if ch in self.df.columns:
-                ch_spend = self.df[ch].sum()
-                pct = ch_spend / total_spend
+            if ch not in self.df.columns:
+                continue
 
-                if pct < 0.03:  # Less than 3% of total spend
-                    warnings.append(PreFitWarning(
-                        channel=ch,
-                        severity="warning",
-                        issue=f"Very low spend channel ({pct:.1%} of total)",
-                        recommendation="Consider tighter ROI priors (lower beta_sigma_multiplier) or narrower prior range"
-                    ))
-                elif pct < 0.05:  # Less than 5% of total spend
-                    warnings.append(PreFitWarning(
-                        channel=ch,
-                        severity="info",
-                        issue=f"Low spend channel ({pct:.1%} of total)",
-                        recommendation="ROI estimates may have higher uncertainty"
-                    ))
+            spend = self.df[ch].values
+            ch_spend = spend.sum()
+            spend_pct = ch_spend / total_spend
+            zero_pct = np.mean(spend == 0)
+            mean_spend = np.mean(spend)
+            cv = np.std(spend) / mean_spend if mean_spend > 0 else 0
+
+            # Build issue description with all relevant metrics
+            issues = []
+            if spend_pct < 0.03:
+                issues.append(f"{spend_pct:.1%} of spend")
+            if zero_pct > 0.5:
+                issues.append(f"{zero_pct:.0%} zeros")
+            if cv > 2.0:
+                issues.append(f"CV={cv:.1f}")
+
+            if issues:
+                severity = "warning" if spend_pct < 0.03 or zero_pct > 0.5 else "info"
+                warnings.append(PreFitWarning(
+                    channel=ch,
+                    severity=severity,
+                    issue=", ".join(issues),
+                    recommendation="Prior auto-tightened; ROI estimate may have higher uncertainty"
+                ))
 
         return warnings
 
@@ -109,66 +119,15 @@ class PreFitChecker:
                     warnings.append(PreFitWarning(
                         channel=ch.name,
                         severity="warning",
-                        issue=f"Very wide ROI prior range ({ch.roi_prior_low:.1f} - {ch.roi_prior_high:.1f}, {ratio:.0f}x ratio)",
-                        recommendation="Consider narrowing range or using beta_sigma_multiplier < 1.0 for tighter priors"
+                        issue=f"Wide ROI prior ({ch.roi_prior_low:.1f}-{ch.roi_prior_high:.1f}, {ratio:.0f}x)",
+                        recommendation="Consider narrowing the ROI range"
                     ))
                 elif ratio > 20:  # Wide
                     warnings.append(PreFitWarning(
                         channel=ch.name,
                         severity="info",
-                        issue=f"Wide ROI prior range ({ch.roi_prior_low:.1f} - {ch.roi_prior_high:.1f}, {ratio:.0f}x ratio)",
-                        recommendation="Posterior may drift significantly from prior mid-point"
-                    ))
-
-        return warnings
-
-    def _check_spend_variance(self) -> List[PreFitWarning]:
-        """Flag channels with very high spend variance (coefficient of variation > 1.5)."""
-        warnings = []
-        channel_cols = self.config.get_channel_columns()
-
-        for ch in channel_cols:
-            if ch in self.df.columns:
-                spend = self.df[ch].values
-                mean_spend = np.mean(spend)
-                std_spend = np.std(spend)
-
-                if mean_spend > 0:
-                    cv = std_spend / mean_spend  # Coefficient of variation
-
-                    if cv > 2.0:  # Very high variance
-                        warnings.append(PreFitWarning(
-                            channel=ch,
-                            severity="info",
-                            issue=f"High spend variance (CV={cv:.2f})",
-                            recommendation="Sporadic spending may lead to less stable ROI estimates"
-                        ))
-
-        return warnings
-
-    def _check_zero_spend_periods(self) -> List[PreFitWarning]:
-        """Flag channels with many zero-spend periods."""
-        warnings = []
-        channel_cols = self.config.get_channel_columns()
-
-        for ch in channel_cols:
-            if ch in self.df.columns:
-                spend = self.df[ch].values
-                zero_pct = np.mean(spend == 0)
-
-                if zero_pct > 0.5:  # More than 50% zeros
-                    warnings.append(PreFitWarning(
-                        channel=ch,
-                        severity="warning",
-                        issue=f"High zero-spend rate ({zero_pct:.0%} of periods)",
-                        recommendation="Channel effect may be harder to estimate reliably"
-                    ))
-                elif zero_pct > 0.3:  # More than 30% zeros
-                    warnings.append(PreFitWarning(
-                        channel=ch,
-                        severity="info",
-                        issue=f"Many zero-spend periods ({zero_pct:.0%})",
-                        recommendation="Consider if this channel has sufficient data for reliable estimation"
+                        issue=f"ROI range {ratio:.0f}x ({ch.roi_prior_low:.1f}-{ch.roi_prior_high:.1f})",
+                        recommendation="Posterior may drift from prior"
                     ))
 
         return warnings
