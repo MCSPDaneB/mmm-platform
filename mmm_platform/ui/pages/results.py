@@ -583,10 +583,59 @@ def show():
                         )
 
         # ---------------------------------------------------------------------
-        # Owned Media Contributions (only when filter is "Owned Media")
+        # Media Contributions Over Time (based on filter)
         # ---------------------------------------------------------------------
-        if media_filter == "Owned Media" and owned_cols:
-            st.markdown("---")
+        st.markdown("---")
+
+        if media_filter == "Paid Media" and paid_cols:
+            st.subheader("Paid Media Contributions Over Time")
+
+            try:
+                contribs_df = wrapper.get_contributions()
+                paid_contribs = contribs_df[[c for c in paid_cols if c in contribs_df.columns]] * config.data.revenue_scale
+
+                if not paid_contribs.empty and paid_contribs.shape[1] > 0:
+                    paid_display_names = {ch.name: ch.get_display_name() for ch in config.channels}
+
+                    fig = go.Figure()
+                    for ch in paid_cols:
+                        if ch in paid_contribs.columns:
+                            display_name = paid_display_names.get(ch, ch)
+                            fig.add_trace(go.Scatter(
+                                x=contribs_df.index,
+                                y=paid_contribs[ch],
+                                name=display_name,
+                                stackgroup="one"
+                            ))
+
+                    fig.update_layout(
+                        title="Stacked Paid Media Contributions",
+                        xaxis_title="Date",
+                        yaxis_title=f"Contribution ({config.data.target_column})",
+                        hovermode="x unified",
+                    )
+                    st.plotly_chart(fig, width="stretch")
+
+                    # Summary table
+                    st.subheader("Contribution Summary")
+                    summary_data = []
+                    for ch in paid_cols:
+                        if ch in contribs_df.columns:
+                            total_contrib = contribs_df[ch].sum() * config.data.revenue_scale
+                            avg_contrib = contribs_df[ch].mean() * config.data.revenue_scale
+                            summary_data.append({
+                                "Channel": paid_display_names.get(ch, ch),
+                                "Total Contribution": f"${total_contrib:,.0f}",
+                                "Avg Weekly": f"${avg_contrib:,.0f}",
+                            })
+                    if summary_data:
+                        st.dataframe(pd.DataFrame(summary_data), width="stretch", hide_index=True)
+                else:
+                    st.warning("No contribution data available for paid media.")
+            except Exception as e:
+                st.error(f"Error loading paid media contributions: {e}")
+
+        elif media_filter == "Owned Media" and owned_cols:
             st.subheader("Owned Media Contributions Over Time")
 
             try:
@@ -633,6 +682,101 @@ def show():
                     st.warning("No contribution data available for owned media.")
             except Exception as e:
                 st.error(f"Error loading owned media contributions: {e}")
+
+        elif media_filter == "All Media":
+            # Show Paid Media Contributions
+            if paid_cols:
+                st.subheader("Paid Media Contributions Over Time")
+
+                try:
+                    contribs_df = wrapper.get_contributions()
+                    paid_contribs = contribs_df[[c for c in paid_cols if c in contribs_df.columns]] * config.data.revenue_scale
+
+                    if not paid_contribs.empty and paid_contribs.shape[1] > 0:
+                        paid_display_names = {ch.name: ch.get_display_name() for ch in config.channels}
+
+                        fig = go.Figure()
+                        for ch in paid_cols:
+                            if ch in paid_contribs.columns:
+                                display_name = paid_display_names.get(ch, ch)
+                                fig.add_trace(go.Scatter(
+                                    x=contribs_df.index,
+                                    y=paid_contribs[ch],
+                                    name=display_name,
+                                    stackgroup="one"
+                                ))
+
+                        fig.update_layout(
+                            title="Stacked Paid Media Contributions",
+                            xaxis_title="Date",
+                            yaxis_title=f"Contribution ({config.data.target_column})",
+                            hovermode="x unified",
+                        )
+                        st.plotly_chart(fig, width="stretch")
+
+                        # Summary table
+                        st.subheader("Paid Media Contribution Summary")
+                        summary_data = []
+                        for ch in paid_cols:
+                            if ch in contribs_df.columns:
+                                total_contrib = contribs_df[ch].sum() * config.data.revenue_scale
+                                avg_contrib = contribs_df[ch].mean() * config.data.revenue_scale
+                                summary_data.append({
+                                    "Channel": paid_display_names.get(ch, ch),
+                                    "Total Contribution": f"${total_contrib:,.0f}",
+                                    "Avg Weekly": f"${avg_contrib:,.0f}",
+                                })
+                        if summary_data:
+                            st.dataframe(pd.DataFrame(summary_data), width="stretch", hide_index=True)
+                except Exception as e:
+                    st.error(f"Error loading paid media contributions: {e}")
+
+            # Show Owned Media Contributions
+            if owned_cols:
+                st.subheader("Owned Media Contributions Over Time")
+
+                try:
+                    contribs_df = wrapper.get_contributions()
+                    om_contribs = contribs_df[[c for c in owned_cols if c in contribs_df.columns]] * config.data.revenue_scale
+
+                    if not om_contribs.empty and om_contribs.shape[1] > 0:
+                        om_display_names = {om.name: om.get_display_name() for om in config.owned_media}
+
+                        fig = go.Figure()
+                        for om in owned_cols:
+                            if om in om_contribs.columns:
+                                display_name = om_display_names.get(om, om)
+                                fig.add_trace(go.Scatter(
+                                    x=contribs_df.index,
+                                    y=om_contribs[om],
+                                    name=display_name,
+                                    stackgroup="one"
+                                ))
+
+                        fig.update_layout(
+                            title="Stacked Owned Media Contributions",
+                            xaxis_title="Date",
+                            yaxis_title=f"Contribution ({config.data.target_column})",
+                            hovermode="x unified",
+                        )
+                        st.plotly_chart(fig, width="stretch")
+
+                        # Summary table
+                        st.subheader("Owned Media Contribution Summary")
+                        summary_data = []
+                        for om in owned_cols:
+                            if om in contribs_df.columns:
+                                total_contrib = contribs_df[om].sum() * config.data.revenue_scale
+                                avg_contrib = contribs_df[om].mean() * config.data.revenue_scale
+                                summary_data.append({
+                                    "Owned Media": om_display_names.get(om, om),
+                                    "Total Contribution": f"${total_contrib:,.0f}",
+                                    "Avg Weekly": f"${avg_contrib:,.0f}",
+                                })
+                        if summary_data:
+                            st.dataframe(pd.DataFrame(summary_data), width="stretch", hide_index=True)
+                except Exception as e:
+                    st.error(f"Error loading owned media contributions: {e}")
 
         # ---------------------------------------------------------------------
         # ROI Prior Validation Section (moved from separate tab)
