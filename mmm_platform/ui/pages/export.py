@@ -317,8 +317,26 @@ def _show_column_editor(
 
         st.rerun()
 
-    # Return current edited state (not saved to session state on every render)
-    # This allows "Save & Apply Schema" to capture current edits
+    # Detect if user made changes by comparing to previous state
+    # This prevents infinite rerun loops when auto-applying
+    prev_state_key = f"prev_editor_state_{dataset_name}{key_suffix}"
+
+    # Build current state from edited_df (use tuples for hashable comparison)
+    current_state = tuple(
+        (row["Original"], row["Display Name"], row["Visible"], int(row["Order"]))
+        for _, row in edited_df.iterrows()
+    )
+
+    prev_state = st.session_state.get(prev_state_key)
+
+    # If no change from previous state, return None
+    if prev_state == current_state:
+        return None
+
+    # Store new state for next render
+    st.session_state[prev_state_key] = current_state
+
+    # Build and return the schema dict
     columns = []
     for _, row in edited_df.iterrows():
         columns.append({
@@ -365,39 +383,33 @@ def _show_column_editor_section_single(brand: str, model_path: str):
             if df_for_editor is not None:
                 current_decomps_schema = working_schema.get("decomps_stacked", {})
                 updated_decomps = _show_column_editor("decomps_stacked", df_for_editor, current_decomps_schema, "_single")
-                if updated_decomps:
-                    # Check if schema actually changed
-                    if updated_decomps != working_schema.get("decomps_stacked"):
-                        working_schema["decomps_stacked"] = updated_decomps
-                        st.session_state["export_selected_schema"] = working_schema
-                        _apply_schema_to_exports()  # Auto-apply changes
-                        st.rerun()
+                if updated_decomps:  # Only truthy when user made actual changes
+                    working_schema["decomps_stacked"] = updated_decomps
+                    st.session_state["export_selected_schema"] = working_schema
+                    _apply_schema_to_exports()
+                    st.rerun()
 
         with tab2:
             df_for_editor = st.session_state.get("export_df_media_original")
             if df_for_editor is not None:
                 current_media_schema = working_schema.get("media_results", {})
                 updated_media = _show_column_editor("media_results", df_for_editor, current_media_schema, "_single")
-                if updated_media:
-                    # Check if schema actually changed
-                    if updated_media != working_schema.get("media_results"):
-                        working_schema["media_results"] = updated_media
-                        st.session_state["export_selected_schema"] = working_schema
-                        _apply_schema_to_exports()  # Auto-apply changes
-                        st.rerun()
+                if updated_media:  # Only truthy when user made actual changes
+                    working_schema["media_results"] = updated_media
+                    st.session_state["export_selected_schema"] = working_schema
+                    _apply_schema_to_exports()
+                    st.rerun()
 
         with tab3:
             df_for_editor = st.session_state.get("export_df_fit_original")
             if df_for_editor is not None:
                 current_fit_schema = working_schema.get("actual_vs_fitted", {})
                 updated_fit = _show_column_editor("actual_vs_fitted", df_for_editor, current_fit_schema, "_single")
-                if updated_fit:
-                    # Check if schema actually changed
-                    if updated_fit != working_schema.get("actual_vs_fitted"):
-                        working_schema["actual_vs_fitted"] = updated_fit
-                        st.session_state["export_selected_schema"] = working_schema
-                        _apply_schema_to_exports()  # Auto-apply changes
-                        st.rerun()
+                if updated_fit:  # Only truthy when user made actual changes
+                    working_schema["actual_vs_fitted"] = updated_fit
+                    st.session_state["export_selected_schema"] = working_schema
+                    _apply_schema_to_exports()
+                    st.rerun()
 
     else:
         # Tabs for disaggregated datasets
@@ -415,13 +427,11 @@ def _show_column_editor_section_single(brand: str, model_path: str):
                     df_disagg
                 )
                 updated_disagg = _show_column_editor("decomps_stacked_disagg", df_disagg, resolved_schema, "_single_disagg")
-                if updated_disagg:
-                    # Check if schema actually changed
-                    if updated_disagg != working_schema.get("decomps_stacked_disagg"):
-                        working_schema["decomps_stacked_disagg"] = updated_disagg
-                        st.session_state["export_selected_schema"] = working_schema
-                        _apply_schema_to_exports()  # Auto-apply changes
-                        st.rerun()
+                if updated_disagg:  # Only truthy when user made actual changes
+                    working_schema["decomps_stacked_disagg"] = updated_disagg
+                    st.session_state["export_selected_schema"] = working_schema
+                    _apply_schema_to_exports()
+                    st.rerun()
             else:
                 st.info("No disaggregated decomps data available")
 
@@ -437,13 +447,11 @@ def _show_column_editor_section_single(brand: str, model_path: str):
                     df_disagg
                 )
                 updated_disagg = _show_column_editor("media_results_disagg", df_disagg, resolved_schema, "_single_disagg")
-                if updated_disagg:
-                    # Check if schema actually changed
-                    if updated_disagg != working_schema.get("media_results_disagg"):
-                        working_schema["media_results_disagg"] = updated_disagg
-                        st.session_state["export_selected_schema"] = working_schema
-                        _apply_schema_to_exports()  # Auto-apply changes
-                        st.rerun()
+                if updated_disagg:  # Only truthy when user made actual changes
+                    working_schema["media_results_disagg"] = updated_disagg
+                    st.session_state["export_selected_schema"] = working_schema
+                    _apply_schema_to_exports()
+                    st.rerun()
             else:
                 st.info("No disaggregated media data available")
 
@@ -581,39 +589,33 @@ def _show_column_editor_section_combined(brand: str, model_path: str):
             if df_for_editor is not None:
                 current_decomps_schema = working_schema.get("decomps_stacked", {})
                 updated_decomps = _show_column_editor("decomps_stacked", df_for_editor, current_decomps_schema, "_combined")
-                if updated_decomps:
-                    # Check if schema actually changed
-                    if updated_decomps != working_schema.get("decomps_stacked"):
-                        working_schema["decomps_stacked"] = updated_decomps
-                        st.session_state["combined_selected_schema"] = working_schema
-                        _apply_schema_to_combined_exports()  # Auto-apply changes
-                        st.rerun()
+                if updated_decomps:  # Only truthy when user made actual changes
+                    working_schema["decomps_stacked"] = updated_decomps
+                    st.session_state["combined_selected_schema"] = working_schema
+                    _apply_schema_to_combined_exports()
+                    st.rerun()
 
         with tab2:
             df_for_editor = st.session_state.get("combined_df_media_original")
             if df_for_editor is not None:
                 current_media_schema = working_schema.get("media_results", {})
                 updated_media = _show_column_editor("media_results", df_for_editor, current_media_schema, "_combined")
-                if updated_media:
-                    # Check if schema actually changed
-                    if updated_media != working_schema.get("media_results"):
-                        working_schema["media_results"] = updated_media
-                        st.session_state["combined_selected_schema"] = working_schema
-                        _apply_schema_to_combined_exports()  # Auto-apply changes
-                        st.rerun()
+                if updated_media:  # Only truthy when user made actual changes
+                    working_schema["media_results"] = updated_media
+                    st.session_state["combined_selected_schema"] = working_schema
+                    _apply_schema_to_combined_exports()
+                    st.rerun()
 
         with tab3:
             df_for_editor = st.session_state.get("combined_df_fit_original")
             if df_for_editor is not None:
                 current_fit_schema = working_schema.get("actual_vs_fitted", {})
                 updated_fit = _show_column_editor("actual_vs_fitted", df_for_editor, current_fit_schema, "_combined")
-                if updated_fit:
-                    # Check if schema actually changed
-                    if updated_fit != working_schema.get("actual_vs_fitted"):
-                        working_schema["actual_vs_fitted"] = updated_fit
-                        st.session_state["combined_selected_schema"] = working_schema
-                        _apply_schema_to_combined_exports()  # Auto-apply changes
-                        st.rerun()
+                if updated_fit:  # Only truthy when user made actual changes
+                    working_schema["actual_vs_fitted"] = updated_fit
+                    st.session_state["combined_selected_schema"] = working_schema
+                    _apply_schema_to_combined_exports()
+                    st.rerun()
 
     else:
         # Tabs for disaggregated datasets
@@ -631,13 +633,11 @@ def _show_column_editor_section_combined(brand: str, model_path: str):
                     df_disagg
                 )
                 updated_disagg = _show_column_editor("decomps_stacked_disagg", df_disagg, resolved_schema, "_combined_disagg")
-                if updated_disagg:
-                    # Check if schema actually changed
-                    if updated_disagg != working_schema.get("decomps_stacked_disagg"):
-                        working_schema["decomps_stacked_disagg"] = updated_disagg
-                        st.session_state["combined_selected_schema"] = working_schema
-                        _apply_schema_to_combined_exports()  # Auto-apply changes
-                        st.rerun()
+                if updated_disagg:  # Only truthy when user made actual changes
+                    working_schema["decomps_stacked_disagg"] = updated_disagg
+                    st.session_state["combined_selected_schema"] = working_schema
+                    _apply_schema_to_combined_exports()
+                    st.rerun()
             else:
                 st.info("No disaggregated decomps data available")
 
@@ -653,13 +653,11 @@ def _show_column_editor_section_combined(brand: str, model_path: str):
                     df_disagg
                 )
                 updated_disagg = _show_column_editor("media_results_disagg", df_disagg, resolved_schema, "_combined_disagg")
-                if updated_disagg:
-                    # Check if schema actually changed
-                    if updated_disagg != working_schema.get("media_results_disagg"):
-                        working_schema["media_results_disagg"] = updated_disagg
-                        st.session_state["combined_selected_schema"] = working_schema
-                        _apply_schema_to_combined_exports()  # Auto-apply changes
-                        st.rerun()
+                if updated_disagg:  # Only truthy when user made actual changes
+                    working_schema["media_results_disagg"] = updated_disagg
+                    st.session_state["combined_selected_schema"] = working_schema
+                    _apply_schema_to_combined_exports()
+                    st.rerun()
             else:
                 st.info("No disaggregated media data available")
 
