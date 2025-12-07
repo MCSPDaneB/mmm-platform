@@ -961,6 +961,15 @@ def show():
             st.info("No clients found. Please run some models first.")
             st.stop()
 
+    # Restore filter if we have prepared files (persist across page navigation)
+    if st.session_state.get("export_files_ready") or st.session_state.get("combined_files_ready"):
+        stored_fav = (
+            st.session_state.get("export_prepared_favorite_filter") or
+            st.session_state.get("combined_prepared_favorite_filter")
+        )
+        if stored_fav and "export_favorite_filter" not in st.session_state:
+            st.session_state["export_favorite_filter"] = stored_fav
+
     with filter_col2:
         export_fav_filter = st.selectbox(
             "Filter",
@@ -1009,6 +1018,22 @@ def show():
             "name": name,
             "client": model_client
         }
+
+    # Restore model selection if we have prepared files (persist across page navigation)
+    if st.session_state.get("export_files_ready"):
+        stored_path = st.session_state.get("export_prepared_model_path")
+        if stored_path and "export_model_multiselect" not in st.session_state:
+            # Find label for this path
+            for label, info in model_options.items():
+                if info["path"] == stored_path:
+                    st.session_state["export_model_multiselect"] = [label]
+                    break
+    elif st.session_state.get("combined_files_ready"):
+        stored_paths = st.session_state.get("combined_prepared_model_paths", [])
+        if stored_paths and "export_model_multiselect" not in st.session_state:
+            restored = [lbl for lbl, info in model_options.items() if info["path"] in stored_paths]
+            if restored:
+                st.session_state["export_model_multiselect"] = restored
 
     selected_options = st.multiselect(
         "Select models to export",
@@ -1783,6 +1808,10 @@ def _show_single_model_export(
                 st.session_state["export_files_ready"] = True
                 st.session_state["export_brand"] = brand
 
+                # Store selection state for persistence across page navigation
+                st.session_state["export_prepared_model_path"] = model_path
+                st.session_state["export_prepared_favorite_filter"] = st.session_state.get("export_favorite_filter", "All")
+
                 # Store original DataFrames IMMEDIATELY after generation
                 # These are needed by _apply_schema_to_exports() before schema application
                 st.session_state["export_df_decomps_original"] = st.session_state["export_df_decomps"].copy()
@@ -2359,6 +2388,10 @@ def _show_combined_model_export(
                 st.session_state["combined_brand"] = brand
                 st.session_state["combined_labels"] = [label for _, label in wrappers_with_labels]
                 st.session_state["combined_first_model_path"] = loaded_wrappers[0][2] if loaded_wrappers else None
+
+                # Store selection state for persistence across page navigation
+                st.session_state["combined_prepared_model_paths"] = [path for _, _, path in loaded_wrappers]
+                st.session_state["combined_prepared_favorite_filter"] = st.session_state.get("export_favorite_filter", "All")
 
                 # Store original DataFrames IMMEDIATELY after generation
                 # These are needed by _apply_schema_to_combined_exports() before schema application
