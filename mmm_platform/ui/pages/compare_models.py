@@ -400,18 +400,25 @@ def _show_channel_roi_tab(data: Dict[str, Any]):
 
     # Prepare data for chart
     chart_data = []
+    # Ensure unique model names for the chart legend
+    name_a = data["model_a"]["name"]
+    name_b = data["model_b"]["name"]
+    if name_a == name_b:
+        name_a = f"{name_a} (A)"
+        name_b = f"{name_b} (B)"
+
     for _, row in merged.iterrows():
         channel_name = row[name_col] if pd.notna(row[name_col]) else row["channel"]
         if pd.notna(row["ROI (A)"]):
             chart_data.append({
                 "Channel": channel_name,
-                "Model": data["model_a"]["name"],
+                "Model": name_a,
                 "ROI": row["ROI (A)"]
             })
         if pd.notna(row["ROI (B)"]):
             chart_data.append({
                 "Channel": channel_name,
-                "Model": data["model_b"]["name"],
+                "Model": name_b,
                 "ROI": row["ROI (B)"]
             })
 
