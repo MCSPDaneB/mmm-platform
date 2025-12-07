@@ -583,6 +583,58 @@ def show():
                         )
 
         # ---------------------------------------------------------------------
+        # Owned Media Contributions (only when filter is "Owned Media")
+        # ---------------------------------------------------------------------
+        if media_filter == "Owned Media" and owned_cols:
+            st.markdown("---")
+            st.subheader("Owned Media Contributions Over Time")
+
+            try:
+                contribs_df = wrapper.get_contributions()
+                om_contribs = contribs_df[[c for c in owned_cols if c in contribs_df.columns]] * config.data.revenue_scale
+
+                if not om_contribs.empty and om_contribs.shape[1] > 0:
+                    om_display_names = {om.name: om.get_display_name() for om in config.owned_media}
+
+                    fig = go.Figure()
+                    for om in owned_cols:
+                        if om in om_contribs.columns:
+                            display_name = om_display_names.get(om, om)
+                            fig.add_trace(go.Scatter(
+                                x=contribs_df.index,
+                                y=om_contribs[om],
+                                name=display_name,
+                                stackgroup="one"
+                            ))
+
+                    fig.update_layout(
+                        title="Stacked Owned Media Contributions",
+                        xaxis_title="Date",
+                        yaxis_title=f"Contribution ({config.data.target_column})",
+                        hovermode="x unified",
+                    )
+                    st.plotly_chart(fig, width="stretch")
+
+                    # Summary table
+                    st.subheader("Contribution Summary")
+                    summary_data = []
+                    for om in owned_cols:
+                        if om in contribs_df.columns:
+                            total_contrib = contribs_df[om].sum() * config.data.revenue_scale
+                            avg_contrib = contribs_df[om].mean() * config.data.revenue_scale
+                            summary_data.append({
+                                "Owned Media": om_display_names.get(om, om),
+                                "Total Contribution": f"${total_contrib:,.0f}",
+                                "Avg Weekly": f"${avg_contrib:,.0f}",
+                            })
+                    if summary_data:
+                        st.dataframe(pd.DataFrame(summary_data), width="stretch", hide_index=True)
+                else:
+                    st.warning("No contribution data available for owned media.")
+            except Exception as e:
+                st.error(f"Error loading owned media contributions: {e}")
+
+        # ---------------------------------------------------------------------
         # ROI Prior Validation Section (moved from separate tab)
         # ---------------------------------------------------------------------
         st.markdown("---")
@@ -1201,6 +1253,48 @@ def show():
         except Exception as e:
             st.error(f"Error running Bayesian significance analysis: {str(e)}")
             st.info("Make sure the model has been properly fitted with posterior samples available.")
+
+        # ---------------------------------------------------------------------
+        # Owned Media Bayesian Significance
+        # ---------------------------------------------------------------------
+        owned_media_cols = config.get_owned_media_columns()
+        if owned_media_cols:
+            st.markdown("---")
+            st.subheader("Owned Media Significance Analysis")
+
+            try:
+                om_prior_rois = {}
+                for om_config in config.owned_media:
+                    if om_config.include_roi and om_config.roi_prior_mid:
+                        om_prior_rois[om_config.name] = om_config.roi_prior_mid
+
+                om_sig_analyzer = BayesianSignificanceAnalyzer(
+                    idata=wrapper.idata,
+                    df_scaled=wrapper.df_scaled,
+                    channel_cols=owned_media_cols,
+                    target_col=config.data.target_column,
+                    prior_rois=om_prior_rois,
+                )
+
+                om_sig_report = om_sig_analyzer.run_full_analysis()
+
+                if om_sig_report.channel_results:
+                    om_display_names = {om.name: om.get_display_name() for om in config.owned_media}
+                    sig_data = []
+                    for channel, result in om_sig_report.channel_results.items():
+                        display_name = om_display_names.get(channel, channel)
+                        sig_data.append({
+                            "Owned Media": display_name,
+                            "Effect Mean": f"{result.effect_mean:.4f}",
+                            "95% CI": f"[{result.ci_lower:.4f}, {result.ci_upper:.4f}]",
+                            "Prob. Direction": f"{result.prob_direction:.1%}",
+                            "Significant": "Yes" if result.is_significant else "No"
+                        })
+                    st.dataframe(pd.DataFrame(sig_data), width="stretch", hide_index=True)
+                else:
+                    st.info("No significance data available for owned media.")
+            except Exception as e:
+                st.warning(f"Could not generate owned media significance analysis: {e}")
 
     # =========================================================================
     # Tab 5: Diagnostics (Model Details + Coefficients)
