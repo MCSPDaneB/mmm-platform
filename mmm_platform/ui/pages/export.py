@@ -1698,7 +1698,15 @@ def _show_single_model_export(
     st.caption("Optionally apply a schema to rename, reorder, or filter columns in exports")
 
     selected_schema = _show_schema_selector(client=brand, model_path=model_path, key_suffix="_single")
-    st.session_state["export_selected_schema"] = selected_schema
+    # Only update session state if user changed selection (not on every render)
+    # This preserves edits made in the column editor
+    prev_selection = st.session_state.get("_prev_schema_selection_single")
+    current_selection = st.session_state.get("export_schema_selector_single")
+    if current_selection != prev_selection:
+        st.session_state["export_selected_schema"] = selected_schema
+        st.session_state["_prev_schema_selection_single"] = current_selection
+    elif "export_selected_schema" not in st.session_state:
+        st.session_state["export_selected_schema"] = selected_schema
 
     st.markdown("---")
 
@@ -2249,7 +2257,15 @@ def _show_combined_model_export(
     # For combined export, use the first model's path for model-level override lookup
     first_model_path = loaded_wrappers[0][2] if loaded_wrappers else None
     combined_selected_schema = _show_schema_selector(client=brand, model_path=first_model_path, key_suffix="_combined")
-    st.session_state["combined_selected_schema"] = combined_selected_schema
+    # Only update session state if user changed selection (not on every render)
+    # This preserves edits made in the column editor
+    prev_selection = st.session_state.get("_prev_schema_selection_combined")
+    current_selection = st.session_state.get("export_schema_selector_combined")
+    if current_selection != prev_selection:
+        st.session_state["combined_selected_schema"] = combined_selected_schema
+        st.session_state["_prev_schema_selection_combined"] = current_selection
+    elif "combined_selected_schema" not in st.session_state:
+        st.session_state["combined_selected_schema"] = combined_selected_schema
 
     st.markdown("---")
 
