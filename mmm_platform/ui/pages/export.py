@@ -1972,6 +1972,55 @@ def _show_single_model_export(
                 st.dataframe(df_disagg.head(20), width="stretch")
                 st.caption(f"{len(df_disagg):,} rows × {len(df_disagg.columns)} columns")
 
+        # Disaggregation Reconciliation Check
+        if df_decomps_disagg is not None or df_media_disagg is not None:
+            from mmm_platform.analysis.export import (
+                validate_disaggregation_reconciliation,
+                get_reconciliation_summary
+            )
+
+            with st.expander("Disaggregation Reconciliation Check"):
+                st.caption("Verifies that disaggregated values sum back to base values")
+
+                all_issues = []
+
+                # Check decomps
+                if df_decomps_disagg is not None:
+                    decomps_results = validate_disaggregation_reconciliation(
+                        df_decomps, df_decomps_disagg
+                    )
+                    decomps_summary = get_reconciliation_summary(decomps_results)
+
+                    if decomps_summary["all_ok"]:
+                        st.success(f"✓ Decomps Stacked: {decomps_summary['ok_count']} columns reconcile")
+                    else:
+                        st.warning(f"⚠️ Decomps Stacked: {decomps_summary['warning_count']} warnings, {decomps_summary['error_count']} errors")
+                        all_issues.extend([{**r, "file": "Decomps"} for r in decomps_summary["issues"]])
+
+                # Check media
+                if df_media_disagg is not None:
+                    media_results = validate_disaggregation_reconciliation(
+                        df_media, df_media_disagg
+                    )
+                    media_summary = get_reconciliation_summary(media_results)
+
+                    if media_summary["all_ok"]:
+                        st.success(f"✓ Media Results: {media_summary['ok_count']} columns reconcile")
+                    else:
+                        st.warning(f"⚠️ Media Results: {media_summary['warning_count']} warnings, {media_summary['error_count']} errors")
+                        all_issues.extend([{**r, "file": "Media"} for r in media_summary["issues"]])
+
+                # Show detailed issues if any
+                if all_issues:
+                    st.markdown("**Details:**")
+                    for issue in all_issues:
+                        status_icon = "⚠️" if issue["status"] == "warning" else "❌"
+                        st.write(
+                            f"{status_icon} {issue['file']} - `{issue['column']}`: "
+                            f"Base={issue['base_sum']:,.2f}, Disagg={issue['disagg_sum']:,.2f}, "
+                            f"Diff={issue['diff_pct']:.2%}"
+                        )
+
         # Download All button
         st.markdown("---")
         st.subheader("Download All Files")
@@ -2528,6 +2577,55 @@ def _show_combined_model_export(
 
                     st.dataframe(df_disagg.head(20), width="stretch")
                     st.caption(f"{len(df_disagg):,} rows × {len(df_disagg.columns)} columns")
+
+        # Disaggregation Reconciliation Check
+        if df_decomps_disagg is not None or df_media_disagg is not None:
+            from mmm_platform.analysis.export import (
+                validate_disaggregation_reconciliation,
+                get_reconciliation_summary
+            )
+
+            with st.expander("Disaggregation Reconciliation Check"):
+                st.caption("Verifies that disaggregated values sum back to base values")
+
+                all_issues = []
+
+                # Check decomps
+                if df_decomps_disagg is not None:
+                    decomps_results = validate_disaggregation_reconciliation(
+                        df_decomps, df_decomps_disagg
+                    )
+                    decomps_summary = get_reconciliation_summary(decomps_results)
+
+                    if decomps_summary["all_ok"]:
+                        st.success(f"✓ Decomps Stacked: {decomps_summary['ok_count']} columns reconcile")
+                    else:
+                        st.warning(f"⚠️ Decomps Stacked: {decomps_summary['warning_count']} warnings, {decomps_summary['error_count']} errors")
+                        all_issues.extend([{**r, "file": "Decomps"} for r in decomps_summary["issues"]])
+
+                # Check media
+                if df_media_disagg is not None:
+                    media_results = validate_disaggregation_reconciliation(
+                        df_media, df_media_disagg
+                    )
+                    media_summary = get_reconciliation_summary(media_results)
+
+                    if media_summary["all_ok"]:
+                        st.success(f"✓ Media Results: {media_summary['ok_count']} columns reconcile")
+                    else:
+                        st.warning(f"⚠️ Media Results: {media_summary['warning_count']} warnings, {media_summary['error_count']} errors")
+                        all_issues.extend([{**r, "file": "Media"} for r in media_summary["issues"]])
+
+                # Show detailed issues if any
+                if all_issues:
+                    st.markdown("**Details:**")
+                    for issue in all_issues:
+                        status_icon = "⚠️" if issue["status"] == "warning" else "❌"
+                        st.write(
+                            f"{status_icon} {issue['file']} - `{issue['column']}`: "
+                            f"Base={issue['base_sum']:,.2f}, Disagg={issue['disagg_sum']:,.2f}, "
+                            f"Diff={issue['diff_pct']:.2%}"
+                        )
 
         # Download All button
         st.markdown("---")

@@ -6,7 +6,7 @@ These formats are designed for upload to external visualization platforms.
 
 import pandas as pd
 import numpy as np
-from typing import TYPE_CHECKING, List, Tuple, Dict
+from typing import TYPE_CHECKING, List, Tuple, Dict, Optional
 
 if TYPE_CHECKING:
     from mmm_platform.model.mmm import MMMWrapper
@@ -1823,3 +1823,149 @@ def generate_combined_actual_vs_fitted(
         rows.append(fitted_row)
 
     return _reorder_decomp_columns(pd.DataFrame(rows))
+
+
+# =============================================================================
+# Disaggregation Reconciliation Validation
+# =============================================================================
+
+def get_reconcilable_columns(base_df: pd.DataFrame, disagg_df: pd.DataFrame) -> List[str]:
+    """
+    Get columns that should be checked for reconciliation.
+
+    Finds numeric columns present in both DataFrames, excluding non-additive
+    columns like dates, names, and identifiers.
+
+    Parameters
+    ----------
+    base_df : pd.DataFrame
+        Base-level export (e.g., decomps_stacked)
+    disagg_df : pd.DataFrame
+        Disaggregated version of the export
+
+    Returns
+    -------
+    List[str]
+        List of column names that should be reconciled
+    """
+    # Patterns that indicate non-additive columns (shouldn't be summed)
+    exclude_patterns = [
+        "date", "brand", "channel", "name", "week", "month", "year",
+        "order", "decomp", "lvl", "actual_fitted", "wc_mon"
+    ]
+
+    numeric_cols = []
+    for col in base_df.select_dtypes(include=[np.number]).columns:
+        col_lower = col.lower()
+        if not any(pattern in col_lower for pattern in exclude_patterns):
+            if col in disagg_df.columns:
+                numeric_cols.append(col)
+
+    return numeric_cols
+
+
+def validate_disaggregation_reconciliation(
+    base_df: pd.DataFrame,
+    disagg_df: pd.DataFrame,
+    numeric_cols: Optional[List[str]] = None,
+    tolerance: float = 0.01
+) -> List[dict]:
+    """
+    Verify disaggregated data sums back to base data within tolerance.
+
+    This is a critical validation step that ensures the disaggregation
+    process correctly allocated values. If sums don't match, it indicates
+    a calculation problem.
+
+    Parameters
+    ----------
+    base_df : pd.DataFrame
+        Base-level export (e.g., decomps_stacked)
+    disagg_df : pd.DataFrame
+        Disaggregated version of the export
+    numeric_cols : Optional[List[str]]
+        Columns to check. If None, auto-detects using get_reconcilable_columns()
+    tolerance : float
+        Maximum allowed difference as percentage (default 1%)
+
+    Returns
+    -------
+    List[dict]
+        List of reconciliation results for each column, each with:
+        - column: Column name
+        - base_sum: Sum in base file
+        - disagg_sum: Sum in disaggregated file
+        - diff_pct: Percentage difference
+        - status: "ok", "warning" (1-5%), or "error" (>5%)
+    """
+    if numeric_cols is None:
+        numeric_cols = get_reconcilable_columns(base_df, disagg_df)
+
+    results = []
+    for col in numeric_cols:
+        if col not in base_df.columns or col not in disagg_df.columns:
+            continue
+
+        base_sum = base_df[col].sum()
+        disagg_sum = disagg_df[col].sum()
+
+        # Calculate percentage difference
+        if abs(base_sum) < 1e-10:
+            # Handle near-zero base sum
+            diff_pct = 0.0 if abs(disagg_sum) < 1e-10 else float('inf')
+        else:
+            diff_pct = abs(base_sum - disagg_sum) / abs(base_sum)
+
+        # Determine status
+        if diff_pct <= tolerance:
+            status = "ok"
+        elif diff_pct <= 0.05:
+            status = "warning"
+        else:
+            status = "error"
+
+        results.append({
+            "column": col,
+            "base_sum": base_sum,
+            "disagg_sum": disagg_sum,
+            "diff_pct": diff_pct,
+            "status": status
+        })
+
+    return results
+
+
+def get_reconciliation_summary(results: List[dict]) -> dict:
+    """
+    Summarize reconciliation results.
+
+    Parameters
+    ----------
+    results : List[dict]
+        Output from validate_disaggregation_reconciliation()
+
+    Returns
+    -------
+    dict
+        Summary with:
+        - total_columns: Number of columns checked
+        - ok_count: Number of columns that reconcile
+        - warning_count: Number of columns with minor differences
+        - error_count: Number of columns with major differences
+        - all_ok: True if all columns reconcile within tolerance
+        - issues: List of columns with issues (warning or error)
+    """
+    ok_count = sum(1 for r in results if r["status"] == "ok")
+    warning_count = sum(1 for r in results if r["status"] == "warning")
+    error_count = sum(1 for r in results if r["status"] == "error")
+
+    issues = [r for r in results if r["status"] != "ok"]
+
+    return {
+        "total_columns": len(results),
+        "ok_count": ok_count,
+        "warning_count": warning_count,
+        "error_count": error_count,
+        "all_ok": len(issues) == 0,
+        "issues": issues
+    }
