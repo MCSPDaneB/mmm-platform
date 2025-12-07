@@ -550,6 +550,7 @@ def _show_column_editor_section_single(brand: str, model_path: str):
                 # Apply to exports
                 st.session_state["export_selected_schema"] = schema_to_save
                 _apply_schema_to_exports()
+                st.rerun()
 
     with col_reset:
         if st.button("Reset to Original", key="reset_columns_single"):
@@ -756,6 +757,7 @@ def _show_column_editor_section_combined(brand: str, model_path: str):
                 # Apply to exports
                 st.session_state["combined_selected_schema"] = schema_to_save
                 _apply_schema_to_combined_exports()
+                st.rerun()
 
     with col_reset:
         if st.button("Reset to Original", key="reset_columns_combined"):
