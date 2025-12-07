@@ -764,6 +764,17 @@ def show():
                 avg_roi = edited_channels["ROI Mid"].mean()
                 st.metric("Avg Expected ROI", f"{avg_roi:.2f}")
 
+            # Auto-tighten priors option (applies to paid media only)
+            st.markdown("---")
+            saved_config = st.session_state.config_state
+            auto_tighten = st.checkbox(
+                "Auto-tighten priors for low-spend channels",
+                value=saved_config.get("auto_tighten_low_spend_priors", False),
+                help="Applies tighter priors to paid media channels with <10% of total spend. "
+                     "This can help prevent noisy ROI estimates for channels with limited data."
+            )
+            st.session_state.config_state["auto_tighten_low_spend_priors"] = auto_tighten
+
     # =========================================================================
     # Tab: Owned Media
     # =========================================================================
@@ -1636,16 +1647,6 @@ def show():
                 help="Number of Fourier terms for yearly seasonality"
             )
 
-        # Prior tightening option (outside columns, full width)
-        st.markdown("---")
-        st.markdown("**Prior Settings**")
-        auto_tighten = st.checkbox(
-            "Auto-tighten priors for low-spend channels",
-            value=saved_config.get("auto_tighten_low_spend_priors", False),
-            help="Applies tighter priors to channels with <10% of total spend to prevent noisy ROI estimates. "
-                 "When disabled, all channels use the same prior width regardless of spend level."
-        )
-
         st.session_state.config_state.update({
             "l_max": l_max,
             "short_decay": short_decay,
@@ -1653,7 +1654,6 @@ def show():
             "long_decay": long_decay,
             "curve_sharpness": curve_sharpness,
             "yearly_seasonality": yearly_seasonality,
-            "auto_tighten_low_spend_priors": auto_tighten,
         })
 
     # =========================================================================
