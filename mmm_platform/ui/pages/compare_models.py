@@ -586,8 +586,8 @@ def _show_coefficients_tab(data: Dict[str, Any]):
         st.subheader("Saturation Parameters")
 
         try:
-            sat_a = az.summary(wrapper_a.idata, var_names=["lam"], round_to=4)
-            sat_b = az.summary(wrapper_b.idata, var_names=["lam"], round_to=4)
+            sat_a = az.summary(wrapper_a.idata, var_names=["saturation_lam"], round_to=4)
+            sat_b = az.summary(wrapper_b.idata, var_names=["saturation_lam"], round_to=4)
 
             col1, col2 = st.columns(2)
 
@@ -607,8 +607,8 @@ def _show_coefficients_tab(data: Dict[str, Any]):
         st.subheader("Adstock Parameters")
 
         try:
-            adstock_a = az.summary(wrapper_a.idata, var_names=["alpha"], round_to=4)
-            adstock_b = az.summary(wrapper_b.idata, var_names=["alpha"], round_to=4)
+            adstock_a = az.summary(wrapper_a.idata, var_names=["adstock_alpha"], round_to=4)
+            adstock_b = az.summary(wrapper_b.idata, var_names=["adstock_alpha"], round_to=4)
 
             col1, col2 = st.columns(2)
 
