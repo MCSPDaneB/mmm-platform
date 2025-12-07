@@ -348,10 +348,11 @@ class ROIDiagnostics:
 
         results = {}
 
-        # Compute total spend across all channels for spend % calculation
-        effective_channels = self.wrapper.transform_engine.get_effective_channel_columns()
+        # Compute total spend across paid media channels only for spend % calculation
+        # (owned media uses different units like sends/impressions, not dollars)
+        paid_channels = self.config.get_channel_columns()
         total_all_channel_spend = sum(
-            self.wrapper.df_scaled[ch].sum() for ch in effective_channels
+            self.wrapper.df_scaled[ch].sum() for ch in paid_channels
             if ch in self.wrapper.df_scaled.columns
         )
 
