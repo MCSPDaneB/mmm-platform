@@ -116,7 +116,7 @@ def show_pre_fit_warnings(config, df):
     try:
         warnings = run_pre_fit_checks(config, df)
         if warnings:
-            with st.expander(f"⚠️ Pre-Fit Warnings ({len(warnings)})", expanded=True):
+            with st.expander(f"⚠️ Pre-Fit Warnings ({len(warnings)})", expanded=False):
                 # Build table data
                 rows = []
                 for w in warnings:

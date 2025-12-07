@@ -1762,6 +1762,14 @@ def show():
             run_model_ec2, run_model_local
         )
 
+        # Pre-fit warnings at top of section (collapsed by default)
+        try:
+            _sync_data_editors_to_config_state()
+            temp_config = build_config_from_state()
+            show_pre_fit_warnings(temp_config, st.session_state.current_data)
+        except Exception:
+            pass  # Skip if config can't be built yet
+
         # Run location selection
         run_location = st.radio(
             "Where to run the model?",
@@ -1809,14 +1817,6 @@ def show():
         else:
             est_time = "2-4 hours" if not quick_run else "30-60 minutes"
         st.info(f"Estimated time: {est_time}")
-
-        # Pre-fit warnings (need to build config first to check)
-        try:
-            _sync_data_editors_to_config_state()
-            temp_config = build_config_from_state()
-            show_pre_fit_warnings(temp_config, st.session_state.current_data)
-        except Exception:
-            pass  # Skip if config can't be built yet
 
         # Run button
         st.markdown("---")
