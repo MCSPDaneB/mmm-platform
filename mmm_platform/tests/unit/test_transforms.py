@@ -43,13 +43,43 @@ class TestGeometricAdstock:
         # Effect should persist across periods
         assert all(result[:8] > 0)
 
-    def test_backward_looking(self, transform_engine):
-        """Adstock should be backward-looking (past affects current)."""
+    def test_forward_looking_matches_pymc(self, transform_engine):
+        """Adstock should be forward-looking (current spend affects future periods).
+
+        This matches PyMC-Marketing's ConvMode.After (default) behavior.
+        """
         x = np.array([0, 0, 0, 0, 100, 0, 0, 0])
         result = transform_engine.compute_geometric_adstock(x, alpha=0.5, l_max=4)
-        # Effect should appear at and after the spike, not before
-        assert all(result[:4] == 0)
-        assert result[4] > 0
+        # No effect before the spike
+        assert all(result[:4] == 0), "Should have no effect before spend occurs"
+        # Effect appears at spike and carries forward
+        assert result[4] > 0, "Should have effect at the spend period"
+        assert result[5] > 0, "Should carry forward to next period"
+        assert result[6] > 0, "Should continue carrying forward"
+        # Forward decay: effect should decrease over time
+        assert result[4] > result[5] > result[6], "Effect should decay forward in time"
+
+    def test_end_of_period_spend_captures_effect(self, transform_engine):
+        """Spend at end of period should still produce significant adstock effect.
+
+        Regression test for bug where backward-looking adstock produced near-zero
+        signal for channels with spend only at the end of the modeling period.
+        """
+        # Simulate TikTok scenario: spend only in last 3 weeks of 52-week period
+        x = np.zeros(52)
+        x[49:52] = [50, 70, 100]  # Spend at end
+
+        result = transform_engine.compute_geometric_adstock(x, alpha=0.4, l_max=8)
+
+        # The adstock sum should be substantial (not near-zero)
+        # With forward carry, sum should be close to input sum
+        assert result.sum() > 0.5 * x.sum(), \
+            f"Adstock sum {result.sum():.2f} should capture most of input sum {x.sum():.2f}"
+
+        # Effect should appear at spend periods
+        assert result[49] > 0
+        assert result[50] > 0
+        assert result[51] > 0
 
     def test_output_shape_matches_input(self, transform_engine):
         """Output should have same shape as input."""
