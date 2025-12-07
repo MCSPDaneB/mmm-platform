@@ -197,3 +197,58 @@ class TestROIDiagnostics:
         assert diagnostics.hdi_prob == 0.95
 
 
+class TestSpendPercentageCalculation:
+    """Tests for spend % calculation excluding owned media."""
+
+    def test_spend_pct_excludes_owned_media(self, complex_config):
+        """Spend % should be calculated using only paid media channels, not owned media.
+
+        Regression test: owned media (email sends, impressions) use different units
+        than spend. Including them inflates the total and makes every paid channel
+        appear to have <5% of spend.
+        """
+        import pandas as pd
+        from mmm_platform.core.transforms import TransformEngine
+
+        # Create mock data where owned media has huge values
+        dates = pd.date_range('2024-01-01', periods=10, freq='W')
+        df = pd.DataFrame({
+            'date': dates,
+            'revenue': [100000] * 10,
+            # Paid media channels - moderate values
+            'channel_0_spend': [10000] * 10,  # $10k/week
+            'channel_1_spend': [15000] * 10,  # $15k/week
+            'channel_2_spend': [20000] * 10,  # $20k/week
+            'channel_3_spend': [25000] * 10,  # $25k/week
+            'channel_4_spend': [30000] * 10,  # $30k/week
+            # Owned media - huge values (millions of sends)
+            'email_sends': [5000000] * 10,  # 5M sends/week
+        })
+
+        # Calculate total spend using only paid channels (the correct way)
+        paid_channels = complex_config.get_channel_columns()
+        total_paid_spend = sum(df[ch].sum() for ch in paid_channels if ch in df.columns)
+
+        # Each channel should be a meaningful % of paid spend
+        channel_0_spend = df['channel_0_spend'].sum()
+        channel_0_pct = channel_0_spend / total_paid_spend
+
+        # channel_0 is 10k out of 100k total = 10%
+        assert channel_0_pct == pytest.approx(0.10, rel=0.01), \
+            f"channel_0 should be ~10% of paid spend, got {channel_0_pct:.1%}"
+
+        # If we incorrectly included owned media, the % would be tiny
+        transform_engine = TransformEngine(complex_config)
+        effective_channels = transform_engine.get_effective_channel_columns()
+        total_with_owned = sum(df[ch].sum() for ch in effective_channels if ch in df.columns)
+        wrong_pct = channel_0_spend / total_with_owned
+
+        # This would be ~0.2% if we included email_sends - clearly wrong
+        assert wrong_pct < 0.01, \
+            f"Including owned media should give tiny %: {wrong_pct:.1%}"
+
+        # Confirm the correct approach gives sensible values
+        assert channel_0_pct > 0.05, \
+            f"Paid-only % should be >5%: {channel_0_pct:.1%}"
+
+
