@@ -64,13 +64,27 @@ def _show_schema_selector(client: str, model_path: str = None, key_suffix: str =
         options.append(label)
         schema_map[label] = ("client", schema_meta["path"])
 
+    # Determine default index - auto-select first available schema
+    # Priority: model override > first client schema > none
+    default_index = 0  # "None (Original Columns)"
+    if model_override:
+        default_index = 1  # Model override is always first after "None"
+    elif client_schemas:
+        default_index = 1  # First client schema
+
     # Show selector
     selected = st.selectbox(
         "Column Schema",
         options=options,
+        index=default_index,
         key=f"export_schema_selector{key_suffix}",
         help="Select a schema to rename/reorder/filter columns, or use original columns"
     )
+
+    # Show success message if a schema is selected
+    if selected != "None (Original Columns)":
+        schema_name = selected.split("] ", 1)[1] if "] " in selected else selected
+        st.success(f"✓ Schema applied: {schema_name}")
 
     if selected == "None (Original Columns)":
         return None
