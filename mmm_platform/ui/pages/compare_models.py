@@ -51,28 +51,59 @@ def show():
         else:
             client_filter = "all"
 
+        # Filter controls
+        filter_col1, filter_col2 = st.columns(2)
+        with filter_col1:
+            show_archived = st.checkbox(
+                "Show archived",
+                value=False,
+                key="compare_show_archived",
+                help="Show archived models"
+            )
+        with filter_col2:
+            favorite_filter = st.selectbox(
+                "Filter",
+                options=["All", "Favorites only", "Non-favorites"],
+                key="compare_favorite_filter",
+                help="Filter by favorite status"
+            )
+
         # Get saved models (client-aware)
         saved_models = ModelPersistence.list_saved_models(client=client_filter)
+
+        # Apply archive filter
+        if not show_archived:
+            saved_models = [m for m in saved_models if not m.get("is_archived", False)]
+
+        # Apply favorites filter
+        if favorite_filter == "Favorites only":
+            saved_models = [m for m in saved_models if m.get("is_favorite", False)]
+        elif favorite_filter == "Non-favorites":
+            saved_models = [m for m in saved_models if not m.get("is_favorite", False)]
 
         if len(saved_models) >= 2:
             st.markdown("---")
             st.subheader("Quick Selection")
 
-            # Create options with rich labels (matching combined_analysis.py)
+            # Create options with rich labels (matching saved_models.py)
             model_options = {}
             for model in saved_models:
                 r2 = model.get("r2")
                 r2_str = f"R²={r2:.3f}" if r2 is not None else "R²=N/A"
                 n_channels = model.get("n_channels", "?")
-                created = model.get("created_at", "")[:10]
+                created = model.get("created_at", "")[:16].replace("T", " ")
                 name = model.get("config_name", "Unknown")
                 model_client = model.get("client", "")
+                is_favorite = model.get("is_favorite", False)
+
+                # Add star icon for favorites
+                fav_icon = "⭐ " if is_favorite else ""
 
                 # Show client in label when viewing all clients
                 if client_filter == "all" and model_client:
-                    option_label = f"[{model_client}] {name} ({created}) - {n_channels} channels, {r2_str}"
+                    option_label = f"{fav_icon}[{model_client}] {name} ({created}) - {n_channels} channels, {r2_str}"
                 else:
-                    option_label = f"{name} ({created}) - {n_channels} channels, {r2_str}"
+                    option_label = f"{fav_icon}{name} ({created}) - {n_channels} channels, {r2_str}"
                 model_options[option_label] = model["path"]
 
             col1, col2 = st.columns(2)
