@@ -433,7 +433,7 @@ def _show_channel_roi_tab(data: Dict[str, Any]):
             title="ROI by Channel and Model"
         )
         fig.add_hline(y=1, line_dash="dash", line_color="red", annotation_text="Breakeven")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch", key="roi_comparison_chart")
 
 
 def _show_contributions_tab(data: Dict[str, Any]):
