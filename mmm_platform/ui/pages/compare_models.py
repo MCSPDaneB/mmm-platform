@@ -426,7 +426,7 @@ def _show_channel_roi_tab(data: Dict[str, Any]):
             title="ROI by Channel and Model"
         )
         fig.add_hline(y=1, line_dash="dash", line_color="red", annotation_text="Breakeven")
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, use_container_width=True)
 
 
 def _show_contributions_tab(data: Dict[str, Any]):
@@ -529,10 +529,10 @@ def _show_coefficients_tab(data: Dict[str, Any]):
             return
 
         # Get summary statistics
-        summary_a = az.summary(wrapper_a.idata, var_names=["beta_channel"], round_to=4)
-        summary_b = az.summary(wrapper_b.idata, var_names=["beta_channel"], round_to=4)
+        summary_a = az.summary(wrapper_a.idata, var_names=["saturation_beta"], round_to=4)
+        summary_b = az.summary(wrapper_b.idata, var_names=["saturation_beta"], round_to=4)
 
-        st.markdown("### Channel Coefficients (beta_channel)")
+        st.markdown("### Channel Coefficients (saturation_beta)")
 
         col1, col2 = st.columns(2)
 
