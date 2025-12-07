@@ -117,6 +117,12 @@ def show_pre_fit_warnings(config, df):
         warnings = run_pre_fit_checks(config, df)
         if warnings:
             with st.expander(f"⚠️ Pre-Fit Warnings ({len(warnings)})", expanded=False):
+                # Explain what's being checked
+                st.caption(
+                    "**Checks:** Low spend (<3%), high zero periods (>50%), "
+                    "high variability (CV>2), wide ROI priors (>20x range)"
+                )
+
                 # Build table data
                 rows = []
                 for w in warnings:
