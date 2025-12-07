@@ -88,10 +88,10 @@ def main():
             "📁 Upload Data",
             "⚙️ Configure Model",
             "📈 Results",
-            "📤 Export",
             "📊 Combined Analysis",
             "🔍 Compare Models",
             "💾 Saved Configs & Models",
+            "📤 Export",
         ],
     )
 
