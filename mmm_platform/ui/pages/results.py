@@ -2074,7 +2074,6 @@ def show():
 
                 # Build table data
                 table_data = []
-                warnings_data = []
 
                 for channel, result in roi_report.channel_results.items():
                     row = {
@@ -2102,22 +2101,14 @@ def show():
                         row["P75"] = "N/A"
                         row["P95"] = "N/A"
 
-                    table_data.append(row)
+                    # Add warnings as column
+                    row["Warnings"] = "; ".join(result.warnings) if result.warnings else ""
 
-                    # Collect warnings separately
-                    if result.warnings:
-                        for w in result.warnings:
-                            warnings_data.append({"Channel": channel, "Warning": w})
+                    table_data.append(row)
 
                 # Display table
                 df_diagnostics = pd.DataFrame(table_data)
                 st.dataframe(df_diagnostics, use_container_width=True, hide_index=True)
-
-                # Show warnings if any
-                if warnings_data:
-                    st.markdown("#### Warnings")
-                    for item in warnings_data:
-                        st.warning(f"**{item['Channel']}:** {item['Warning']}")
 
         except Exception as e:
             st.info(f"ROI prior validation not available: {str(e)}")
