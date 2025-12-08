@@ -147,11 +147,11 @@ class BudgetAllocator:
             # Convert xarray to dict
             allocation_dict = self._xarray_to_dict(optimal_allocation)
 
-            # Get response estimates from the optimization result
-            expected_response = -scipy_result.fun  # Objective is negative response
-            # Note: CI estimates require posterior sampling, using placeholder for now
-            ci_low = expected_response * 0.85
-            ci_high = expected_response * 1.15
+            # Get response estimates by evaluating at the optimal allocation
+            # Note: scipy_result.fun is the optimizer's objective value, not the actual response
+            expected_response, ci_low, ci_high = self.bridge.estimate_response_at_allocation(
+                allocation_dict, self.num_periods
+            )
 
             # Get current allocation for comparison
             current_allocation = None

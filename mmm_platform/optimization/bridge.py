@@ -118,14 +118,24 @@ class OptimizationBridge:
         """
         Get channels that can be optimized.
 
-        Returns all effective channels (paid media + owned media with ROI).
+        Returns paid media channels + owned media with include_roi=True.
+        Channels without ROI tracking (like DM, email with include_roi=False)
+        are excluded from optimization.
 
         Returns
         -------
         list[str]
-            List of channel column names.
+            List of channel column names that can be optimized.
         """
-        return self.channel_columns
+        # All paid media channels are always optimizable
+        channels = list(self.config.get_channel_columns())
+
+        # Only add owned media with include_roi=True
+        for om in self.config.owned_media:
+            if om.include_roi:
+                channels.append(om.name)
+
+        return channels
 
     def get_historical_spend(self) -> dict[str, float]:
         """
