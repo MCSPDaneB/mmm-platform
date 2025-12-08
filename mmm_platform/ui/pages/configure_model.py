@@ -263,6 +263,7 @@ def show():
                 "KPI Type",
                 options=kpi_type_options,
                 index=kpi_type_index,
+                key=f"kpi_type_select_{config_version}",
                 format_func=lambda x: kpi_type_labels.get(x, x),
                 help="Determines how efficiency metrics are displayed (ROI vs Cost Per X)"
             )
@@ -1200,7 +1201,11 @@ def show():
             help="Select columns to use as control variables"
         )
 
-        if selected_controls:
+        # Get configured dummy variables from config state (need this before conditional)
+        config_dummies = st.session_state.get("config_state", {}).get("dummy_variables", [])
+
+        # Show controls section if there are selected controls OR configured dummies
+        if selected_controls or config_dummies:
             st.markdown("---")
 
             # Category columns manager (same as channels tab)
@@ -1309,8 +1314,7 @@ def show():
             # Get category columns from session state (same as channels)
             category_cols = st.session_state.get("category_columns", [])
 
-            # Get configured dummy variables from config state
-            config_dummies = st.session_state.get("config_state", {}).get("dummy_variables", [])
+            # config_dummies already retrieved above before the conditional
             dummy_names = [d["name"] for d in config_dummies]
 
             # Prepare data for editable table
