@@ -517,6 +517,15 @@ def show():
                                 })
                             else:
                                 # Count KPI: convert efficiency to cost-per for display
+                                # Calculate CPA shift properly: (posterior_cpa - prior_cpa) / prior_cpa
+                                # This gives intuitive percentages (negative = CPA improved/decreased)
+                                def calc_cpa_shift(r):
+                                    if pd.isna(r['prior_roi_mid']) or r['prior_roi_mid'] == 0 or r['posterior_roi_mean'] == 0:
+                                        return None
+                                    prior_cpa = 1 / r['prior_roi_mid']
+                                    posterior_cpa = 1 / r['posterior_roi_mean']
+                                    return (posterior_cpa - prior_cpa) / prior_cpa
+
                                 display_validation_df = pd.DataFrame({
                                     "Channel": validation_df["channel"],
                                     f"Prior {eff_label} (Low-Mid-High)": validation_df.apply(
@@ -528,7 +537,7 @@ def show():
                                         axis=1
                                     ),
                                     "Prior in HDI": validation_df["prior_in_hdi"].apply(lambda x: "✅" if x else "⚠️"),
-                                    f"{eff_label} Shift": validation_df["roi_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
+                                    f"{eff_label} Shift": validation_df.apply(lambda r: f"{calc_cpa_shift(r):+.0%}" if calc_cpa_shift(r) is not None else "-", axis=1),
                                     "λ Shift": validation_df["lambda_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
                                 })
 
