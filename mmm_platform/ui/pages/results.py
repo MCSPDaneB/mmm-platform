@@ -302,11 +302,15 @@ def show():
                 color="group",
                 color_discrete_map=CATEGORY_COLORS,
             )
-            fig_grouped.update_layout(showlegend=False, xaxis_tickangle=-45)
+            fig_grouped.update_layout(showlegend=False, xaxis_tickangle=-45, yaxis_tickformat=".2f")
             st.plotly_chart(fig_grouped, width="stretch")
 
+        display_grouped = grouped[["group", "contribution_real", "pct_of_total"]].copy()
+        display_grouped["contribution_real"] = display_grouped["contribution_real"].apply(lambda x: f"${x:,.0f}")
+        display_grouped["pct_of_total"] = display_grouped["pct_of_total"].apply(lambda x: f"{x:.2f}%")
+
         st.dataframe(
-            grouped[["group", "contribution_real", "pct_of_total"]].rename(columns={
+            display_grouped.rename(columns={
                 "group": "Group",
                 "contribution_real": "Contribution ($)",
                 "pct_of_total": "% of Total"
@@ -330,7 +334,7 @@ def show():
         if has_owned:
             media_filter = st.radio(
                 "Show",
-                ["All Media", "Paid Media", "Owned Media"],
+                ["Paid Media", "Owned Media", "All Media"],
                 horizontal=True,
                 key="media_tab_filter"
             )
@@ -346,14 +350,6 @@ def show():
             active_channels = owned_cols
         else:
             active_channels = paid_cols + owned_cols
-
-        # Jump link to validation section at bottom
-        st.markdown(
-            '<a href="#roi-prior-validation" style="text-decoration: none;">'
-            f'<button style="background-color: #f0f2f6; color: #333; border: 1px solid #ddd; padding: 0.25rem 0.75rem; '
-            f'border-radius: 0.25rem; cursor: pointer;">🔍 Jump to Prior Validation</button></a>',
-            unsafe_allow_html=True
-        )
 
         roi_df = contributions.get_channel_roi(roi_channels=active_channels)
 
@@ -455,6 +451,145 @@ def show():
             display_df[eff_label] = display_df[eff_label].apply(lambda x: f"{x:.2f}")
 
             st.dataframe(display_df, width="stretch", hide_index=True)
+
+            # -----------------------------------------------------------------
+            # ROI Prior Validation (only for Paid Media)
+            # -----------------------------------------------------------------
+            if media_filter != "Owned Media":
+                st.markdown("---")
+
+                with st.expander(f"📊 {eff_label} Prior Validation", expanded=False):
+                    st.caption(f"Compares your {eff_label} beliefs (priors) against what the model learned (posterior)")
+
+                    try:
+                        roi_report = quick_roi_diagnostics(wrapper)
+
+                        # Overall health status
+                        health = roi_report.overall_health
+                        if "Good" in health:
+                            st.success(f"**{health}**")
+                        elif "Moderate" in health:
+                            st.warning(f"**{health}**")
+                        else:
+                            st.error(f"**{health}**")
+
+                        # Explanation
+                        with st.expander("What does this mean?", expanded=False):
+                            st.markdown(f"""
+                            This validates whether the {eff_label} the model learned matches your prior beliefs:
+
+                            - **Prior {eff_label}**: The {eff_label} range you specified when configuring channels
+                            - **Posterior {eff_label}**: The {eff_label} the model learned from data (with 90% HDI)
+                            - **Prior in HDI**: ✅ if your belief falls within the learned range
+                            - **{eff_label} Shift**: How much the learned {eff_label} differs from your prior belief
+                            - **λ Shift**: How much the saturation curve changed from initial assumptions
+
+                            **Large shifts** may indicate:
+                            - Your prior beliefs need updating based on this data
+                            - Data quality issues for that channel
+                            - The model found a different relationship than expected
+                            """)
+
+                        # Summary table
+                        if roi_report.channel_results:
+                            validation_df = roi_report.to_dataframe()
+
+                            # Convert values for display (invert for count KPIs)
+                            def convert_for_display(val):
+                                return kpi_labels.convert_internal_to_display(val)
+
+                            if kpi_labels.is_revenue_type:
+                                # Revenue KPI: display raw values
+                                display_validation_df = pd.DataFrame({
+                                    "Channel": validation_df["channel"],
+                                    f"Prior {eff_label} (Low-Mid-High)": validation_df.apply(
+                                        lambda r: f"{r['prior_roi_low']:.1f} - {r['prior_roi_mid']:.1f} - {r['prior_roi_high']:.1f}",
+                                        axis=1
+                                    ),
+                                    f"Posterior {eff_label} [90% HDI]": validation_df.apply(
+                                        lambda r: f"{r['posterior_roi_mean']:.2f} [{r['posterior_roi_hdi_low']:.2f}, {r['posterior_roi_hdi_high']:.2f}]",
+                                        axis=1
+                                    ),
+                                    "Prior in HDI": validation_df["prior_in_hdi"].apply(lambda x: "✅" if x else "⚠️"),
+                                    f"{eff_label} Shift": validation_df["roi_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
+                                    "λ Shift": validation_df["lambda_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
+                                })
+                            else:
+                                # Count KPI: convert efficiency to cost-per for display
+                                display_validation_df = pd.DataFrame({
+                                    "Channel": validation_df["channel"],
+                                    f"Prior {eff_label} (Low-Mid-High)": validation_df.apply(
+                                        lambda r: f"{convert_for_display(r['prior_roi_high']):.1f} - {convert_for_display(r['prior_roi_mid']):.1f} - {convert_for_display(r['prior_roi_low']):.1f}",
+                                        axis=1
+                                    ),
+                                    f"Posterior {eff_label} [90% HDI]": validation_df.apply(
+                                        lambda r: f"{convert_for_display(r['posterior_roi_mean']):.2f} [{convert_for_display(r['posterior_roi_hdi_high']):.2f}, {convert_for_display(r['posterior_roi_hdi_low']):.2f}]",
+                                        axis=1
+                                    ),
+                                    "Prior in HDI": validation_df["prior_in_hdi"].apply(lambda x: "✅" if x else "⚠️"),
+                                    f"{eff_label} Shift": validation_df["roi_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
+                                    "λ Shift": validation_df["lambda_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
+                                })
+
+                            st.dataframe(display_validation_df, hide_index=True, width='stretch')
+
+                        # Warnings
+                        if roi_report.channels_with_prior_tension:
+                            st.warning(f"**Channels with prior tension:** {', '.join(roi_report.channels_with_prior_tension)}")
+
+                        if roi_report.channels_with_large_shift:
+                            st.warning(f"**Channels with large {eff_label} shift (>50%):** {', '.join(roi_report.channels_with_large_shift)}")
+
+                        # Recommendations
+                        if roi_report.recommendations:
+                            st.subheader("Recommendations")
+                            for rec in roi_report.recommendations:
+                                st.info(rec)
+
+                        # Detailed Prior Diagnostics (nested expander)
+                        with st.expander("Detailed Prior Diagnostics", expanded=False):
+                            st.caption("Parameter shifts between prior beliefs and posterior learnings")
+
+                            # Build table data
+                            table_data = []
+
+                            for channel, result in roi_report.channel_results.items():
+                                row = {
+                                    "Channel": channel,
+                                    "β Shift": f"{result.beta_shift:+.1%}" if result.beta_shift is not None else "N/A",
+                                    "Prior β": f"{result.prior_beta_median:.6f}" if result.prior_beta_median is not None else "N/A",
+                                    "Post β": f"{result.posterior_beta_mean:.6f}" if result.posterior_beta_mean is not None else "N/A",
+                                    "λ Shift": f"{result.lambda_shift:+.1%}" if result.lambda_shift is not None else "N/A",
+                                    "Spend %": f"{result.channel_spend_pct:.1%}" if result.channel_spend_pct is not None else "N/A",
+                                    "Filtered %": f"{result.samples_filtered_pct:.1%}" if result.samples_filtered_pct is not None else "N/A",
+                                }
+
+                                # Add ROI percentiles
+                                if result.raw_sample_percentiles:
+                                    p = result.raw_sample_percentiles
+                                    row["P5"] = f"{p.get(5, 0):.2f}"
+                                    row["P25"] = f"{p.get(25, 0):.2f}"
+                                    row["Median"] = f"{p.get(50, 0):.2f}"
+                                    row["P75"] = f"{p.get(75, 0):.2f}"
+                                    row["P95"] = f"{p.get(95, 0):.2f}"
+                                else:
+                                    row["P5"] = "N/A"
+                                    row["P25"] = "N/A"
+                                    row["Median"] = "N/A"
+                                    row["P75"] = "N/A"
+                                    row["P95"] = "N/A"
+
+                                # Add warnings as column
+                                row["Warnings"] = "; ".join(result.warnings) if result.warnings else ""
+
+                                table_data.append(row)
+
+                            # Display table
+                            df_diagnostics = pd.DataFrame(table_data)
+                            st.dataframe(df_diagnostics, width='stretch', hide_index=True)
+
+                    except Exception as e:
+                        st.info(f"{eff_label} prior validation not available: {str(e)}")
 
             # Spend vs Contribution scatter
             target_label = kpi_labels.target_name if not kpi_labels.is_revenue_type else "Contribution"
@@ -777,145 +912,6 @@ def show():
                             st.dataframe(pd.DataFrame(summary_data), width="stretch", hide_index=True)
                 except Exception as e:
                     st.error(f"Error loading owned media contributions: {e}")
-
-        # ---------------------------------------------------------------------
-        # ROI Prior Validation Section (moved from separate tab)
-        # ---------------------------------------------------------------------
-        st.markdown("---")
-        st.markdown('<div id="roi-prior-validation"></div>', unsafe_allow_html=True)
-
-        with st.expander(f"📊 {eff_label} Prior Validation", expanded=False):
-            st.caption(f"Compares your {eff_label} beliefs (priors) against what the model learned (posterior)")
-
-            try:
-                roi_report = quick_roi_diagnostics(wrapper)
-
-                # Overall health status
-                health = roi_report.overall_health
-                if "Good" in health:
-                    st.success(f"**{health}**")
-                elif "Moderate" in health:
-                    st.warning(f"**{health}**")
-                else:
-                    st.error(f"**{health}**")
-
-                # Explanation
-                with st.expander("What does this mean?", expanded=False):
-                    st.markdown(f"""
-                    This validates whether the {eff_label} the model learned matches your prior beliefs:
-
-                    - **Prior {eff_label}**: The {eff_label} range you specified when configuring channels
-                    - **Posterior {eff_label}**: The {eff_label} the model learned from data (with 90% HDI)
-                    - **Prior in HDI**: ✅ if your belief falls within the learned range
-                    - **{eff_label} Shift**: How much the learned {eff_label} differs from your prior belief
-                    - **λ Shift**: How much the saturation curve changed from initial assumptions
-
-                    **Large shifts** may indicate:
-                    - Your prior beliefs need updating based on this data
-                    - Data quality issues for that channel
-                    - The model found a different relationship than expected
-                    """)
-
-                # Summary table
-                if roi_report.channel_results:
-                    validation_df = roi_report.to_dataframe()
-
-                    # Convert values for display (invert for count KPIs)
-                    def convert_for_display(val):
-                        return kpi_labels.convert_internal_to_display(val)
-
-                    if kpi_labels.is_revenue_type:
-                        # Revenue KPI: display raw values
-                        display_validation_df = pd.DataFrame({
-                            "Channel": validation_df["channel"],
-                            f"Prior {eff_label} (Low-Mid-High)": validation_df.apply(
-                                lambda r: f"{r['prior_roi_low']:.1f} - {r['prior_roi_mid']:.1f} - {r['prior_roi_high']:.1f}",
-                                axis=1
-                            ),
-                            f"Posterior {eff_label} [90% HDI]": validation_df.apply(
-                                lambda r: f"{r['posterior_roi_mean']:.2f} [{r['posterior_roi_hdi_low']:.2f}, {r['posterior_roi_hdi_high']:.2f}]",
-                                axis=1
-                            ),
-                            "Prior in HDI": validation_df["prior_in_hdi"].apply(lambda x: "✅" if x else "⚠️"),
-                            f"{eff_label} Shift": validation_df["roi_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
-                            "λ Shift": validation_df["lambda_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
-                        })
-                    else:
-                        # Count KPI: convert efficiency to cost-per for display
-                        display_validation_df = pd.DataFrame({
-                            "Channel": validation_df["channel"],
-                            f"Prior {eff_label} (Low-Mid-High)": validation_df.apply(
-                                lambda r: f"{convert_for_display(r['prior_roi_high']):.1f} - {convert_for_display(r['prior_roi_mid']):.1f} - {convert_for_display(r['prior_roi_low']):.1f}",
-                                axis=1
-                            ),
-                            f"Posterior {eff_label} [90% HDI]": validation_df.apply(
-                                lambda r: f"{convert_for_display(r['posterior_roi_mean']):.2f} [{convert_for_display(r['posterior_roi_hdi_high']):.2f}, {convert_for_display(r['posterior_roi_hdi_low']):.2f}]",
-                                axis=1
-                            ),
-                            "Prior in HDI": validation_df["prior_in_hdi"].apply(lambda x: "✅" if x else "⚠️"),
-                            f"{eff_label} Shift": validation_df["roi_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
-                            "λ Shift": validation_df["lambda_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
-                        })
-
-                    st.dataframe(display_validation_df, hide_index=True, width='stretch')
-
-                # Warnings
-                if roi_report.channels_with_prior_tension:
-                    st.warning(f"**Channels with prior tension:** {', '.join(roi_report.channels_with_prior_tension)}")
-
-                if roi_report.channels_with_large_shift:
-                    st.warning(f"**Channels with large {eff_label} shift (>50%):** {', '.join(roi_report.channels_with_large_shift)}")
-
-                # Recommendations
-                if roi_report.recommendations:
-                    st.subheader("Recommendations")
-                    for rec in roi_report.recommendations:
-                        st.info(rec)
-
-                # Detailed Prior Diagnostics (nested expander)
-                with st.expander("Detailed Prior Diagnostics", expanded=False):
-                    st.caption("Parameter shifts between prior beliefs and posterior learnings")
-
-                    # Build table data
-                    table_data = []
-
-                    for channel, result in roi_report.channel_results.items():
-                        row = {
-                            "Channel": channel,
-                            "β Shift": f"{result.beta_shift:+.1%}" if result.beta_shift is not None else "N/A",
-                            "Prior β": f"{result.prior_beta_median:.6f}" if result.prior_beta_median is not None else "N/A",
-                            "Post β": f"{result.posterior_beta_mean:.6f}" if result.posterior_beta_mean is not None else "N/A",
-                            "λ Shift": f"{result.lambda_shift:+.1%}" if result.lambda_shift is not None else "N/A",
-                            "Spend %": f"{result.channel_spend_pct:.1%}" if result.channel_spend_pct is not None else "N/A",
-                            "Filtered %": f"{result.samples_filtered_pct:.1%}" if result.samples_filtered_pct is not None else "N/A",
-                        }
-
-                        # Add ROI percentiles
-                        if result.raw_sample_percentiles:
-                            p = result.raw_sample_percentiles
-                            row["P5"] = f"{p.get(5, 0):.2f}"
-                            row["P25"] = f"{p.get(25, 0):.2f}"
-                            row["Median"] = f"{p.get(50, 0):.2f}"
-                            row["P75"] = f"{p.get(75, 0):.2f}"
-                            row["P95"] = f"{p.get(95, 0):.2f}"
-                        else:
-                            row["P5"] = "N/A"
-                            row["P25"] = "N/A"
-                            row["Median"] = "N/A"
-                            row["P75"] = "N/A"
-                            row["P95"] = "N/A"
-
-                        # Add warnings as column
-                        row["Warnings"] = "; ".join(result.warnings) if result.warnings else ""
-
-                        table_data.append(row)
-
-                    # Display table
-                    df_diagnostics = pd.DataFrame(table_data)
-                    st.dataframe(df_diagnostics, width='stretch', hide_index=True)
-
-            except Exception as e:
-                st.info(f"{eff_label} prior validation not available: {str(e)}")
 
     # =========================================================================
     # Tab 3: Investment Priority (Marginal ROI + Executive Summary)
