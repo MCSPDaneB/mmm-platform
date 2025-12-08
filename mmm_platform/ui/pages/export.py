@@ -1287,6 +1287,10 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
             st.success(f"Loaded {len(granular_df):,} rows × {len(granular_df.columns)} columns")
         except Exception as e:
             st.error(f"Error loading file: {e}")
+            # Clear any partial session state to prevent corruption
+            for key in [granular_df_key, f"granular_include_cols{key_suffix}", f"granular_mapping{key_suffix}"]:
+                if key in st.session_state:
+                    del st.session_state[key]
             return None
 
     # Get all columns for mapping (works with both fresh upload and cached data)
@@ -1348,6 +1352,13 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
         default_include_cols = selected_saved_config.get('include_columns', []) if selected_saved_config else []
         default_include_cols = [c for c in default_include_cols if c in available_include_cols]
         st.session_state[include_cols_key] = default_include_cols
+    else:
+        # Validate existing session state values against current available columns
+        # (file may have changed, making old selections invalid)
+        current_selections = st.session_state[include_cols_key]
+        valid_selections = [c for c in current_selections if c in available_include_cols]
+        if valid_selections != current_selections:
+            st.session_state[include_cols_key] = valid_selections
 
     include_cols = st.multiselect(
         "Columns to Include",
