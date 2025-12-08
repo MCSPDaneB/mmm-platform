@@ -1597,7 +1597,7 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
                 st.write(f"- {ch}")
 
     # Save configuration button
-    if model_path and mapped_count > 0:
+    if model_path and unique_entities_count > 0:
         st.markdown("---")
         st.markdown("#### Save Configuration")
         save_col1, save_col2 = st.columns([3, 1])
@@ -1629,7 +1629,7 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
                 else:
                     st.warning("Please enter a configuration name")
 
-    if mapped_count > 0:
+    if unique_entities_count > 0:
         return (mapped_df, granular_name_cols, date_col_granular, weight_col, include_cols)
     else:
         st.warning("No rows are mapped to model channels. Please map at least one entity.")
