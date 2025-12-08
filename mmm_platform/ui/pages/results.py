@@ -2040,10 +2040,10 @@ def show():
                         display_roi = kpi_labels.convert_internal_to_display(row['roi']) if row['roi'] > 0 else 0
 
                     metrics.append({
-                        'channel': row['channel'].replace('_spend', ''),
+                        'name': row['channel'].replace('_spend', ''),
                         'roi': display_roi,
                         'spend': row['spend_real'],
-                        'contribution': row['contribution_real'],
+                        'effectiveness': row['contribution_real'],
                     })
                 fig = create_roi_effectiveness_bubble(metrics)
 
