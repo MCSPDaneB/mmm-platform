@@ -1607,12 +1607,24 @@ def generate_combined_decomps_stacked_disaggregated(
                 if not c.startswith('kpi_') and c not in value_cols]
 
     # Merge all DataFrames on key columns
+    # Include value columns from subsequent models to coalesce missing values
     result = all_disagg_dfs[0]
     for i, df in enumerate(all_disagg_dfs[1:], 1):
         label = labels[i]
-        # Only keep key columns and the kpi column from subsequent dfs
-        df_subset = df[key_cols + [f"kpi_{label}"]]
-        result = result.merge(df_subset, on=key_cols, how='outer')
+        # Keep key columns, KPI column, AND value columns from subsequent dfs
+        # Value columns are needed to fill in rows that only exist in this model
+        available_value_cols = [c for c in value_cols if c in df.columns]
+        cols_to_keep = key_cols + [f"kpi_{label}"] + available_value_cols
+        df_subset = df[cols_to_keep]
+        result = result.merge(df_subset, on=key_cols, how='outer', suffixes=('', f'_model{i}'))
+
+        # Coalesce value columns: use existing value, fallback to this model's value
+        # This ensures rows only in this model get their value columns populated
+        for val_col in available_value_cols:
+            suffixed_col = f'{val_col}_model{i}'
+            if suffixed_col in result.columns:
+                result[val_col] = result[val_col].fillna(result[suffixed_col])
+                result = result.drop(columns=[suffixed_col])
 
     # Fill NaN with 0 for KPI columns (when a model doesn't have a particular row)
     for label in labels:
@@ -1703,13 +1715,24 @@ def generate_combined_media_results_disaggregated(
     key_cols = [c for c in first_df.columns if c not in all_cols_to_exclude]
 
     # Merge all DataFrames on key columns
+    # Include value columns from subsequent models to coalesce missing values
     result = all_disagg_dfs[0]
     for i, df in enumerate(all_disagg_dfs[1:], 1):
         label = labels[i]
-        # Only keep key columns and the kpi column from subsequent dfs
-        # Don't include spend/impressions/clicks - those are identical and come from first df
-        df_subset = df[key_cols + [f"kpi_{label}"]]
-        result = result.merge(df_subset, on=key_cols, how='outer')
+        # Keep key columns, KPI column, AND value columns from subsequent dfs
+        # Value columns are needed to fill in rows that only exist in this model
+        available_value_cols = [c for c in value_cols if c in df.columns]
+        cols_to_keep = key_cols + [f"kpi_{label}"] + available_value_cols
+        df_subset = df[cols_to_keep]
+        result = result.merge(df_subset, on=key_cols, how='outer', suffixes=('', f'_model{i}'))
+
+        # Coalesce value columns: use existing value, fallback to this model's value
+        # This ensures rows only in this model get their value columns populated
+        for val_col in available_value_cols:
+            suffixed_col = f'{val_col}_model{i}'
+            if suffixed_col in result.columns:
+                result[val_col] = result[val_col].fillna(result[suffixed_col])
+                result = result.drop(columns=[suffixed_col])
 
     # Fill NaN with 0 for KPI columns (when a model doesn't have a particular row)
     for label in labels:
