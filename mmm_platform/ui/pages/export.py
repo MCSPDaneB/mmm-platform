@@ -1543,6 +1543,7 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
 
     # Filter out unmapped rows
     mapped_df = granular_df[granular_df["_model_channel"] != "-- Not Mapped --"].copy()
+    matched_rows_count = len(mapped_df)  # Count BEFORE deduplication
 
     # Deduplicate: aggregate by key columns to prevent row duplication in disaggregation
     # Key columns are entity identifiers + date + channel mapping
@@ -1568,18 +1569,26 @@ def _show_disaggregation_ui(wrapper, config, brand: str, model_path: str = None,
 
     # Show mapping summary
     st.markdown("#### Mapping Summary")
-    mapped_count = len(mapped_df)
+    unique_entities_count = len(mapped_df)  # Count AFTER deduplication
     total_count = len(granular_df)
     mapped_channels_count = mapped_df["_model_channel"].nunique()
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Mapped Rows", f"{mapped_count:,} / {total_count:,}")
+        st.metric("Matched Rows", f"{matched_rows_count:,} / {total_count:,}")
     with col2:
-        st.metric("Mapped Channels", f"{mapped_channels_count} / {len(model_channels)}")
+        st.metric("Unique Entities", f"{unique_entities_count:,}")
     with col3:
+        st.metric("Mapped Channels", f"{mapped_channels_count} / {len(model_channels)}")
+    with col4:
         unmapped_channels = set(model_channels) - set(mapped_df["_model_channel"].unique())
         st.metric("Unmapped Channels", len(unmapped_channels))
+
+    # Show info when significant aggregation occurred
+    if unique_entities_count < matched_rows_count * 0.9 and matched_rows_count > 0:
+        avg_rows_per_entity = matched_rows_count / unique_entities_count if unique_entities_count > 0 else 0
+        st.info(f"ℹ️ {matched_rows_count:,} matched rows were aggregated to {unique_entities_count:,} "
+                f"unique entity-date-channel combinations (avg {avg_rows_per_entity:.1f} rows per entity).")
 
     if unmapped_channels:
         with st.expander("Unmapped Model Channels"):
