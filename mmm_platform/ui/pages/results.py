@@ -444,13 +444,14 @@ def show():
                 display_df = roi_df[["display_name", "category", "spend_real", "contribution_real", "roi_display"]].copy()
                 display_df.columns = ["Channel", "Category", "Spend ($)", "Contribution ($)", eff_label]
 
-            # Format table
+            # Format table with column_config to preserve numeric sorting
             st.subheader("Details")
-            display_df["Spend ($)"] = display_df["Spend ($)"].apply(lambda x: f"${x:,.0f}")
-            display_df["Contribution ($)"] = display_df["Contribution ($)"].apply(lambda x: f"${x:,.0f}")
-            display_df[eff_label] = display_df[eff_label].apply(lambda x: f"{x:.2f}")
-
-            st.dataframe(display_df, width="stretch", hide_index=True)
+            column_config = {
+                "Spend ($)": st.column_config.NumberColumn(format="$%.0f"),
+                "Contribution ($)": st.column_config.NumberColumn(format="$%.0f"),
+                eff_label: st.column_config.NumberColumn(format="%.2f")
+            }
+            st.dataframe(display_df, column_config=column_config, width="stretch", hide_index=True)
 
             # -----------------------------------------------------------------
             # ROI Prior Validation (only for Paid Media)
