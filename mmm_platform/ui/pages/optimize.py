@@ -198,6 +198,13 @@ def show_optimize_budget_tab(wrapper):
             else:
                 st.warning(f"Optimization message: {result.message}")
 
+            # Show info if fallback optimizer was used
+            if getattr(result, 'used_fallback', False):
+                st.info(
+                    "Used enhanced gradient-based optimization for better results. "
+                    "The default optimizer had convergence issues with this model."
+                )
+
             # Determine KPI type for display formatting
             kpi_type = getattr(wrapper.config.data, 'kpi_type', 'revenue')
             target_col = wrapper.config.data.target_column

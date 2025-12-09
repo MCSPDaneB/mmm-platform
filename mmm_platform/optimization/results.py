@@ -46,6 +46,9 @@ class OptimizationResult:
     # Utility function used
     utility_function: str = "mean"
 
+    # Fallback optimizer used (due to PyMC-Marketing gradient bug)
+    used_fallback: bool = False
+
     # Raw scipy result for debugging
     _raw_result: Any = field(default=None, repr=False)
 
