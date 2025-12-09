@@ -274,6 +274,17 @@ class ModelPersistence:
         if idata_path.exists():
             wrapper.idata = az.from_netcdf(str(idata_path))
 
+            # Reconstruct MMM from idata to restore internal PyMC model state
+            # This is required for optimize_budget to work correctly
+            try:
+                from pymc_marketing.mmm import MMM
+                wrapper.mmm = MMM.load_from_idata(wrapper.idata)
+                logger.info("Reconstructed MMM from idata for optimization support")
+            except Exception as e:
+                logger.warning(f"Could not reconstruct MMM from idata: {e}. "
+                              "Budget optimization may not work correctly.")
+                # Fall back to pickled version (works for everything except optimizer)
+
         # Load data if available
         data_scaled_path = path / "data_scaled.parquet"
         if data_scaled_path.exists():

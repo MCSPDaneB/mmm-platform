@@ -198,21 +198,43 @@ def show_optimize_budget_tab(wrapper):
             else:
                 st.warning(f"Optimization message: {result.message}")
 
-            # Key metrics
+            # Determine KPI type for display formatting
+            kpi_type = getattr(wrapper.config.data, 'kpi_type', 'revenue')
+            target_col = wrapper.config.data.target_column
+
+            # Key metrics - format based on KPI type
             metric_col1, metric_col2, metric_col3 = st.columns(3)
             with metric_col1:
                 st.metric("Total Budget", f"${result.total_budget:,.0f}")
             with metric_col2:
+                if kpi_type == "count":
+                    # For count KPIs (installs, conversions, etc.) - show count without $
+                    response_label = f"Expected {target_col.replace('_', ' ').title()}"
+                    response_value = f"{result.expected_response:,.0f}"
+                else:
+                    # For revenue KPIs - show with $
+                    response_label = "Expected Response"
+                    response_value = f"${result.expected_response:,.0f}"
                 st.metric(
-                    "Expected Response",
-                    f"${result.expected_response:,.0f}",
+                    response_label,
+                    response_value,
                     delta=f"+{result.response_uplift_pct:.1f}%" if result.response_uplift_pct else None,
                 )
             with metric_col3:
-                roi = result.expected_response / result.total_budget if result.total_budget > 0 else 0
-                st.metric("Expected ROI", f"{roi:.2f}x")
+                if kpi_type == "count":
+                    # For count KPIs - show CPA (Cost Per Acquisition)
+                    cpa = result.total_budget / result.expected_response if result.expected_response > 0 else 0
+                    st.metric("Expected CPA", f"${cpa:,.2f}")
+                else:
+                    # For revenue KPIs - show ROI
+                    roi = result.expected_response / result.total_budget if result.total_budget > 0 else 0
+                    st.metric("Expected ROI", f"{roi:.2f}x")
 
-            st.caption(f"95% CI: ${result.response_ci_low:,.0f} - ${result.response_ci_high:,.0f}")
+            # CI caption - format based on KPI type
+            if kpi_type == "count":
+                st.caption(f"95% CI: {result.response_ci_low:,.0f} - {result.response_ci_high:,.0f}")
+            else:
+                st.caption(f"95% CI: ${result.response_ci_low:,.0f} - ${result.response_ci_high:,.0f}")
 
             # Allocation chart
             df = result.to_dataframe()

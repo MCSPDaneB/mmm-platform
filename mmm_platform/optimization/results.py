@@ -306,3 +306,130 @@ class ScenarioResult:
                 ]
             ),
         }
+
+
+@dataclass
+class MultiModelOptimizationResult:
+    """
+    Result from multi-model budget optimization.
+
+    Contains the optimal allocation that maximizes combined weighted response
+    across multiple models with shared channels.
+    """
+
+    # Core results
+    optimal_allocation: dict[str, float]  # {channel_name: amount}
+    total_budget: float
+
+    # Per-model expected responses
+    response_by_model: dict[str, float]  # {model_label: expected_response}
+    combined_response: float  # weighted sum of all model responses
+
+    # Per-model response CIs
+    response_ci_by_model: dict[str, tuple[float, float]]  # {label: (low, high)}
+
+    # Combined weighted response CI
+    combined_ci_low: float
+    combined_ci_high: float
+
+    # Model weights used
+    model_weights: dict[str, float]  # {model_label: weight}
+
+    # Optimization metadata
+    success: bool
+    message: str
+    iterations: int
+    num_periods: int = 1
+
+    # Comparison to current (optional)
+    current_allocation: dict[str, float] | None = None
+    current_response_by_model: dict[str, float] | None = None
+    current_combined_response: float | None = None
+
+    @property
+    def response_uplift_by_model(self) -> dict[str, float] | None:
+        """Response uplift per model vs current allocation."""
+        if self.current_response_by_model is None:
+            return None
+        return {
+            label: self.response_by_model[label] - self.current_response_by_model.get(label, 0)
+            for label in self.response_by_model
+        }
+
+    @property
+    def combined_uplift(self) -> float | None:
+        """Combined response uplift vs current allocation."""
+        if self.current_combined_response is None:
+            return None
+        return self.combined_response - self.current_combined_response
+
+    @property
+    def combined_uplift_pct(self) -> float | None:
+        """Combined response uplift percentage."""
+        if self.current_combined_response is None or self.current_combined_response == 0:
+            return None
+        return (self.combined_response - self.current_combined_response) / self.current_combined_response * 100
+
+    def to_dataframe(self) -> pd.DataFrame:
+        """
+        Convert allocation to a DataFrame with per-model response breakdown.
+
+        Returns:
+            DataFrame with columns: channel, allocation, pct_of_total,
+            plus response columns for each model
+        """
+        data = {
+            "channel": list(self.optimal_allocation.keys()),
+            "allocation": list(self.optimal_allocation.values()),
+        }
+
+        df = pd.DataFrame(data)
+        df["pct_of_total"] = df["allocation"] / self.total_budget * 100
+
+        return df.sort_values("allocation", ascending=False).reset_index(drop=True)
+
+    def get_model_breakdown_df(self) -> pd.DataFrame:
+        """
+        Get per-model response breakdown.
+
+        Returns:
+            DataFrame with model, response, weight, weighted_response columns
+        """
+        data = []
+        for label, response in self.response_by_model.items():
+            weight = self.model_weights.get(label, 0)
+            data.append({
+                "model": label,
+                "response": response,
+                "weight": weight,
+                "weighted_response": response * weight,
+                "ci_low": self.response_ci_by_model.get(label, (0, 0))[0],
+                "ci_high": self.response_ci_by_model.get(label, (0, 0))[1],
+            })
+
+        return pd.DataFrame(data)
+
+    def get_summary_dict(self) -> dict:
+        """Get a JSON-serializable summary dictionary."""
+        summary = {
+            "total_budget": self.total_budget,
+            "combined_response": self.combined_response,
+            "combined_ci": {
+                "low": self.combined_ci_low,
+                "high": self.combined_ci_high,
+            },
+            "response_by_model": self.response_by_model,
+            "model_weights": self.model_weights,
+            "success": self.success,
+            "message": self.message,
+            "iterations": self.iterations,
+            "num_periods": self.num_periods,
+            "allocation": self.optimal_allocation,
+        }
+
+        if self.current_combined_response is not None:
+            summary["current_combined_response"] = self.current_combined_response
+            summary["combined_uplift"] = self.combined_uplift
+            summary["combined_uplift_pct"] = self.combined_uplift_pct
+
+        return summary

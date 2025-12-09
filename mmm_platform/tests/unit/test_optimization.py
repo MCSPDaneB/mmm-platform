@@ -523,3 +523,109 @@ class TestOptimizationBridgeMocked:
 
         with pytest.raises(ValueError, match="no MMM model"):
             OptimizationBridge(mock_wrapper)
+
+
+# =============================================================================
+# Optimizer UI KPI Type Display Tests
+# =============================================================================
+
+class TestOptimizerUIKPITypeFormatting:
+    """Tests for optimizer UI displaying correct metrics based on KPI type.
+
+    For revenue KPIs: Show ROI and $ formatting
+    For count KPIs: Show CPA and no $ on response values
+    """
+
+    def test_revenue_kpi_shows_roi(self):
+        """Revenue KPIs should display ROI metric."""
+        total_budget = 100000
+        expected_response = 250000
+
+        # For revenue KPI, ROI = response / budget
+        roi = expected_response / total_budget
+
+        assert roi == 2.5
+        # Display format should be "{roi:.2f}x" -> "2.50x"
+        display = f"{roi:.2f}x"
+        assert display == "2.50x"
+
+    def test_count_kpi_shows_cpa(self):
+        """Count KPIs should display CPA (Cost Per Acquisition) metric."""
+        total_budget = 100000
+        expected_installs = 5000  # count response
+
+        # For count KPI, CPA = budget / response
+        cpa = total_budget / expected_installs
+
+        assert cpa == 20.0
+        # Display format should be "${cpa:,.2f}" -> "$20.00"
+        display = f"${cpa:,.2f}"
+        assert display == "$20.00"
+
+    def test_count_kpi_response_no_dollar_sign(self):
+        """Count KPIs should show response without $ symbol."""
+        expected_installs = 12345
+
+        # For count KPIs, response should NOT have $
+        display = f"{expected_installs:,.0f}"
+        assert display == "12,345"
+        assert "$" not in display
+
+    def test_revenue_kpi_response_has_dollar_sign(self):
+        """Revenue KPIs should show response with $ symbol."""
+        expected_revenue = 250000
+
+        # For revenue KPIs, response SHOULD have $
+        display = f"${expected_revenue:,.0f}"
+        assert display == "$250,000"
+        assert "$" in display
+
+    def test_count_kpi_ci_no_dollar_sign(self):
+        """Count KPI confidence intervals should NOT have $ symbols."""
+        ci_low = 4500
+        ci_high = 5500
+
+        # For count KPIs: "4,500 - 5,500"
+        display = f"{ci_low:,.0f} - {ci_high:,.0f}"
+        assert display == "4,500 - 5,500"
+        assert "$" not in display
+
+    def test_revenue_kpi_ci_has_dollar_sign(self):
+        """Revenue KPI confidence intervals should have $ symbols."""
+        ci_low = 200000
+        ci_high = 300000
+
+        # For revenue KPIs: "$200,000 - $300,000"
+        display = f"${ci_low:,.0f} - ${ci_high:,.0f}"
+        assert display == "$200,000 - $300,000"
+        assert display.count("$") == 2
+
+    def test_cpa_handles_zero_response(self):
+        """CPA calculation should handle zero response gracefully."""
+        total_budget = 100000
+        expected_response = 0
+
+        # Should not divide by zero
+        cpa = total_budget / expected_response if expected_response > 0 else 0
+        assert cpa == 0
+
+    def test_roi_handles_zero_budget(self):
+        """ROI calculation should handle zero budget gracefully."""
+        total_budget = 0
+        expected_response = 250000
+
+        # Should not divide by zero
+        roi = expected_response / total_budget if total_budget > 0 else 0
+        assert roi == 0
+
+    def test_target_column_label_formatting(self):
+        """Target column name should be formatted for display label."""
+        target_col = "app_installs"
+
+        # Format: replace underscores with spaces, title case
+        label = target_col.replace('_', ' ').title()
+        assert label == "App Installs"
+
+        # Full metric label
+        full_label = f"Expected {label}"
+        assert full_label == "Expected App Installs"

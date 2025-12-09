@@ -440,3 +440,119 @@ class TestConfigPersistenceList:
 
         for config in configs:
             assert config.get("type") == "config"
+
+
+# =============================================================================
+# Model Load with load_from_idata Tests
+# =============================================================================
+
+class TestModelLoadFromIdata:
+    """Tests for MMM reconstruction from idata during load."""
+
+    @pytest.fixture
+    def mock_wrapper_with_idata(self, sample_config, sample_df):
+        """Mock MMMWrapper with idata for testing reconstruction."""
+        import arviz as az
+
+        wrapper = Mock()
+        wrapper.config = sample_config
+        wrapper.df_scaled = sample_df
+        wrapper.df_raw = sample_df.copy()
+        wrapper.control_cols = ["promo_flag"]
+        wrapper.lam_vec = np.array([1.0, 1.5])
+        wrapper.beta_mu = np.array([0.5, 0.8])
+        wrapper.beta_sigma = np.array([0.1, 0.15])
+        wrapper.mmm = None
+        wrapper.fitted_at = None
+        wrapper.fit_duration_seconds = None
+        wrapper.get_fit_statistics.return_value = {"r2": 0.85, "mape": 0.12}
+
+        # Create a minimal InferenceData object
+        wrapper.idata = az.from_dict(
+            posterior={"x": np.random.randn(4, 100)},
+        )
+
+        return wrapper
+
+    def test_load_attempts_mmm_reconstruction(self, mock_wrapper_with_idata, temp_workspace):
+        """load should attempt to reconstruct MMM from idata."""
+        model_path = temp_workspace / "test_model"
+
+        # Save the model with idata
+        ModelPersistence.save(mock_wrapper_with_idata, model_path, include_data=True)
+
+        # Mock only the MMM.load_from_idata call
+        with patch('pymc_marketing.mmm.MMM.load_from_idata') as mock_load:
+            mock_mmm = Mock()
+            mock_load.return_value = mock_mmm
+
+            loaded = ModelPersistence.load(model_path)
+
+            # Verify load_from_idata was called
+            mock_load.assert_called_once()
+            # Verify the reconstructed MMM is assigned
+            assert loaded.mmm == mock_mmm
+
+    def test_load_falls_back_on_reconstruction_failure(self, mock_wrapper_with_idata, temp_workspace):
+        """load should fall back gracefully if reconstruction fails."""
+        model_path = temp_workspace / "test_model"
+
+        ModelPersistence.save(mock_wrapper_with_idata, model_path, include_data=True)
+
+        # Mock load_from_idata to raise an exception
+        with patch('pymc_marketing.mmm.MMM.load_from_idata') as mock_load:
+            mock_load.side_effect = Exception("Reconstruction failed")
+
+            # Should not raise - falls back gracefully
+            loaded = ModelPersistence.load(model_path)
+
+            # Model should still be loaded (idata should exist)
+            assert loaded.idata is not None
+
+    def test_load_logs_reconstruction_success(self, mock_wrapper_with_idata, temp_workspace, caplog):
+        """load should log when MMM reconstruction succeeds."""
+        import logging
+        model_path = temp_workspace / "test_model"
+
+        ModelPersistence.save(mock_wrapper_with_idata, model_path, include_data=True)
+
+        with patch('pymc_marketing.mmm.MMM.load_from_idata') as mock_load:
+            mock_mmm = Mock()
+            mock_load.return_value = mock_mmm
+
+            with caplog.at_level(logging.INFO):
+                ModelPersistence.load(model_path)
+
+            assert "Reconstructed MMM from idata" in caplog.text
+
+    def test_load_logs_reconstruction_failure_warning(self, mock_wrapper_with_idata, temp_workspace, caplog):
+        """load should log a warning when MMM reconstruction fails."""
+        import logging
+        model_path = temp_workspace / "test_model"
+
+        ModelPersistence.save(mock_wrapper_with_idata, model_path, include_data=True)
+
+        with patch('pymc_marketing.mmm.MMM.load_from_idata') as mock_load:
+            mock_load.side_effect = Exception("Reconstruction failed")
+
+            with caplog.at_level(logging.WARNING):
+                ModelPersistence.load(model_path)
+
+            assert "Could not reconstruct MMM from idata" in caplog.text
+            assert "Budget optimization may not work correctly" in caplog.text
+
+    def test_idata_file_required_for_reconstruction(self, mock_mmm_wrapper, temp_workspace):
+        """Reconstruction should only be attempted when idata file exists."""
+        model_path = temp_workspace / "test_model"
+
+        # Save model without idata
+        mock_mmm_wrapper.idata = None
+        ModelPersistence.save(mock_mmm_wrapper, model_path, include_data=True)
+
+        with patch('pymc_marketing.mmm.MMM.load_from_idata') as mock_load:
+            loaded = ModelPersistence.load(model_path)
+
+            # load_from_idata should NOT be called when no idata file exists
+            mock_load.assert_not_called()
+            # But model should still load
+            assert loaded is not None
