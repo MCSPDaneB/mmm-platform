@@ -168,11 +168,28 @@ class BudgetAllocator:
                 )
                 used_fallback = True
 
-            # Get response estimates by evaluating at the optimal allocation
-            # Note: scipy_result.fun is the optimizer's objective value, not the actual response
-            expected_response, ci_low, ci_high = self.bridge.estimate_response_at_allocation(
-                allocation_dict, self.num_periods
-            )
+            # Get response estimates and risk metrics
+            # If fallback was used, we have risk_metrics from the optimizer
+            risk_metrics = getattr(scipy_result, 'risk_metrics', None)
+
+            if risk_metrics and used_fallback:
+                # Use metrics from the risk-aware fallback optimizer
+                expected_response = risk_metrics.get('expected_response', 0.0)
+                ci_low = risk_metrics.get('response_ci_low', 0.0)
+                ci_high = risk_metrics.get('response_ci_high', 0.0)
+                response_var = risk_metrics.get('response_var')
+                response_cvar = risk_metrics.get('response_cvar')
+                response_sharpe = risk_metrics.get('response_sharpe')
+                response_std = risk_metrics.get('response_std')
+            else:
+                # Use bridge estimate (original behavior)
+                expected_response, ci_low, ci_high = self.bridge.estimate_response_at_allocation(
+                    allocation_dict, self.num_periods
+                )
+                response_var = None
+                response_cvar = None
+                response_sharpe = None
+                response_std = None
 
             # Get current allocation for comparison
             current_allocation = None
@@ -202,6 +219,10 @@ class BudgetAllocator:
                 current_response=current_response,
                 utility_function=self.utility_name,
                 used_fallback=used_fallback,
+                response_var=response_var,
+                response_cvar=response_cvar,
+                response_sharpe=response_sharpe,
+                response_std=response_std,
                 _raw_result=scipy_result,
             )
 
@@ -393,10 +414,13 @@ class BudgetAllocator:
         channel_bounds: dict[str, tuple[float, float]],
     ) -> tuple[dict[str, float], Any]:
         """
-        Custom optimization using the same calculation as MarginalROIAnalyzer.
+        Custom optimization with risk-aware objectives.
 
-        Uses beta * target_scale * saturation formula which is proven to work
-        correctly in the Marginal Investment analysis page.
+        Supports all risk profiles:
+        - mean: Fast path using posterior means (original behavior)
+        - var: Value at Risk (5th percentile - conservative)
+        - cvar: Conditional VaR (very conservative)
+        - sharpe: Risk-adjusted returns
 
         Parameters
         ----------
@@ -411,6 +435,10 @@ class BudgetAllocator:
             (allocation_dict, scipy_result)
         """
         from scipy.optimize import minimize
+        from mmm_platform.optimization.risk_objectives import (
+            RiskAwareObjective,
+            PosteriorSamples,
+        )
         import time
 
         mmm = self.bridge.mmm
@@ -418,24 +446,36 @@ class BudgetAllocator:
         n_channels = len(channels)
         num_periods = self.num_periods
 
-        # Get posterior means for saturation parameters
-        posterior = mmm.idata.posterior
-        lam_values = posterior['saturation_lam'].mean(dim=['chain', 'draw']).values
-        beta_values = posterior['saturation_beta'].mean(dim=['chain', 'draw']).values
-
-        # Get scales - SAME AS MARGINAL ROI PAGE (marginal_roi.py line 309)
+        # Get scales
         df_scaled = self.bridge.wrapper.df_scaled
         spend_scale = self.bridge.config.data.spend_scale
         target_col = self.bridge.config.data.target_column
         target_scale = float(df_scaled[target_col].max())
 
-        # Get x_max for each channel (in scaled units, same as marginal_roi.py line 303)
+        # Get x_max for each channel (in scaled units)
         x_maxes = np.array([float(df_scaled[ch].max()) for ch in channels])
-        # Avoid division by zero
-        x_maxes = np.maximum(x_maxes, 1e-9)
 
-        logger.info(f"Running optimizer with target_scale={target_scale:.0f}")
-        logger.info(f"Beta values: min={beta_values.min():.4f}, max={beta_values.max():.4f}")
+        # Extract posterior samples
+        # For mean: use minimal samples (fast path uses means anyway)
+        # For VaR/CVaR/Sharpe: use 500 samples for uncertainty quantification
+        n_samples = 500 if self.utility_name != "mean" else 100
+        posterior_samples = PosteriorSamples.from_idata(mmm.idata, n_samples=n_samples)
+
+        # Create risk-aware objective
+        risk_objective = RiskAwareObjective(
+            posterior_samples=posterior_samples,
+            x_maxes=x_maxes,
+            target_scale=target_scale,
+            num_periods=num_periods,
+            risk_profile=self.utility_name,
+            confidence_level=0.95,
+            risk_free_rate=0.0,
+        )
+
+        logger.info(
+            f"Running optimizer with risk_profile={self.utility_name}, "
+            f"target_scale={target_scale:.0f}, n_samples={n_samples}"
+        )
 
         # Build bounds (convert from real $ to scaled units, per-period)
         bounds_list = []
@@ -445,29 +485,6 @@ class BudgetAllocator:
                 ch_bounds[0] / spend_scale / num_periods,
                 ch_bounds[1] / spend_scale / num_periods
             ))
-
-        def objective(x):
-            """
-            Compute negative total response.
-            x is per-period spend in SCALED units (same as df_scaled).
-            Response = sum(beta * target_scale * saturation(x / x_max))
-            """
-            x_normalized = x / x_maxes
-            exp_term = np.exp(-lam_values * x_normalized)
-            saturation = (1 - exp_term) / (1 + exp_term)
-            response = np.sum(beta_values * target_scale * saturation) * num_periods
-            return -response
-
-        def gradient(x):
-            """
-            Analytical gradient (same formula as marginal_roi.py line 77-79).
-            d(response)/d(x) = beta * target_scale * sat_deriv / x_max
-            """
-            x_normalized = x / x_maxes
-            exp_term = np.exp(-lam_values * x_normalized)
-            sat_deriv = 2 * lam_values * exp_term / (1 + exp_term)**2
-            grad = -beta_values * target_scale * sat_deriv / x_maxes * num_periods
-            return grad
 
         # Budget constraint (in scaled units)
         budget_per_period_scaled = total_budget / spend_scale / num_periods
@@ -479,12 +496,12 @@ class BudgetAllocator:
         # Progress tracking
         start_time = time.time()
 
-        # Run SLSQP optimizer
+        # Run SLSQP optimizer with risk-aware objective
         result = minimize(
-            objective,
+            risk_objective.objective,
             x0,
             method='SLSQP',
-            jac=gradient,
+            jac=risk_objective.gradient,
             bounds=bounds_list,
             constraints=constraints,
             options={'maxiter': 200, 'ftol': 1e-6},
@@ -496,10 +513,16 @@ class BudgetAllocator:
             for ch, val in zip(channels, result.x)
         }
 
+        # Compute all risk metrics at optimal allocation for results
+        risk_metrics = risk_objective.compute_all_risk_metrics(result.x)
+
+        # Store risk metrics in result for later use
+        result.risk_metrics = risk_metrics
+
         elapsed = time.time() - start_time
         logger.info(
-            f"Optimization complete: {result.nit} iterations in {elapsed:.1f}s, "
-            f"success={result.success}"
+            f"Optimization complete ({self.utility_name}): {result.nit} iterations "
+            f"in {elapsed:.1f}s, success={result.success}"
         )
 
         return allocation, result
