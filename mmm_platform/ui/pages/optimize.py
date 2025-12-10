@@ -187,7 +187,11 @@ def show_optimize_budget_tab(wrapper):
 
         # Channel bounds expander
         with st.expander("Channel Bounds", expanded=False):
-            st.caption("Set min/max spend per channel (optional)")
+            st.caption(
+                "Set minimum and maximum spend per channel. "
+                "Use **Min** for pre-committed budgets that can't be reduced. "
+                "Use **Max** to cap investment in any single channel."
+            )
 
             use_custom_bounds = st.checkbox("Use custom bounds", value=False)
 
