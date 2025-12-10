@@ -52,6 +52,12 @@ class OptimizationResult:
     response_sharpe: float | None = None  # Sharpe ratio (mean/std)
     response_std: float | None = None  # Standard deviation of response
 
+    # Efficiency floor results (for ROI/CPA floor mode)
+    unallocated_budget: float | None = None  # Budget not allocated due to efficiency floor
+    efficiency_target: float | None = None  # Target ROI or CPA
+    efficiency_metric: str | None = None  # "roi" or "cpa"
+    achieved_efficiency: float | None = None  # Actual ROI or CPA achieved
+
     # Raw scipy result for debugging
     _raw_result: Any = field(default=None, repr=False)
 

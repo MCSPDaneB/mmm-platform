@@ -35,6 +35,7 @@ def show():
             TargetOptimizer,
             TimeDistribution,
             build_bounds_from_constraints,
+            SeasonalIndexCalculator,
         )
     except ImportError as e:
         st.error(f"Optimization module not available: {e}")
@@ -63,6 +64,7 @@ def show_optimize_budget_tab(wrapper):
         BudgetAllocator,
         build_bounds_from_constraints,
         UTILITY_FUNCTIONS,
+        SeasonalIndexCalculator,
     )
 
     st.subheader("Allocate Budget Optimally")
@@ -118,6 +120,62 @@ def show_optimize_budget_tab(wrapper):
             max_value=52,
             value=8,
         )
+
+        # Optimization period selector
+        st.markdown("**Optimization Period**")
+        month_names = [
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December"
+        ]
+        start_month = st.selectbox(
+            "Starting Month",
+            options=list(range(1, 13)),
+            format_func=lambda x: month_names[x - 1],
+            index=0,
+            help="Which month does your optimization period start? This affects seasonal adjustments.",
+        )
+
+        # Calculate end period info for display
+        end_month_idx = (start_month - 1 + (num_periods // 4)) % 12
+        period_info = f"{month_names[start_month - 1]}"
+        if num_periods > 4:
+            period_info += f" → {month_names[end_month_idx]}"
+        st.caption(f"Period: {period_info} ({num_periods} weeks)")
+
+        # Optimization objective
+        optimization_objective = st.selectbox(
+            "Optimization Objective",
+            options=["Maximize Response", "ROI Floor", "CPA Floor"],
+            help=(
+                "**Maximize Response**: Allocate budget to maximize expected response.\n\n"
+                "**ROI Floor**: Maximize response while maintaining a minimum ROI. "
+                "May return unallocated budget if the target can't be met at full spend.\n\n"
+                "**CPA Floor**: Maximize response while keeping cost-per-acquisition below a threshold."
+            ),
+        )
+
+        # Efficiency target inputs (only show for ROI/CPA floor)
+        efficiency_target = None
+        efficiency_metric = None
+
+        if optimization_objective == "ROI Floor":
+            efficiency_metric = "roi"
+            efficiency_target = st.number_input(
+                "Minimum ROI",
+                min_value=0.1,
+                value=2.0,
+                step=0.1,
+                help="Minimum return on investment required (e.g., 2.0 = 2x return)",
+            )
+        elif optimization_objective == "CPA Floor":
+            efficiency_metric = "cpa"
+            efficiency_target = st.number_input(
+                "Maximum CPA ($)",
+                min_value=0.01,
+                value=10.0,
+                step=1.0,
+                help="Maximum cost per acquisition allowed",
+            )
 
         # Utility function
         utility_options = {
@@ -220,6 +278,120 @@ def show_optimize_budget_tab(wrapper):
                             key=f"max_{ch}",
                         )
                     bounds_config[ch] = (float(min_val), float(max_val))
+
+        # Seasonal indices expander
+        with st.expander("Seasonal Adjustments", expanded=False):
+            st.caption(
+                "Channel effectiveness varies by time of year. These indices show how "
+                "effective each channel is relative to its average (1.0 = average)."
+            )
+
+            try:
+                seasonal_calc = SeasonalIndexCalculator(wrapper)
+
+                # Get indices for selected period
+                # Convert weeks to approximate months
+                num_months = max(1, num_periods // 4)
+                seasonal_indices = seasonal_calc.get_indices_for_period(
+                    start_month=start_month,
+                    num_months=num_months,
+                )
+
+                # Get confidence info
+                confidence_info = seasonal_calc.get_confidence_info(
+                    start_month=start_month,
+                    num_months=num_months,
+                )
+
+                # Show confidence indicator
+                if confidence_info["confidence_level"] == "high":
+                    st.success(
+                        f"High confidence indices based on {confidence_info['avg_observations']:.0f} "
+                        f"observations per month"
+                    )
+                elif confidence_info["confidence_level"] == "medium":
+                    st.info(
+                        f"Medium confidence indices based on {confidence_info['avg_observations']:.0f} "
+                        f"observations per month"
+                    )
+                else:
+                    st.warning(
+                        f"Low confidence - only {confidence_info['avg_observations']:.0f} "
+                        f"observations per month. Consider using quarterly indices."
+                    )
+
+                if confidence_info["using_quarterly"]:
+                    st.caption("Using quarterly indices due to limited monthly data.")
+
+                # Display indices for selected period
+                indices_data = []
+                for ch, idx in seasonal_indices.items():
+                    display_name = channel_info[channel_info["channel"] == ch]["display_name"].values
+                    display_name = display_name[0] if len(display_name) > 0 else ch
+                    indices_data.append({
+                        "Channel": display_name,
+                        "Index": idx,
+                        "Interpretation": (
+                            "More effective" if idx > 1.05 else
+                            "Less effective" if idx < 0.95 else
+                            "Average"
+                        ),
+                    })
+
+                indices_df = pd.DataFrame(indices_data).sort_values("Index", ascending=False)
+
+                # Allow user to override indices
+                use_custom_indices = st.checkbox(
+                    "Customize seasonal indices",
+                    value=False,
+                    help="Override the computed indices based on your business knowledge",
+                )
+
+                if use_custom_indices:
+                    st.caption(
+                        "Edit the indices below. Values > 1.0 mean more effective, < 1.0 means less effective."
+                    )
+
+                    # Create editable inputs for each channel
+                    edited_indices = {}
+                    for ch, idx in seasonal_indices.items():
+                        display_name = channel_info[channel_info["channel"] == ch]["display_name"].values
+                        display_name = display_name[0] if len(display_name) > 0 else ch
+
+                        edited_indices[ch] = st.number_input(
+                            f"{display_name}",
+                            min_value=0.1,
+                            max_value=3.0,
+                            value=float(idx),
+                            step=0.05,
+                            format="%.2f",
+                            key=f"seasonal_{ch}",
+                        )
+
+                    # Use edited indices
+                    st.session_state.seasonal_indices = edited_indices
+                else:
+                    # Display read-only table
+                    indices_df["Index"] = indices_df["Index"].apply(lambda x: f"{x:.2f}")
+                    st.dataframe(indices_df, use_container_width=True, hide_index=True)
+
+                    # Store computed indices
+                    st.session_state.seasonal_indices = seasonal_indices
+
+                # Show full monthly/quarterly table
+                with st.expander("View Full Seasonal Table"):
+                    full_table = seasonal_calc.to_dataframe(
+                        use_quarterly=confidence_info["using_quarterly"]
+                    )
+                    # Format numbers
+                    for col in full_table.columns:
+                        if col != "Display Name":
+                            full_table[col] = full_table[col].apply(lambda x: f"{x:.2f}")
+                    st.dataframe(full_table, use_container_width=True)
+
+            except Exception as e:
+                st.warning(f"Could not compute seasonal indices: {e}")
+                st.session_state.seasonal_indices = None
 
         # Validation expander
         with st.expander("Validate Optimizer Accuracy", expanded=False):
@@ -336,14 +508,32 @@ def show_optimize_budget_tab(wrapper):
                     # Set bounds
                     channel_bounds = bounds_config if use_custom_bounds and bounds_config else None
 
-                    # Run optimization
-                    result = allocator.optimize(
-                        total_budget=total_budget,
-                        channel_bounds=channel_bounds,
-                        compare_to_current=compare_to_current,
-                        comparison_mode=comparison_mode,
-                        comparison_n_weeks=comparison_n_weeks,
-                    )
+                    # Get seasonal indices from session state (computed in seasonal expander)
+                    seasonal_indices = st.session_state.get("seasonal_indices")
+
+                    # Run optimization based on objective
+                    if efficiency_metric is not None and efficiency_target is not None:
+                        # ROI/CPA floor mode
+                        result = allocator.optimize_with_efficiency_floor(
+                            total_budget=total_budget,
+                            efficiency_metric=efficiency_metric,
+                            efficiency_target=efficiency_target,
+                            channel_bounds=channel_bounds,
+                            seasonal_indices=seasonal_indices,
+                            compare_to_current=compare_to_current,
+                            comparison_mode=comparison_mode,
+                            comparison_n_weeks=comparison_n_weeks,
+                        )
+                    else:
+                        # Standard maximize response mode
+                        result = allocator.optimize(
+                            total_budget=total_budget,
+                            channel_bounds=channel_bounds,
+                            compare_to_current=compare_to_current,
+                            comparison_mode=comparison_mode,
+                            comparison_n_weeks=comparison_n_weeks,
+                            seasonal_indices=seasonal_indices,
+                        )
 
                     # Store result in session state
                     st.session_state.optimization_result = result
@@ -406,6 +596,19 @@ def show_optimize_budget_tab(wrapper):
                 st.caption(f"95% CI: {result.response_ci_low:,.0f} - {result.response_ci_high:,.0f}")
             else:
                 st.caption(f"95% CI: ${result.response_ci_low:,.0f} - ${result.response_ci_high:,.0f}")
+
+            # Efficiency floor results (if applicable)
+            if result.unallocated_budget is not None and result.unallocated_budget > 0:
+                st.warning(
+                    f"**Unallocated Budget:** ${result.unallocated_budget:,.0f}\n\n"
+                    f"To achieve {result.efficiency_metric.upper()} target of "
+                    f"{result.efficiency_target:.2f}, only ${result.total_budget:,.0f} can be efficiently deployed."
+                )
+            elif result.efficiency_metric is not None:
+                st.success(
+                    f"Full budget achieves {result.efficiency_metric.upper()} target: "
+                    f"achieved {result.achieved_efficiency:.2f} vs target {result.efficiency_target:.2f}"
+                )
 
             # Allocation chart
             df = result.to_dataframe()

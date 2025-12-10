@@ -116,6 +116,10 @@ class RiskAwareObjective:
         Confidence level for VaR/CVaR (default 0.95 = 5th percentile worst case)
     risk_free_rate : float
         Risk-free rate for Sharpe ratio (default 0.0)
+    seasonal_indices : np.ndarray, optional
+        Per-channel seasonal effectiveness multipliers, shape (n_channels,).
+        Index > 1 = more effective during the optimization period.
+        If None, no seasonal adjustment is applied (all indices = 1.0).
     """
 
     def __init__(
@@ -127,6 +131,7 @@ class RiskAwareObjective:
         risk_profile: RiskProfile = "mean",
         confidence_level: float = 0.95,
         risk_free_rate: float = 0.0,
+        seasonal_indices: np.ndarray | None = None,
     ):
         self.samples = posterior_samples
         self.x_maxes = np.maximum(x_maxes, 1e-9)  # Avoid division by zero
@@ -136,13 +141,20 @@ class RiskAwareObjective:
         self.confidence_level = confidence_level
         self.risk_free_rate = risk_free_rate
 
+        # Seasonal indices: default to 1.0 (no adjustment) if not provided
+        if seasonal_indices is not None:
+            self.seasonal_indices = np.array(seasonal_indices)
+        else:
+            self.seasonal_indices = np.ones(posterior_samples.n_channels)
+
         # Precompute posterior means for fast path (mean profile) and gradient
         self.beta_mean = posterior_samples.beta_samples.mean(axis=0)
         self.lam_mean = posterior_samples.lam_samples.mean(axis=0)
 
         logger.debug(
             f"RiskAwareObjective initialized: profile={risk_profile}, "
-            f"confidence={confidence_level}, n_samples={posterior_samples.n_samples}"
+            f"confidence={confidence_level}, n_samples={posterior_samples.n_samples}, "
+            f"seasonal_indices={'custom' if seasonal_indices is not None else 'none'}"
         )
 
     def compute_response_distribution(self, x: np.ndarray) -> np.ndarray:
@@ -170,10 +182,14 @@ class RiskAwareObjective:
         exp_term = np.exp(-self.samples.lam_samples * x_norm_broadcast)
         saturation = (1 - exp_term) / (1 + exp_term)  # Shape: (n_samples, n_channels)
 
+        # Apply seasonal indices to adjust effectiveness per channel
+        # seasonal_indices shape: (n_channels,) -> broadcast to (n_samples, n_channels)
+        seasonal_adjusted = saturation * self.seasonal_indices[np.newaxis, :]
+
         # Compute response for each sample
-        # response = sum(beta * target_scale * saturation) * num_periods
+        # response = sum(beta * target_scale * adjusted_saturation) * num_periods
         response_per_sample = (
-            np.sum(self.samples.beta_samples * self.target_scale * saturation, axis=1)
+            np.sum(self.samples.beta_samples * self.target_scale * seasonal_adjusted, axis=1)
             * self.num_periods
         )  # Shape: (n_samples,)
 
@@ -209,8 +225,10 @@ class RiskAwareObjective:
         x_normalized = x / self.x_maxes
         exp_term = np.exp(-self.lam_mean * x_normalized)
         saturation = (1 - exp_term) / (1 + exp_term)
+        # Apply seasonal indices
+        seasonal_adjusted = saturation * self.seasonal_indices
         response = (
-            np.sum(self.beta_mean * self.target_scale * saturation) * self.num_periods
+            np.sum(self.beta_mean * self.target_scale * seasonal_adjusted) * self.num_periods
         )
         return -response
 
@@ -275,10 +293,12 @@ class RiskAwareObjective:
         x_normalized = x / self.x_maxes
         exp_term = np.exp(-self.lam_mean * x_normalized)
         sat_deriv = 2 * self.lam_mean * exp_term / (1 + exp_term) ** 2
+        # Apply seasonal indices to gradient
         grad = (
             -self.beta_mean
             * self.target_scale
             * sat_deriv
+            * self.seasonal_indices
             / self.x_maxes
             * self.num_periods
         )

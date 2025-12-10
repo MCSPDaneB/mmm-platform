@@ -89,6 +89,7 @@ class BudgetAllocator:
         compare_to_current: bool = False,
         comparison_mode: str = "average",
         comparison_n_weeks: int | None = None,
+        seasonal_indices: dict[str, float] | None = None,
         **kwargs,
     ) -> OptimizationResult:
         """
@@ -112,6 +113,10 @@ class BudgetAllocator:
             - "most_recent_period": Actual spend from most recent matching period
         comparison_n_weeks : int, optional
             Number of weeks for "last_n_weeks" mode.
+        seasonal_indices : dict[str, float], optional
+            Per-channel seasonal effectiveness multipliers.
+            {channel_name: index} where index > 1 = more effective during period.
+            If None, no seasonal adjustment is applied.
         **kwargs
             Additional arguments passed to optimize_budget().
 
@@ -142,7 +147,7 @@ class BudgetAllocator:
         try:
             # Use our custom optimizer directly (more reliable, supports all risk profiles)
             allocation_dict, scipy_result = self._optimize_with_working_gradients(
-                total_budget, channel_bounds
+                total_budget, channel_bounds, seasonal_indices=seasonal_indices
             )
 
             # Get response estimates and risk metrics from our optimizer
@@ -261,6 +266,161 @@ class BudgetAllocator:
 
         return result
 
+    def optimize_with_efficiency_floor(
+        self,
+        total_budget: float,
+        efficiency_metric: str,
+        efficiency_target: float,
+        channel_bounds: dict[str, tuple[float, float]] | None = None,
+        seasonal_indices: dict[str, float] | None = None,
+        **kwargs,
+    ) -> OptimizationResult:
+        """
+        Optimize budget with an efficiency floor (minimum ROI or maximum CPA).
+
+        If the efficiency target can be achieved at the full budget, spends all.
+        If not, finds the maximum budget that achieves the target and returns
+        the unallocated amount.
+
+        Parameters
+        ----------
+        total_budget : float
+            Maximum budget available to allocate.
+        efficiency_metric : str
+            Either "roi" (minimum ROI required) or "cpa" (maximum CPA allowed).
+        efficiency_target : float
+            Target value: ROI multiplier (e.g., 2.0 = 2x) or CPA in dollars.
+        channel_bounds : dict, optional
+            Per-channel bounds.
+        seasonal_indices : dict, optional
+            Per-channel seasonal effectiveness multipliers.
+        **kwargs
+            Additional arguments passed to optimize().
+
+        Returns
+        -------
+        OptimizationResult
+            Result with optimal allocation and unallocated_budget if applicable.
+        """
+        logger.info(
+            f"Optimizing with efficiency floor: {efficiency_metric}={efficiency_target}, "
+            f"max_budget=${total_budget:,.0f}"
+        )
+
+        def compute_efficiency(result: OptimizationResult) -> float:
+            """Compute efficiency metric for a result."""
+            if result.expected_response == 0:
+                return float('inf') if efficiency_metric == "cpa" else 0.0
+
+            if efficiency_metric == "roi":
+                return result.expected_response / result.total_budget
+            else:  # cpa
+                return result.total_budget / result.expected_response
+
+        def meets_target(result: OptimizationResult) -> bool:
+            """Check if result meets efficiency target."""
+            efficiency = compute_efficiency(result)
+            if efficiency_metric == "roi":
+                return efficiency >= efficiency_target
+            else:  # cpa
+                return efficiency <= efficiency_target
+
+        # First, try full budget
+        full_result = self.optimize(
+            total_budget=total_budget,
+            channel_bounds=channel_bounds,
+            seasonal_indices=seasonal_indices,
+            **kwargs,
+        )
+
+        full_efficiency = compute_efficiency(full_result)
+
+        if meets_target(full_result):
+            # Full budget meets target - spend it all
+            full_result.unallocated_budget = 0.0
+            full_result.efficiency_target = efficiency_target
+            full_result.efficiency_metric = efficiency_metric
+            full_result.achieved_efficiency = full_efficiency
+            logger.info(
+                f"Full budget meets {efficiency_metric} target: "
+                f"achieved={full_efficiency:.2f}, target={efficiency_target:.2f}"
+            )
+            return full_result
+
+        # Binary search to find max budget that meets target
+        logger.info(
+            f"Full budget doesn't meet target ({full_efficiency:.2f} vs {efficiency_target:.2f}), "
+            f"searching for optimal budget level..."
+        )
+
+        low = 0.0
+        high = total_budget
+        best_result = None
+        best_budget = 0.0
+
+        # Binary search iterations
+        for _ in range(15):  # ~0.01% precision on budget
+            mid = (low + high) / 2
+
+            if mid < total_budget * 0.01:
+                # Budget too small to be meaningful
+                break
+
+            result = self.optimize(
+                total_budget=mid,
+                channel_bounds=channel_bounds,
+                seasonal_indices=seasonal_indices,
+                **kwargs,
+            )
+
+            if meets_target(result):
+                # This budget level works, try higher
+                best_result = result
+                best_budget = mid
+                low = mid
+            else:
+                # This budget level doesn't work, try lower
+                high = mid
+
+        if best_result is None:
+            # Couldn't find any budget that meets target
+            logger.warning(
+                f"No budget level achieves {efficiency_metric} target of {efficiency_target}"
+            )
+            # Return zero allocation
+            result = OptimizationResult(
+                optimal_allocation={ch: 0.0 for ch in self.channels},
+                total_budget=0.0,
+                expected_response=0.0,
+                response_ci_low=0.0,
+                response_ci_high=0.0,
+                success=True,
+                message=f"No budget level achieves {efficiency_metric} target of {efficiency_target}",
+                iterations=0,
+                objective_value=0.0,
+                num_periods=self.num_periods,
+                utility_function=self.utility_name,
+                unallocated_budget=total_budget,
+                efficiency_target=efficiency_target,
+                efficiency_metric=efficiency_metric,
+                achieved_efficiency=None,
+            )
+            return result
+
+        # Set efficiency floor fields
+        best_result.unallocated_budget = total_budget - best_budget
+        best_result.efficiency_target = efficiency_target
+        best_result.efficiency_metric = efficiency_metric
+        best_result.achieved_efficiency = compute_efficiency(best_result)
+
+        logger.info(
+            f"Found optimal budget: ${best_budget:,.0f} "
+            f"({efficiency_metric}={best_result.achieved_efficiency:.2f}), "
+            f"unallocated: ${best_result.unallocated_budget:,.0f}"
+        )
+
+        return best_result
+
     def scenario_analysis(
         self,
         budget_scenarios: list[float],
@@ -346,6 +506,7 @@ class BudgetAllocator:
         self,
         total_budget: float,
         channel_bounds: dict[str, tuple[float, float]],
+        seasonal_indices: dict[str, float] | None = None,
     ) -> tuple[dict[str, float], Any]:
         """
         Custom optimization with risk-aware objectives.
@@ -362,6 +523,9 @@ class BudgetAllocator:
             Total budget to allocate.
         channel_bounds : dict
             Per-channel bounds: {channel_name: (min, max)}.
+        seasonal_indices : dict, optional
+            Per-channel seasonal effectiveness multipliers.
+            {channel_name: index} where index > 1 = more effective.
 
         Returns
         -------
@@ -395,6 +559,16 @@ class BudgetAllocator:
         n_samples = 500 if self.utility_name != "mean" else 100
         posterior_samples = PosteriorSamples.from_idata(mmm.idata, n_samples=n_samples)
 
+        # Convert seasonal indices dict to numpy array matching channel order
+        seasonal_indices_array = None
+        if seasonal_indices is not None:
+            seasonal_indices_array = np.array([
+                seasonal_indices.get(ch, 1.0) for ch in channels
+            ])
+            logger.info(
+                f"Applying seasonal indices: {dict(zip(channels, seasonal_indices_array))}"
+            )
+
         # Create risk-aware objective
         risk_objective = RiskAwareObjective(
             posterior_samples=posterior_samples,
@@ -404,11 +578,13 @@ class BudgetAllocator:
             risk_profile=self.utility_name,
             confidence_level=0.95,
             risk_free_rate=0.0,
+            seasonal_indices=seasonal_indices_array,
         )
 
         logger.info(
             f"Running optimizer with risk_profile={self.utility_name}, "
-            f"target_scale={target_scale:.0f}, n_samples={n_samples}"
+            f"target_scale={target_scale:.0f}, n_samples={n_samples}, "
+            f"seasonal={'yes' if seasonal_indices is not None else 'no'}"
         )
 
         # Build bounds (convert from real $ to scaled units, per-period)

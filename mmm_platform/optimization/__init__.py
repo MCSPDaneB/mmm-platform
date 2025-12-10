@@ -43,6 +43,7 @@ from mmm_platform.optimization.scenarios import (
     ResponseCurveAnalyzer,
     compute_efficiency_frontier,
 )
+from mmm_platform.optimization.seasonality import SeasonalIndexCalculator
 
 __all__ = [
     # Main classes
@@ -52,6 +53,7 @@ __all__ = [
     "TimeDistribution",
     "TargetOptimizer",
     "ResponseCurveAnalyzer",
+    "SeasonalIndexCalculator",
     # Result types
     "OptimizationResult",
     "TargetResult",
