@@ -390,7 +390,8 @@ def show_optimize_budget_tab(wrapper):
                     st.dataframe(full_table, width="stretch")
 
             except Exception as e:
-                st.warning(f"Could not compute seasonal indices: {e}")
+                error_msg = f"{type(e).__name__}: {str(e)}" if str(e) else type(e).__name__
+                st.warning(f"Could not compute seasonal indices: {error_msg}")
                 st.session_state.seasonal_indices = None
 
         # Validation expander

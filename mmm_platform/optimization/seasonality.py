@@ -103,8 +103,24 @@ class SeasonalIndexCalculator:
             return self._monthly_indices
 
         # Get contributions and spend data
-        contribs = self.wrapper.get_contributions()
+        try:
+            contribs = self.wrapper.get_contributions()
+        except Exception as e:
+            raise RuntimeError(
+                f"Could not retrieve model contributions: {type(e).__name__}: {e}"
+            ) from e
+
+        if contribs is None or contribs.empty:
+            raise ValueError("Model contributions are empty. Ensure model is fitted.")
+
         df = self._get_data_with_dates()
+
+        # Validate data alignment
+        if len(contribs) != len(df):
+            raise ValueError(
+                f"Contributions length ({len(contribs)}) != data length ({len(df)}). "
+                "Data may be misaligned."
+            )
 
         # Ensure date column is datetime
         df[self.date_column] = pd.to_datetime(df[self.date_column])
@@ -381,7 +397,20 @@ class SeasonalIndexCalculator:
         # Prefer df_original (unscaled), fall back to df_scaled
         df = getattr(self.wrapper, 'df_original', None)
         if df is None:
-            df = self.wrapper.df_scaled
+            df = getattr(self.wrapper, 'df_scaled', None)
+
+        if df is None:
+            raise ValueError(
+                "No data available. Wrapper must have df_original or df_scaled attribute."
+            )
+
+        # Validate date column exists
+        if self.date_column not in df.columns:
+            raise ValueError(
+                f"Date column '{self.date_column}' not found in data. "
+                f"Available columns: {list(df.columns)[:10]}..."
+            )
+
         return df.copy()
 
     def get_observations_per_month(self) -> pd.DataFrame:
