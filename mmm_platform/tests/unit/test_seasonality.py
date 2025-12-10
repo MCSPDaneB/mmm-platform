@@ -80,10 +80,14 @@ def sample_contributions(sample_df_with_dates):
     tv_contrib = sample_df_with_dates["tv_spend"] * tv_effectiveness * 1.5 / 1000  # scaled
     search_contrib = sample_df_with_dates["search_spend"] * search_effectiveness * 2.0 / 1000
 
+    # Add small noise but ensure contributions stay positive
+    tv_noise = np.random.normal(0, 100, n_rows)  # Small noise relative to signal
+    search_noise = np.random.normal(0, 80, n_rows)
+
     return pd.DataFrame({
         "intercept": np.random.uniform(30000, 50000, n_rows),
-        "tv_spend": tv_contrib + np.random.normal(0, 500, n_rows),
-        "search_spend": search_contrib + np.random.normal(0, 300, n_rows),
+        "tv_spend": np.maximum(tv_contrib + tv_noise, 100),  # Ensure positive
+        "search_spend": np.maximum(search_contrib + search_noise, 50),  # Ensure positive
         "revenue": np.random.uniform(50000, 100000, n_rows),
     })
 
@@ -395,21 +399,22 @@ class TestEdgeCases:
         assert indices.loc["search_spend"].mean() == 1.0
 
     def test_short_data_uses_quarterly(self, mock_wrapper):
-        """With limited data, should recommend quarterly indices."""
+        """With limited data (sparse observations), should recommend quarterly indices."""
         np.random.seed(42)
-        n_weeks = 26  # 6 months of data
+        n_months = 6  # Only 6 monthly data points
 
-        dates = pd.date_range(start="2022-07-01", periods=n_weeks, freq="W")
+        # Monthly data over 6 months = ~1 obs per month, triggering quarterly mode
+        dates = pd.date_range(start="2022-07-01", periods=n_months, freq="MS")
 
         df = pd.DataFrame({
             "date": dates,
-            "tv_spend": np.random.uniform(5000, 15000, n_weeks),
-            "search_spend": np.random.uniform(3000, 10000, n_weeks),
+            "tv_spend": np.random.uniform(5000, 15000, n_months),
+            "search_spend": np.random.uniform(3000, 10000, n_months),
         })
 
         contribs = pd.DataFrame({
-            "tv_spend": np.random.uniform(500, 1500, n_weeks),
-            "search_spend": np.random.uniform(300, 1000, n_weeks),
+            "tv_spend": np.random.uniform(500, 1500, n_months),
+            "search_spend": np.random.uniform(300, 1000, n_months),
         })
 
         mock_wrapper.df_scaled = df
@@ -418,7 +423,7 @@ class TestEdgeCases:
 
         calc = SeasonalIndexCalculator(mock_wrapper)
 
-        # Should use quarterly due to limited data
+        # Should use quarterly due to ~1 observation per month
         assert calc._should_use_quarterly() is True
 
 
