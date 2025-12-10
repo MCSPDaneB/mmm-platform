@@ -333,8 +333,8 @@ class MarginalROIAnalyzer:
             headroom_amount = 0.0
 
         # Get uncertainty from posterior
+        beta_posterior = self.idata.posterior["saturation_beta"]
         try:
-            beta_posterior = self.idata.posterior["saturation_beta"]
             beta_samples = beta_posterior.sel(channel=channel).values.flatten()
         except (KeyError, ValueError):
             idx = self.channel_cols.index(channel)
