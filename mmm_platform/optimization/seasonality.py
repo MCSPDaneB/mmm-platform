@@ -148,8 +148,9 @@ class SeasonalIndexCalculator:
                     continue
 
                 # Get contribution and spend for this month
-                month_contrib = contribs_with_date.loc[month_mask, ch].sum()
-                month_spend = df.loc[month_mask, ch].sum() * self.spend_scale
+                # Use .values to avoid pandas index alignment issues
+                month_contrib = contribs_with_date.loc[month_mask.values, ch].sum()
+                month_spend = df.loc[month_mask.values, ch].sum() * self.spend_scale
 
                 if n_obs >= min_observations and month_spend > 0:
                     # Effectiveness = contribution / spend (scaled to real units)
@@ -241,8 +242,9 @@ class SeasonalIndexCalculator:
                     continue
 
                 # Get contribution and spend for this quarter
-                quarter_contrib = contribs_with_date.loc[quarter_mask, ch].sum()
-                quarter_spend = df.loc[quarter_mask, ch].sum() * self.spend_scale
+                # Use .values to avoid pandas index alignment issues
+                quarter_contrib = contribs_with_date.loc[quarter_mask.values, ch].sum()
+                quarter_spend = df.loc[quarter_mask.values, ch].sum() * self.spend_scale
 
                 if n_obs >= min_observations and quarter_spend > 0:
                     effectiveness = (quarter_contrib * self.revenue_scale) / quarter_spend
