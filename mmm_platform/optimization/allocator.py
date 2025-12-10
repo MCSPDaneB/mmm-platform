@@ -5,10 +5,9 @@ This module provides the BudgetAllocator class that wraps PyMC-Marketing's
 budget optimization capabilities with a user-friendly interface.
 """
 
-from typing import Any, Callable
+from typing import Any
 import numpy as np
 import pandas as pd
-import xarray as xr
 import logging
 
 from mmm_platform.optimization.bridge import OptimizationBridge, UTILITY_FUNCTIONS
@@ -141,55 +140,20 @@ class BudgetAllocator:
             constraint_list.extend(constraints)
 
         try:
-            # Call PyMC-Marketing's optimize_budget
-            optimal_allocation, scipy_result = self.mmm.optimize_budget(
-                budget=total_budget,
-                num_periods=self.num_periods,
-                budget_bounds=channel_bounds,
-                utility_function=self._utility_fn,
-                constraints=constraint_list if constraint_list else (),
-                default_constraints=True,
-                callback=False,
-                **kwargs,
+            # Use our custom optimizer directly (more reliable, supports all risk profiles)
+            allocation_dict, scipy_result = self._optimize_with_working_gradients(
+                total_budget, channel_bounds
             )
 
-            # Convert xarray to dict
-            allocation_dict = self._xarray_to_dict(optimal_allocation)
-
-            # Detect flat allocation (indicates PyMC-Marketing gradient bug)
-            used_fallback = False
-            if self._is_flat_allocation(allocation_dict):
-                logger.warning(
-                    f"PyMC-Marketing optimizer returned flat allocation after {scipy_result.nit} iteration(s) "
-                    "(likely zero/near-zero gradients). Using custom optimizer with working gradients."
-                )
-                allocation_dict, scipy_result = self._optimize_with_working_gradients(
-                    total_budget, channel_bounds
-                )
-                used_fallback = True
-
-            # Get response estimates and risk metrics
-            # If fallback was used, we have risk_metrics from the optimizer
-            risk_metrics = getattr(scipy_result, 'risk_metrics', None)
-
-            if risk_metrics and used_fallback:
-                # Use metrics from the risk-aware fallback optimizer
-                expected_response = risk_metrics.get('expected_response', 0.0)
-                ci_low = risk_metrics.get('response_ci_low', 0.0)
-                ci_high = risk_metrics.get('response_ci_high', 0.0)
-                response_var = risk_metrics.get('response_var')
-                response_cvar = risk_metrics.get('response_cvar')
-                response_sharpe = risk_metrics.get('response_sharpe')
-                response_std = risk_metrics.get('response_std')
-            else:
-                # Use bridge estimate (original behavior)
-                expected_response, ci_low, ci_high = self.bridge.estimate_response_at_allocation(
-                    allocation_dict, self.num_periods
-                )
-                response_var = None
-                response_cvar = None
-                response_sharpe = None
-                response_std = None
+            # Get response estimates and risk metrics from our optimizer
+            risk_metrics = scipy_result.risk_metrics
+            expected_response = risk_metrics.get('expected_response', 0.0)
+            ci_low = risk_metrics.get('response_ci_low', 0.0)
+            ci_high = risk_metrics.get('response_ci_high', 0.0)
+            response_var = risk_metrics.get('response_var')
+            response_cvar = risk_metrics.get('response_cvar')
+            response_sharpe = risk_metrics.get('response_sharpe')
+            response_std = risk_metrics.get('response_std')
 
             # Get current allocation for comparison
             current_allocation = None
@@ -218,7 +182,6 @@ class BudgetAllocator:
                 current_allocation=current_allocation,
                 current_response=current_response,
                 utility_function=self.utility_name,
-                used_fallback=used_fallback,
                 response_var=response_var,
                 response_cvar=response_cvar,
                 response_sharpe=response_sharpe,
@@ -378,35 +341,6 @@ class BudgetAllocator:
             results=results,
             efficiency_curve=efficiency_curve,
         )
-
-    def _xarray_to_dict(self, allocation: xr.DataArray) -> dict[str, float]:
-        """Convert xarray DataArray to dict."""
-        if "channel" in allocation.dims:
-            return {
-                str(ch): float(allocation.sel(channel=ch).values)
-                for ch in allocation.coords["channel"].values
-            }
-        else:
-            # Single dimension case
-            return {
-                str(idx): float(val)
-                for idx, val in zip(allocation.coords.values(), allocation.values.flat)
-            }
-
-    def _is_flat_allocation(self, allocation: dict[str, float]) -> bool:
-        """
-        Check if allocation is flat (all channels get same amount).
-
-        This indicates the optimizer failed due to zero gradients.
-        """
-        values = list(allocation.values())
-        if not values:
-            return True
-        mean_val = np.mean(values)
-        if mean_val == 0:
-            return True
-        # Flat if std is less than 1% of mean
-        return np.std(values) < 0.01 * mean_val
 
     def _optimize_with_working_gradients(
         self,

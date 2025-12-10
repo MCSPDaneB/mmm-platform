@@ -46,10 +46,7 @@ class OptimizationResult:
     # Utility function used
     utility_function: str = "mean"
 
-    # Fallback optimizer used (due to PyMC-Marketing gradient bug)
-    used_fallback: bool = False
-
-    # Risk metrics (populated when using risk-aware optimizer)
+    # Risk metrics (populated by optimizer)
     response_var: float | None = None  # Value at Risk (5th percentile)
     response_cvar: float | None = None  # Conditional VaR (expected shortfall)
     response_sharpe: float | None = None  # Sharpe ratio (mean/std)
