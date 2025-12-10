@@ -28,6 +28,7 @@ def mock_wrapper():
     config.data.date_column = "date"
     config.data.spend_scale = 1000.0
     config.data.revenue_scale = 1000.0
+    config.data.target_column = "revenue"
     config.channels = [
         Mock(name="tv_spend", get_display_name=Mock(return_value="TV")),
         Mock(name="search_spend", get_display_name=Mock(return_value="Search")),
@@ -453,3 +454,138 @@ class TestSummaryDict:
         assert "using_quarterly" in summary
         assert "n_channels" in summary
         assert "channels" in summary
+
+
+# =============================================================================
+# Demand Seasonality Tests
+# =============================================================================
+
+class TestDemandIndices:
+    """Tests for demand seasonality calculations."""
+
+    def test_compute_demand_indices_returns_dataframe(self, seasonal_calculator):
+        """compute_demand_indices returns a DataFrame."""
+        result = seasonal_calculator.compute_demand_indices()
+        assert isinstance(result, pd.DataFrame)
+
+    def test_demand_indices_has_12_months(self, seasonal_calculator):
+        """Demand indices DataFrame covers all 12 months."""
+        result = seasonal_calculator.compute_demand_indices()
+        assert len(result) == 12
+        assert list(result.index) == list(range(1, 13))
+
+    def test_demand_indices_has_demand_index_column(self, seasonal_calculator):
+        """DataFrame has 'demand_index' column."""
+        result = seasonal_calculator.compute_demand_indices()
+        assert "demand_index" in result.columns
+
+    def test_demand_indices_average_approximately_one(self, seasonal_calculator):
+        """Demand indices should average close to 1.0."""
+        result = seasonal_calculator.compute_demand_indices()
+        avg_index = result["demand_index"].mean()
+        # Allow some tolerance due to missing months potentially filled with 1.0
+        assert 0.9 < avg_index < 1.1
+
+    def test_demand_indices_all_positive(self, seasonal_calculator):
+        """All demand indices must be positive."""
+        result = seasonal_calculator.compute_demand_indices()
+        assert (result["demand_index"] > 0).all()
+
+    def test_get_demand_index_for_period_returns_float(self, seasonal_calculator):
+        """get_demand_index_for_period returns a float."""
+        result = seasonal_calculator.get_demand_index_for_period(
+            start_month=6,
+            num_months=3,
+        )
+        assert isinstance(result, float)
+
+    def test_get_demand_index_for_period_single_month(self, seasonal_calculator):
+        """Single month returns that month's index."""
+        full_indices = seasonal_calculator.compute_demand_indices()
+
+        for month in range(1, 13):
+            result = seasonal_calculator.get_demand_index_for_period(
+                start_month=month,
+                num_months=1,
+            )
+            expected = full_indices.loc[month, "demand_index"]
+            assert abs(result - expected) < 0.001
+
+    def test_get_demand_index_for_period_multi_month_average(self, seasonal_calculator):
+        """Multi-month periods return weighted average."""
+        full_indices = seasonal_calculator.compute_demand_indices()
+
+        # Q2: April-June (months 4, 5, 6)
+        result = seasonal_calculator.get_demand_index_for_period(
+            start_month=4,
+            num_months=3,
+        )
+
+        expected = (
+            full_indices.loc[4, "demand_index"] +
+            full_indices.loc[5, "demand_index"] +
+            full_indices.loc[6, "demand_index"]
+        ) / 3
+
+        assert abs(result - expected) < 0.001
+
+    def test_get_demand_index_for_period_wraps_around_year(self, seasonal_calculator):
+        """Periods that span year boundary calculate correctly."""
+        full_indices = seasonal_calculator.compute_demand_indices()
+
+        # Nov-Jan (months 11, 12, 1)
+        result = seasonal_calculator.get_demand_index_for_period(
+            start_month=11,
+            num_months=3,
+        )
+
+        expected = (
+            full_indices.loc[11, "demand_index"] +
+            full_indices.loc[12, "demand_index"] +
+            full_indices.loc[1, "demand_index"]
+        ) / 3
+
+        assert abs(result - expected) < 0.001
+
+
+class TestDemandIndicesEdgeCases:
+    """Edge case tests for demand indices."""
+
+    def test_missing_target_column_raises_error(self, mock_wrapper, sample_df_with_dates):
+        """Error when target column not in data."""
+        # Create wrapper with valid idata
+        mock_wrapper.idata = Mock()
+        mock_wrapper.df_original = sample_df_with_dates.drop(columns=["revenue"])
+        mock_wrapper.config.data.target_column = "revenue"
+
+        # Contributions mock
+        mock_wrapper.get_contributions.return_value = pd.DataFrame()
+
+        calc = SeasonalIndexCalculator(mock_wrapper)
+
+        with pytest.raises(ValueError, match="Target column 'revenue' not found"):
+            calc.compute_demand_indices()
+
+    def test_handles_sparse_monthly_data(self, mock_wrapper):
+        """Handles data that doesn't cover all months."""
+        # Create sparse data with only a few months
+        mock_wrapper.idata = Mock()
+        dates = pd.date_range(start="2023-01-01", periods=20, freq="W")
+
+        df = pd.DataFrame({
+            "date": dates,
+            "tv_spend": [10000] * 20,
+            "search_spend": [8000] * 20,
+            "revenue": [100000] * 20,
+        })
+
+        mock_wrapper.df_original = df
+        mock_wrapper.get_contributions.return_value = pd.DataFrame()
+
+        calc = SeasonalIndexCalculator(mock_wrapper)
+        result = calc.compute_demand_indices()
+
+        # Should have 12 rows (all months)
+        assert len(result) == 12
+        # Missing months should be filled with 1.0
+        assert all(result["demand_index"].notna())

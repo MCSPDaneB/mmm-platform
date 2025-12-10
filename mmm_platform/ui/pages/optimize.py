@@ -282,8 +282,8 @@ def show_optimize_budget_tab(wrapper):
         # Seasonal indices expander
         with st.expander("Seasonal Adjustments", expanded=False):
             st.caption(
-                "Channel effectiveness varies by time of year. These indices show how "
-                "effective each channel is relative to its average (1.0 = average)."
+                "Seasonality affects both overall demand and channel effectiveness. "
+                "These indices help the optimizer account for time-of-year variations."
             )
 
             try:
@@ -292,6 +292,14 @@ def show_optimize_budget_tab(wrapper):
                 # Get indices for selected period
                 # Convert weeks to approximate months
                 num_months = max(1, num_periods // 4)
+
+                # Get demand index for period
+                demand_index = seasonal_calc.get_demand_index_for_period(
+                    start_month=start_month,
+                    num_months=num_months,
+                )
+
+                # Get channel effectiveness indices for period
                 seasonal_indices = seasonal_calc.get_indices_for_period(
                     start_month=start_month,
                     num_months=num_months,
@@ -302,6 +310,31 @@ def show_optimize_budget_tab(wrapper):
                     start_month=start_month,
                     num_months=num_months,
                 )
+
+                # Show demand seasonality prominently
+                st.markdown("**Demand Seasonality**")
+                demand_pct = (demand_index - 1) * 100
+                if demand_index > 1.05:
+                    st.success(
+                        f"📈 Demand Index: **{demand_index:.2f}** — "
+                        f"{abs(demand_pct):.0f}% higher than average for this period"
+                    )
+                elif demand_index < 0.95:
+                    st.warning(
+                        f"📉 Demand Index: **{demand_index:.2f}** — "
+                        f"{abs(demand_pct):.0f}% lower than average for this period"
+                    )
+                else:
+                    st.info(
+                        f"➡️ Demand Index: **{demand_index:.2f}** — "
+                        "Average demand for this period"
+                    )
+
+                # Store demand index in session state
+                st.session_state.demand_index = demand_index
+
+                st.markdown("---")
+                st.markdown("**Channel Effectiveness**")
 
                 # Show confidence indicator
                 if confidence_info["confidence_level"] == "high":
@@ -390,8 +423,10 @@ def show_optimize_budget_tab(wrapper):
                     st.dataframe(full_table, width="stretch")
 
             except Exception as e:
+                import traceback
                 error_msg = f"{type(e).__name__}: {str(e)}" if str(e) else type(e).__name__
                 st.warning(f"Could not compute seasonal indices: {error_msg}")
+                st.code(traceback.format_exc())  # Show full traceback for debugging
                 st.session_state.seasonal_indices = None
 
         # Validation expander

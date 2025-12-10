@@ -534,3 +534,109 @@ class SeasonalIndexCalculator:
             "n_channels": len(self.channels),
             "channels": self.channels,
         }
+
+    def compute_demand_indices(self) -> pd.DataFrame:
+        """
+        Compute demand seasonality indices from the target KPI.
+
+        This captures how baseline demand varies by month, independent of
+        channel effectiveness. An index > 1.0 means higher demand than average.
+
+        Formula:
+            Demand_Index[month] = Avg_KPI[month] / Overall_Avg_KPI
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with month as index and 'demand_index' column.
+            Index > 1 = higher demand than average,
+            Index < 1 = lower demand than average.
+
+        Examples
+        --------
+        >>> calculator = SeasonalIndexCalculator(wrapper)
+        >>> demand = calculator.compute_demand_indices()
+        >>> print(demand.loc[12, 'demand_index'])  # December demand index
+        1.35  # 35% higher demand than average
+        """
+        df = self._get_data_with_dates()
+        target_col = self.wrapper.config.data.target_column
+
+        if target_col not in df.columns:
+            raise ValueError(
+                f"Target column '{target_col}' not found in data. "
+                f"Available columns: {list(df.columns)[:10]}..."
+            )
+
+        # Ensure date column is datetime
+        df[self.date_column] = pd.to_datetime(df[self.date_column])
+        df["_month"] = df[self.date_column].dt.month
+
+        # Calculate average KPI per month
+        monthly_avg = df.groupby("_month")[target_col].mean()
+
+        # Calculate overall average
+        overall_avg = df[target_col].mean()
+
+        if overall_avg == 0 or np.isnan(overall_avg):
+            logger.warning("Overall average KPI is zero or NaN, returning index of 1.0 for all months")
+            demand_indices = pd.Series([1.0] * 12, index=range(1, 13))
+        else:
+            # Compute indices (normalized so average = 1.0)
+            demand_indices = monthly_avg / overall_avg
+
+        # Ensure all 12 months are present (fill missing with 1.0)
+        full_index = pd.Series(index=range(1, 13), dtype=float)
+        for month in range(1, 13):
+            if month in demand_indices.index:
+                full_index[month] = demand_indices[month]
+            else:
+                full_index[month] = 1.0
+
+        result = full_index.to_frame(name="demand_index")
+        result.index.name = "month"
+
+        logger.info(
+            f"Computed demand indices from {len(df)} observations. "
+            f"Range: {result['demand_index'].min():.2f} - {result['demand_index'].max():.2f}"
+        )
+
+        return result
+
+    def get_demand_index_for_period(
+        self,
+        start_month: int,
+        num_months: int = 1,
+    ) -> float:
+        """
+        Get average demand index for a specific period.
+
+        Parameters
+        ----------
+        start_month : int
+            Starting month (1-12).
+        num_months : int
+            Number of months in the optimization period.
+
+        Returns
+        -------
+        float
+            Average demand index for the period.
+            > 1.0 = higher demand than average,
+            < 1.0 = lower demand than average.
+
+        Examples
+        --------
+        >>> calculator = SeasonalIndexCalculator(wrapper)
+        >>> # Get demand index for Q4 (Oct-Dec)
+        >>> q4_demand = calculator.get_demand_index_for_period(10, 3)
+        >>> print(f"Q4 demand is {q4_demand:.0%} of average")
+        Q4 demand is 125% of average
+        """
+        demand_df = self.compute_demand_indices()
+
+        # Calculate which months are covered (handles year wrap-around)
+        months = [(start_month + i - 1) % 12 + 1 for i in range(num_months)]
+        period_indices = [demand_df.loc[m, "demand_index"] for m in months]
+
+        return float(np.mean(period_indices))
