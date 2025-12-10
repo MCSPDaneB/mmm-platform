@@ -3,6 +3,7 @@
 from .diagnostics import ModelDiagnostics
 from .contributions import ContributionAnalyzer
 from .reporting import ReportGenerator
+from .backtest import BacktestValidator
 from .bayesian_significance import (
     BayesianSignificanceAnalyzer,
     BayesianSignificanceReport,
@@ -66,6 +67,7 @@ __all__ = [
     "ModelDiagnostics",
     "ContributionAnalyzer",
     "ReportGenerator",
+    "BacktestValidator",
     "BayesianSignificanceAnalyzer",
     "MarginalROIAnalyzer",
     "ExecutiveSummaryGenerator",

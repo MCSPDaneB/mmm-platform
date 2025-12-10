@@ -216,25 +216,257 @@ class OptimizationBridge:
 
         return bounds
 
-    def get_current_allocation(self, num_periods: int) -> dict[str, float]:
+    def get_current_allocation(
+        self,
+        num_periods: int,
+        comparison_mode: str = "average",
+        n_weeks: int | None = None,
+    ) -> dict[str, float]:
         """
         Get the implied current allocation for comparison.
-
-        Calculates what the average spend per period would be,
-        extrapolated to the optimization horizon.
 
         Parameters
         ----------
         num_periods : int
             Number of periods in the optimization horizon.
+        comparison_mode : str
+            How to calculate baseline:
+            - "average": Average spend per period × num_periods (default)
+            - "last_n_weeks": Actual spend from last N weeks, extrapolated to num_periods
+            - "most_recent_period": Actual spend from most recent num_periods weeks
+        n_weeks : int, optional
+            Number of weeks for "last_n_weeks" mode.
 
         Returns
         -------
         dict[str, float]
             {channel_name: projected_spend} in original units.
         """
-        avg_spend = self.get_average_period_spend()
-        return {ch: spend * num_periods for ch, spend in avg_spend.items()}
+        if comparison_mode == "average":
+            avg_spend = self.get_average_period_spend()
+            return {ch: spend * num_periods for ch, spend in avg_spend.items()}
+
+        elif comparison_mode == "last_n_weeks":
+            if n_weeks is None:
+                raise ValueError("n_weeks required for 'last_n_weeks' comparison mode")
+            spend, _, _ = self.get_last_n_weeks_spend(n_weeks, num_periods=num_periods)
+            return spend
+
+        elif comparison_mode == "most_recent_period":
+            spend, _, _, _ = self.get_most_recent_matching_period_spend(num_periods)
+            return spend
+
+        else:
+            raise ValueError(f"Unknown comparison_mode: {comparison_mode}")
+
+    def get_available_date_range(self) -> tuple[pd.Timestamp, pd.Timestamp, int]:
+        """
+        Get the available date range in the historical data.
+
+        Returns
+        -------
+        tuple[pd.Timestamp, pd.Timestamp, int]
+            (min_date, max_date, num_periods) from the data.
+        """
+        # Prefer df_original (full unfiltered data), fallback to df_scaled
+        df = getattr(self.wrapper, 'df_original', None)
+        if df is None:
+            df = self.wrapper.df_scaled
+
+        date_col = self.config.data.date_column
+        min_date = pd.to_datetime(df[date_col].min())
+        max_date = pd.to_datetime(df[date_col].max())
+        num_periods = len(df)
+
+        return min_date, max_date, num_periods
+
+    def get_spend_for_date_range(
+        self,
+        start_date: pd.Timestamp | str | None = None,
+        end_date: pd.Timestamp | str | None = None,
+        num_periods: int | None = None,
+    ) -> dict[str, float]:
+        """
+        Get actual spend per channel for a specific date range.
+
+        Parameters
+        ----------
+        start_date : pd.Timestamp or str, optional
+            Start date (inclusive). If None, uses earliest date.
+        end_date : pd.Timestamp or str, optional
+            End date (inclusive). If None, uses latest date.
+        num_periods : int, optional
+            If provided and differs from actual periods in range,
+            extrapolates the spend proportionally.
+
+        Returns
+        -------
+        dict[str, float]
+            {channel_name: total_spend} in original units for the date range.
+        """
+        # Prefer df_original (unfiltered, original units), fallback to df_scaled
+        df = getattr(self.wrapper, 'df_original', None)
+        use_original = df is not None
+        if df is None:
+            df = self.wrapper.df_scaled
+
+        date_col = self.config.data.date_column
+        spend_scale = self.config.data.spend_scale
+
+        # Convert dates if strings
+        if start_date is not None:
+            start_date = pd.to_datetime(start_date)
+        if end_date is not None:
+            end_date = pd.to_datetime(end_date)
+
+        # Filter by date range
+        mask = pd.Series([True] * len(df), index=df.index)
+        if start_date is not None:
+            mask &= pd.to_datetime(df[date_col]) >= start_date
+        if end_date is not None:
+            mask &= pd.to_datetime(df[date_col]) <= end_date
+
+        df_filtered = df[mask]
+
+        if len(df_filtered) == 0:
+            logger.warning(f"No data found for date range {start_date} to {end_date}")
+            return {ch: 0.0 for ch in self.channel_columns}
+
+        # Sum spend per channel
+        spend = {}
+        for ch in self.channel_columns:
+            if ch in df_filtered.columns:
+                raw_sum = float(df_filtered[ch].sum())
+                # If using df_original, values are already in original units
+                # If using df_scaled, multiply by spend_scale
+                if use_original:
+                    spend[ch] = raw_sum
+                else:
+                    spend[ch] = raw_sum * spend_scale
+            else:
+                spend[ch] = 0.0
+
+        # Extrapolate if num_periods specified and different from actual
+        if num_periods is not None:
+            actual_periods = len(df_filtered)
+            if actual_periods > 0 and actual_periods != num_periods:
+                scale_factor = num_periods / actual_periods
+                spend = {ch: val * scale_factor for ch, val in spend.items()}
+                logger.info(
+                    f"Extrapolated spend from {actual_periods} to {num_periods} periods "
+                    f"(scale factor: {scale_factor:.2f})"
+                )
+
+        return spend
+
+    def get_last_n_weeks_spend(
+        self,
+        n_weeks: int,
+        num_periods: int | None = None,
+    ) -> tuple[dict[str, float], pd.Timestamp, pd.Timestamp]:
+        """
+        Get actual spend from the last N weeks of historical data.
+
+        Parameters
+        ----------
+        n_weeks : int
+            Number of weeks to look back from the most recent date.
+        num_periods : int, optional
+            If provided, extrapolates total to match optimization horizon.
+
+        Returns
+        -------
+        tuple[dict[str, float], pd.Timestamp, pd.Timestamp]
+            (spend_dict, start_date, end_date) - spend per channel and
+            the actual date range used.
+        """
+        df = getattr(self.wrapper, 'df_original', None)
+        if df is None:
+            df = self.wrapper.df_scaled
+
+        date_col = self.config.data.date_column
+
+        # Get date range
+        max_date = pd.to_datetime(df[date_col].max())
+        min_date = pd.to_datetime(df[date_col].min())
+
+        # Calculate start date
+        start_date = max_date - pd.Timedelta(weeks=n_weeks)
+
+        # Warn if requested range exceeds available data
+        available_weeks = (max_date - min_date).days // 7 + 1
+        if n_weeks > available_weeks:
+            logger.warning(
+                f"Requested {n_weeks} weeks but only {available_weeks} weeks available. "
+                f"Using all available data."
+            )
+            start_date = min_date
+
+        # Get spend for this range
+        spend = self.get_spend_for_date_range(
+            start_date=start_date,
+            end_date=max_date,
+            num_periods=num_periods,
+        )
+
+        return spend, start_date, max_date
+
+    def get_most_recent_matching_period_spend(
+        self,
+        num_periods: int,
+    ) -> tuple[dict[str, float], pd.Timestamp, pd.Timestamp, int]:
+        """
+        Get actual spend from the most recent period matching the optimization horizon.
+
+        Takes the last `num_periods` rows of data and returns actual spend,
+        without extrapolation.
+
+        Parameters
+        ----------
+        num_periods : int
+            Number of periods (weeks) matching the optimization horizon.
+
+        Returns
+        -------
+        tuple[dict[str, float], pd.Timestamp, pd.Timestamp, int]
+            (spend_dict, start_date, end_date, actual_periods) - spend per channel,
+            the actual date range used, and number of periods found.
+        """
+        df = getattr(self.wrapper, 'df_original', None)
+        use_original = df is not None
+        if df is None:
+            df = self.wrapper.df_scaled
+
+        date_col = self.config.data.date_column
+        spend_scale = self.config.data.spend_scale
+
+        # Get the most recent N rows
+        df_sorted = df.sort_values(date_col, ascending=False)
+        df_recent = df_sorted.head(num_periods)
+
+        actual_periods = len(df_recent)
+        start_date = pd.to_datetime(df_recent[date_col].min())
+        end_date = pd.to_datetime(df_recent[date_col].max())
+
+        # Sum spend (no extrapolation - actual values only)
+        spend = {}
+        for ch in self.channel_columns:
+            if ch in df_recent.columns:
+                raw_sum = float(df_recent[ch].sum())
+                if use_original:
+                    spend[ch] = raw_sum
+                else:
+                    spend[ch] = raw_sum * spend_scale
+            else:
+                spend[ch] = 0.0
+
+        if actual_periods < num_periods:
+            logger.warning(
+                f"Requested {num_periods} periods but only {actual_periods} available. "
+                f"Returning actual spend without extrapolation."
+            )
+
+        return spend, start_date, end_date, actual_periods
 
     def get_utility_function(self, utility_name: str, **kwargs):
         """

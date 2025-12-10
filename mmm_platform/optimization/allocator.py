@@ -88,6 +88,8 @@ class BudgetAllocator:
         channel_bounds: dict[str, tuple[float, float]] | None = None,
         constraints: list | None = None,
         compare_to_current: bool = False,
+        comparison_mode: str = "average",
+        comparison_n_weeks: int | None = None,
         **kwargs,
     ) -> OptimizationResult:
         """
@@ -104,6 +106,13 @@ class BudgetAllocator:
             Custom constraints (PyMC-Marketing Constraint objects).
         compare_to_current : bool
             If True, include comparison to current/historical allocation.
+        comparison_mode : str
+            How to calculate baseline for comparison:
+            - "average": Average spend per period × num_periods (default)
+            - "last_n_weeks": Actual spend from last N weeks
+            - "most_recent_period": Actual spend from most recent matching period
+        comparison_n_weeks : int, optional
+            Number of weeks for "last_n_weeks" mode.
         **kwargs
             Additional arguments passed to optimize_budget().
 
@@ -149,10 +158,10 @@ class BudgetAllocator:
 
             # Detect flat allocation (indicates PyMC-Marketing gradient bug)
             used_fallback = False
-            if scipy_result.nit == 1 and self._is_flat_allocation(allocation_dict):
+            if self._is_flat_allocation(allocation_dict):
                 logger.warning(
-                    "PyMC-Marketing optimizer returned flat allocation in 1 iteration "
-                    "(likely zero gradients). Using custom optimizer with working gradients."
+                    f"PyMC-Marketing optimizer returned flat allocation after {scipy_result.nit} iteration(s) "
+                    "(likely zero/near-zero gradients). Using custom optimizer with working gradients."
                 )
                 allocation_dict, scipy_result = self._optimize_with_working_gradients(
                     total_budget, channel_bounds
@@ -169,7 +178,11 @@ class BudgetAllocator:
             current_allocation = None
             current_response = None
             if compare_to_current:
-                current_allocation = self.bridge.get_current_allocation(self.num_periods)
+                current_allocation = self.bridge.get_current_allocation(
+                    num_periods=self.num_periods,
+                    comparison_mode=comparison_mode,
+                    n_weeks=comparison_n_weeks,
+                )
                 current_response, _, _ = self.bridge.estimate_response_at_allocation(
                     current_allocation, self.num_periods
                 )
@@ -380,10 +393,10 @@ class BudgetAllocator:
         channel_bounds: dict[str, tuple[float, float]],
     ) -> tuple[dict[str, float], Any]:
         """
-        Custom optimization using manual gradient computation.
+        Custom optimization using the same calculation as MarginalROIAnalyzer.
 
-        Bypasses PyMC-Marketing BudgetOptimizer's broken gradient flow
-        for models loaded via load_from_idata().
+        Uses beta * target_scale * saturation formula which is proven to work
+        correctly in the Marginal Investment analysis page.
 
         Parameters
         ----------
@@ -397,102 +410,96 @@ class BudgetAllocator:
         tuple[dict, Any]
             (allocation_dict, scipy_result)
         """
-        import pytensor.tensor as pt
-        from pymc import do
-        from pymc.model.transform.optimization import freeze_dims_and_data
-        from pymc_marketing.pytensor_utils import extract_response_distribution
-        from pymc_marketing.mmm.utility import average_response
-        from pymc.pytensorf import rewrite_pregrad
-        from pytensor import function
         from scipy.optimize import minimize
+        import time
 
         mmm = self.bridge.mmm
         channels = list(mmm.channel_columns)
         n_channels = len(channels)
-        channel_scales = mmm._channel_scales
         num_periods = self.num_periods
 
-        # Get the model's actual date dimension (includes l_max for carryover)
-        # This is critical - the budget tensor must match the model's channel_data shape
-        model_date_dim = len(mmm.model.coords['date']) + mmm.adstock.l_max
+        # Get posterior means for saturation parameters
+        posterior = mmm.idata.posterior
+        lam_values = posterior['saturation_lam'].mean(dim=['chain', 'draw']).values
+        beta_values = posterior['saturation_beta'].mean(dim=['chain', 'draw']).values
 
-        logger.info(
-            f"Building custom gradient-based optimizer for {n_channels} channels, "
-            f"model_date_dim={model_date_dim}, num_periods={num_periods}"
-        )
+        # Get scales - SAME AS MARGINAL ROI PAGE (marginal_roi.py line 309)
+        df_scaled = self.bridge.wrapper.df_scaled
+        spend_scale = self.bridge.config.data.spend_scale
+        target_col = self.bridge.config.data.target_column
+        target_scale = float(df_scaled[target_col].max())
 
-        # Build bounds for per-period budget
-        # The optimizer works with per-period values, bounds are total / num_periods
+        # Get x_max for each channel (in scaled units, same as marginal_roi.py line 303)
+        x_maxes = np.array([float(df_scaled[ch].max()) for ch in channels])
+        # Avoid division by zero
+        x_maxes = np.maximum(x_maxes, 1e-9)
+
+        logger.info(f"Running optimizer with target_scale={target_scale:.0f}")
+        logger.info(f"Beta values: min={beta_values.min():.4f}, max={beta_values.max():.4f}")
+
+        # Build bounds (convert from real $ to scaled units, per-period)
         bounds_list = []
         for ch in channels:
             ch_bounds = channel_bounds.get(ch, (0, total_budget))
-            # Convert total bounds to per-period bounds
-            bounds_list.append((ch_bounds[0] / num_periods, ch_bounds[1] / num_periods))
+            bounds_list.append((
+                ch_bounds[0] / spend_scale / num_periods,
+                ch_bounds[1] / spend_scale / num_periods
+            ))
 
-        # Create budget tensor variable (per-period allocation per channel)
-        budgets_flat = pt.vector('budgets_flat')
+        def objective(x):
+            """
+            Compute negative total response.
+            x is per-period spend in SCALED units (same as df_scaled).
+            Response = sum(beta * target_scale * saturation(x / x_max))
+            """
+            x_normalized = x / x_maxes
+            exp_term = np.exp(-lam_values * x_normalized)
+            saturation = (1 - exp_term) / (1 + exp_term)
+            response = np.sum(beta_values * target_scale * saturation) * num_periods
+            return -response
 
-        # Scale by channel_scales (same as BudgetOptimizer does)
-        scaled_budgets = budgets_flat / pt.constant(channel_scales)
+        def gradient(x):
+            """
+            Analytical gradient (same formula as marginal_roi.py line 77-79).
+            d(response)/d(x) = beta * target_scale * sat_deriv / x_max
+            """
+            x_normalized = x / x_maxes
+            exp_term = np.exp(-lam_values * x_normalized)
+            sat_deriv = 2 * lam_values * exp_term / (1 + exp_term)**2
+            grad = -beta_values * target_scale * sat_deriv / x_maxes * num_periods
+            return grad
 
-        # Broadcast to (model_date_dim, n_channels) shape
-        # CRITICAL: Must use model's date dimension, not num_periods, for gradients to flow
-        budget_tensor = pt.broadcast_to(
-            pt.expand_dims(scaled_budgets, 0),
-            shape=(model_date_dim, n_channels)
-        )
+        # Budget constraint (in scaled units)
+        budget_per_period_scaled = total_budget / spend_scale / num_periods
+        constraints = {'type': 'eq', 'fun': lambda x: x.sum() - budget_per_period_scaled}
 
-        # Freeze model and substitute channel_data
-        frozen_model = freeze_dims_and_data(mmm.model, data=[])
-        new_model = do(frozen_model, {'channel_data': budget_tensor})
+        # Initial guess: uniform allocation (in scaled units)
+        x0 = np.ones(n_channels) * budget_per_period_scaled / n_channels
 
-        # Extract response distribution with posterior samples
-        response_dist = extract_response_distribution(
-            pymc_model=new_model,
-            idata=mmm.idata,
-            response_variable='total_contribution',
-        )
+        # Progress tracking
+        start_time = time.time()
 
-        # Objective: negative mean response (we're minimizing)
-        objective = -average_response(samples=response_dist, budgets=budgets_flat)
-
-        # Compute gradient
-        gradient = pt.grad(rewrite_pregrad(objective), budgets_flat)
-
-        # Compile the function
-        logger.info("Compiling custom optimization function...")
-        f = function([budgets_flat], [objective, gradient])
-
-        # Wrapper for scipy
-        def objective_and_grad(x):
-            obj, grad = f(x.astype('float64'))
-            return float(obj), grad.astype('float64')
-
-        # Budget constraint: sum of per-period allocations = total_budget / num_periods
-        budget_per_period = total_budget / num_periods
-        constraints = {'type': 'eq', 'fun': lambda x: x.sum() - budget_per_period}
-
-        # Initial guess: uniform allocation
-        x0 = np.ones(n_channels) * budget_per_period / n_channels
-
-        # Run SLSQP optimizer with our correct gradients
-        logger.info("Running custom SLSQP optimization...")
+        # Run SLSQP optimizer
         result = minimize(
-            lambda x: objective_and_grad(x)[0],
+            objective,
             x0,
             method='SLSQP',
-            jac=lambda x: objective_and_grad(x)[1],
+            jac=gradient,
             bounds=bounds_list,
             constraints=constraints,
-            options={'maxiter': 100, 'ftol': 1e-6},
+            options={'maxiter': 200, 'ftol': 1e-6},
         )
 
-        # Scale back to total budget (multiply per-period by num_periods)
-        allocation = {ch: float(val * num_periods) for ch, val in zip(channels, result.x)}
+        # Scale back to real dollars
+        allocation = {
+            ch: float(val * spend_scale * num_periods)
+            for ch, val in zip(channels, result.x)
+        }
 
+        elapsed = time.time() - start_time
         logger.info(
-            f"Custom optimization complete: {result.nit} iterations, "
-            f"success={result.success}, message={result.message}"
+            f"Optimization complete: {result.nit} iterations in {elapsed:.1f}s, "
+            f"success={result.success}"
         )
 
         return allocation, result

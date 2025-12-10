@@ -120,6 +120,53 @@ def show_optimize_budget_tab(wrapper):
             value=False,
         )
 
+        # Comparison mode options (only show when compare_to_current is True)
+        comparison_mode = "average"
+        comparison_n_weeks = None
+
+        if compare_to_current:
+            # Get available date range for context
+            try:
+                min_date, max_date, total_periods = allocator.bridge.get_available_date_range()
+                st.caption(
+                    f"Data: {min_date.strftime('%Y-%m-%d')} to {max_date.strftime('%Y-%m-%d')} "
+                    f"({total_periods} periods)"
+                )
+            except Exception:
+                total_periods = 52
+
+            comparison_options = {
+                "Average (all data)": "average",
+                "Last N weeks actual": "last_n_weeks",
+                f"Most recent {num_periods} weeks": "most_recent_period",
+            }
+
+            comparison_label = st.selectbox(
+                "Comparison baseline",
+                options=list(comparison_options.keys()),
+                help=(
+                    "How to calculate the 'historical' spend for comparison:\n\n"
+                    "- **Average (all data)**: Average weekly spend across all historical data, "
+                    "multiplied by the forecast periods.\n\n"
+                    "- **Last N weeks actual**: Actual spend from the last N weeks of data, "
+                    "extrapolated to match the forecast horizon.\n\n"
+                    "- **Most recent N weeks**: Actual spend from the most recent weeks "
+                    "matching your optimization period (no extrapolation)."
+                ),
+            )
+            comparison_mode = comparison_options[comparison_label]
+
+            # Show N weeks input if "Last N weeks" is selected
+            if comparison_mode == "last_n_weeks":
+                comparison_n_weeks = st.number_input(
+                    "Number of weeks to use",
+                    min_value=1,
+                    max_value=total_periods,
+                    value=min(52, total_periods),
+                    step=1,
+                    help=f"Look back this many weeks from the most recent date. Max available: {total_periods} weeks.",
+                )
+
         # Channel bounds expander
         with st.expander("Channel Bounds", expanded=False):
             st.caption("Set min/max spend per channel (optional)")
@@ -152,6 +199,99 @@ def show_optimize_budget_tab(wrapper):
                         )
                     bounds_config[ch] = (float(min_val), float(max_val))
 
+        # Validation expander
+        with st.expander("Validate Optimizer Accuracy", expanded=False):
+            st.caption("Compare model predictions vs actual results for historical data")
+
+            validation_periods = st.slider(
+                "Periods to validate",
+                min_value=4,
+                max_value=min(52, len(wrapper.df_scaled) if wrapper.df_scaled is not None else 52),
+                value=min(26, len(wrapper.df_scaled) if wrapper.df_scaled is not None else 26),
+                key="validation_periods",
+            )
+
+            if st.button("Run Validation", key="run_validation"):
+                with st.spinner("Running backtest validation..."):
+                    try:
+                        from mmm_platform.analysis.backtest import BacktestValidator
+
+                        validator = BacktestValidator(wrapper)
+                        backtest_df = validator.run_backtest(validation_periods)
+                        metrics = validator.get_metrics(backtest_df)
+
+                        # Store in session state for display
+                        st.session_state.backtest_metrics = metrics
+                        st.session_state.backtest_df = backtest_df
+
+                    except Exception as e:
+                        st.error(f"Validation failed: {e}")
+                        logger.exception("Backtest validation error")
+
+            # Display validation results if available
+            if "backtest_metrics" in st.session_state:
+                metrics = st.session_state.backtest_metrics
+                backtest_df = st.session_state.backtest_df
+
+                # Metrics row
+                m1, m2, m3 = st.columns(3)
+                m1.metric("R²", f"{metrics['r2']:.3f}")
+                m2.metric("MAPE", f"{metrics['mape']:.1f}%")
+                m3.metric("Correlation", f"{metrics['correlation']:.3f}")
+
+                # Interpretation
+                if metrics['r2'] > 0.7 and metrics['mape'] < 15:
+                    st.success("Excellent fit - optimizer predictions are reliable")
+                elif metrics['r2'] > 0.5 and metrics['mape'] < 25:
+                    st.info("Good fit - optimizer predictions are reasonably accurate")
+                elif metrics['r2'] > 0.3:
+                    st.warning("Moderate fit - use optimizer results with caution")
+                else:
+                    st.error("Poor fit - optimizer predictions may not be reliable")
+
+                # Time series chart
+                fig_ts = go.Figure()
+                fig_ts.add_trace(go.Scatter(
+                    x=backtest_df['date'],
+                    y=backtest_df['actual'],
+                    mode='lines+markers',
+                    name='Actual',
+                    line=dict(color='blue'),
+                ))
+                fig_ts.add_trace(go.Scatter(
+                    x=backtest_df['date'],
+                    y=backtest_df['predicted'],
+                    mode='lines+markers',
+                    name='Predicted',
+                    line=dict(color='orange'),
+                ))
+                fig_ts.update_layout(
+                    title="Actual vs Predicted Response Over Time",
+                    xaxis_title="Date",
+                    yaxis_title="Response",
+                    height=300,
+                )
+                st.plotly_chart(fig_ts, use_container_width=True)
+
+                # Scatter plot
+                fig_scatter = px.scatter(
+                    backtest_df,
+                    x='actual',
+                    y='predicted',
+                    title="Predicted vs Actual (ideal = diagonal line)",
+                )
+                # Add perfect fit line
+                max_val = max(backtest_df['actual'].max(), backtest_df['predicted'].max())
+                fig_scatter.add_trace(go.Scatter(
+                    x=[0, max_val],
+                    y=[0, max_val],
+                    mode='lines',
+                    name='Perfect fit',
+                    line=dict(dash='dash', color='gray'),
+                ))
+                fig_scatter.update_layout(height=300)
+                st.plotly_chart(fig_scatter, use_container_width=True)
+
         # Run button
         optimize_clicked = st.button(
             "Optimize Budget",
@@ -179,6 +319,8 @@ def show_optimize_budget_tab(wrapper):
                         total_budget=total_budget,
                         channel_bounds=channel_bounds,
                         compare_to_current=compare_to_current,
+                        comparison_mode=comparison_mode,
+                        comparison_n_weeks=comparison_n_weeks,
                     )
 
                     # Store result in session state
@@ -256,6 +398,76 @@ def show_optimize_budget_tab(wrapper):
             fig.update_traces(textposition="outside")
             fig.update_layout(xaxis_tickangle=-45)
             st.plotly_chart(fig)
+
+            # Percentage distribution comparison chart (when comparing to historical)
+            if "current" in df.columns and result.current_allocation:
+                # Calculate percentage of total for both allocations
+                current_total = sum(result.current_allocation.values())
+                optimal_total = result.total_budget
+
+                comparison_data = []
+                for ch in df["channel"]:
+                    current_val = result.current_allocation.get(ch, 0)
+                    optimal_val = result.optimal_allocation.get(ch, 0)
+                    current_pct = (current_val / current_total * 100) if current_total > 0 else 0
+                    optimal_pct = (optimal_val / optimal_total * 100) if optimal_total > 0 else 0
+                    comparison_data.append({
+                        "channel": ch,
+                        "Historical %": current_pct,
+                        "Optimal %": optimal_pct,
+                        "Difference": optimal_pct - current_pct,
+                    })
+
+                comparison_df = pd.DataFrame(comparison_data)
+                # Sort by absolute difference to highlight biggest changes
+                comparison_df = comparison_df.sort_values("Difference", key=abs, ascending=False)
+
+                # Create grouped bar chart for percentage comparison
+                fig_pct = go.Figure()
+                fig_pct.add_trace(go.Bar(
+                    name="Historical %",
+                    x=comparison_df["channel"],
+                    y=comparison_df["Historical %"],
+                    marker_color="rgba(100, 100, 100, 0.6)",
+                    text=comparison_df["Historical %"].apply(lambda x: f"{x:.1f}%"),
+                    textposition="outside",
+                ))
+                fig_pct.add_trace(go.Bar(
+                    name="Optimal %",
+                    x=comparison_df["channel"],
+                    y=comparison_df["Optimal %"],
+                    marker_color="rgba(99, 110, 250, 0.8)",
+                    text=comparison_df["Optimal %"].apply(lambda x: f"{x:.1f}%"),
+                    textposition="outside",
+                ))
+                fig_pct.update_layout(
+                    title="Budget Distribution: Historical vs Optimal",
+                    xaxis_title="Channel",
+                    yaxis_title="% of Total Budget",
+                    barmode="group",
+                    xaxis_tickangle=-45,
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                )
+                st.plotly_chart(fig_pct)
+
+                # Difference chart (what changed)
+                fig_diff = px.bar(
+                    comparison_df,
+                    x="channel",
+                    y="Difference",
+                    title="Allocation Shift: Optimal vs Historical (% points)",
+                    labels={"channel": "Channel", "Difference": "Change (% points)"},
+                    text=comparison_df["Difference"].apply(lambda x: f"{x:+.1f}%"),
+                    color="Difference",
+                    color_continuous_scale=["#ef553b", "#f0f0f0", "#00cc96"],
+                    color_continuous_midpoint=0,
+                )
+                fig_diff.update_traces(textposition="outside")
+                fig_diff.update_layout(
+                    xaxis_tickangle=-45,
+                    coloraxis_showscale=False,
+                )
+                st.plotly_chart(fig_diff)
 
             # Allocation table
             display_df = df.copy()
