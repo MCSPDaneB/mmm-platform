@@ -935,20 +935,68 @@ def show():
         """)
 
         try:
-            # Get priority table
-            priority_df = marginal_analyzer.get_priority_table()
+            # For count KPIs, let user set target CPA as breakeven threshold
+            target_efficiency = 1.0  # Default for revenue KPIs (ROI = $1)
+            target_cpa = None
+            kpi_name = kpi_labels.target_name or "Conversion"
 
-            # Key metrics
+            if not kpi_labels.is_revenue_type:
+                st.markdown(f"**Set your target {eff_label}** to define the breakeven threshold:")
+                target_cpa = st.number_input(
+                    f"Target {eff_label} (maximum acceptable cost per {kpi_name})",
+                    min_value=0.01,
+                    value=15.0,
+                    step=1.0,
+                    format="%.2f",
+                    help=f"Your target cost per {kpi_name}. Breakeven = spend level where marginal cost exceeds this target.",
+                    key="target_cpa_input"
+                )
+                # Convert CPA to internal efficiency (1/CPA)
+                target_efficiency = 1.0 / target_cpa
+                st.markdown("---")
+
+            # Get priority table with target efficiency
+            priority_df = marginal_analyzer.get_priority_table(target_efficiency=target_efficiency)
+
+            # Get summary data for portfolio overview
+            summary = exec_generator.get_summary_dict()
+
+            # Portfolio Overview
+            st.markdown("### Portfolio Overview")
             col1, col2, col3 = st.columns(3)
             with col1:
-                n_increase = len(priority_df[priority_df['action'] == 'INCREASE'])
-                st.metric("Channels to INCREASE", n_increase)
+                st.metric("Total Spend", f"${summary['portfolio']['total_spend']:,.0f}")
             with col2:
-                n_hold = len(priority_df[priority_df['action'] == 'HOLD'])
-                st.metric("Channels to HOLD", n_hold)
+                # Total contribution: dollars for revenue KPIs, units for count KPIs
+                total_contrib = summary['portfolio']['total_contribution']
+                if kpi_labels.is_revenue_type:
+                    st.metric("Total Contribution", f"${total_contrib:,.0f}")
+                else:
+                    st.metric(f"Total {kpi_labels.target_name}", f"{total_contrib:,.0f}")
             with col3:
-                n_reduce = len(priority_df[priority_df['action'] == 'REDUCE'])
-                st.metric("Channels to REDUCE", n_reduce)
+                # Portfolio efficiency: use KPILabels to format correctly
+                portfolio_eff = summary['portfolio']['portfolio_roi']
+                st.metric(f"Portfolio {eff_label}", kpi_labels.format_efficiency(portfolio_eff))
+
+            st.markdown("---")
+
+            # Investment Recommendations (styled with delta descriptions)
+            st.markdown("### Investment Recommendations")
+            reliable_df = priority_df[~priority_df['unreliable_marginal']]
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                n_increase = len(reliable_df[reliable_df['action'] == 'INCREASE'])
+                st.metric("INCREASE", n_increase, delta=f"High marginal {eff_label}")
+            with col2:
+                n_hold = len(reliable_df[reliable_df['action'] == 'HOLD'])
+                st.metric("HOLD", n_hold, delta="At/near target")
+            with col3:
+                n_reduce = len(reliable_df[reliable_df['action'] == 'REDUCE'])
+                st.metric("REDUCE", n_reduce, delta="Below breakeven")
+            with col4:
+                n_unreliable = priority_df['unreliable_marginal'].sum()
+                if n_unreliable > 0:
+                    st.metric("Unreliable", int(n_unreliable), delta="Check model", delta_color="off")
 
             st.markdown("---")
 
@@ -975,26 +1023,45 @@ def show():
             )
             display_df['headroom_amount'] = display_df['headroom_amount'].apply(lambda x: f"${x:,.0f}")
 
-            styled_df = display_df[['channel', 'current_spend', 'current_roi', 'marginal_roi',
+            # Add warning column for unreliable marginal values
+            display_df['warning'] = display_df['unreliable_marginal'].apply(lambda x: "⚠️" if x else "")
+
+            styled_df = display_df[['warning', 'channel', 'current_spend', 'current_roi', 'marginal_roi',
                                      'priority_rank', 'breakeven_spend', 'headroom_amount', 'action', 'needs_test']]
-            styled_df.columns = ['Channel', 'Current Spend', f'Current {eff_label}', f'Marginal {eff_label}',
+            styled_df.columns = ['', 'Channel', 'Current Spend', f'Current {eff_label}', f'Marginal {eff_label}',
                                  'Priority', 'Breakeven Spend', 'Headroom', 'Action', 'Needs Test']
 
             st.dataframe(styled_df, width="stretch", hide_index=True)
 
-            st.markdown(f"""
-            **Key Concepts:**
-            - **Marginal {eff_label}**: Return on the *next* dollar spent (from saturation curve derivative)
-            - **Breakeven Spend**: Spend level where marginal {eff_label} = $1.00
-            - **Headroom**: Additional spend available before hitting breakeven
-            - **Needs Test**: High uncertainty in {eff_label} estimate - validate with incrementality test
-            """)
+            # Show warning note if any channels are unreliable
+            if priority_df['unreliable_marginal'].any():
+                unreliable_channels = priority_df[priority_df['unreliable_marginal']]
+                reasons = unreliable_channels[['channel', 'unreliable_reason']].values.tolist()
+                reason_text = "; ".join([f"**{ch}**: {r}" for ch, r in reasons])
+                st.warning(f"⚠️ Some channels have extreme model saturation - marginal values may be unreliable. {reason_text}")
+
+            if kpi_labels.is_revenue_type:
+                st.markdown(f"""
+                **Key Concepts:**
+                - **Marginal {eff_label}**: Return on the *next* dollar spent (from saturation curve derivative)
+                - **Breakeven Spend**: Spend level where marginal {eff_label} = $1.00
+                - **Headroom**: Additional spend available before hitting breakeven
+                - **Needs Test**: High uncertainty in {eff_label} estimate - validate with incrementality test
+                """)
+            else:
+                st.markdown(f"""
+                **Key Concepts:**
+                - **Marginal {eff_label}**: Cost of the *next* {kpi_name} (from saturation curve derivative)
+                - **Breakeven Spend**: Spend level where marginal cost exceeds your target (${target_cpa:.2f})
+                - **Headroom**: Additional spend available within your target {eff_label}
+                - **Needs Test**: High uncertainty in {eff_label} estimate - validate with incrementality test
+                """)
 
             # Visualizations
             st.markdown("---")
             st.subheader(f"Current vs Marginal {eff_label}")
 
-            result = marginal_analyzer.run_full_analysis()
+            result = marginal_analyzer.run_full_analysis(target_efficiency=target_efficiency)
             channel_names = [ch.channel_name for ch in result.channel_analysis]
 
             # Convert ROI values for count KPIs (efficiency -> cost-per)
@@ -1002,16 +1069,24 @@ def show():
                 current_rois = [ch.current_roi for ch in result.channel_analysis]
                 marginal_rois = [ch.marginal_roi for ch in result.channel_analysis]
                 breakeven_val = 1
+                breakeven_label = "Breakeven ($1 ROI)"
             else:
-                current_rois = [
-                    kpi_labels.convert_internal_to_display(ch.current_roi) if ch.current_roi > 0 else 0
-                    for ch in result.channel_analysis
-                ]
-                marginal_rois = [
-                    kpi_labels.convert_internal_to_display(ch.marginal_roi) if ch.marginal_roi > 0 else 0
-                    for ch in result.channel_analysis
-                ]
-                breakeven_val = 1  # $1 cost per target is still breakeven
+                # For count KPIs, convert efficiency to cost-per
+                # Handle edge cases: very small efficiency = very high cost-per
+                # Cap at a reasonable max to avoid chart scale issues
+                max_display_cpa = target_cpa * 10  # Cap at 10x target for display
+
+                def safe_convert_to_cpa(efficiency_val: float) -> float:
+                    """Convert efficiency to CPA, with bounds for chart display."""
+                    if efficiency_val <= 0:
+                        return max_display_cpa  # Show as very expensive
+                    cpa = 1.0 / efficiency_val
+                    return min(cpa, max_display_cpa)  # Cap for chart readability
+
+                current_rois = [safe_convert_to_cpa(ch.current_roi) for ch in result.channel_analysis]
+                marginal_rois = [safe_convert_to_cpa(ch.marginal_roi) for ch in result.channel_analysis]
+                breakeven_val = target_cpa  # User's target CPA
+                breakeven_label = f"Target (${target_cpa:.2f})"
 
             fig = go.Figure()
             fig.add_trace(go.Bar(
@@ -1026,7 +1101,7 @@ def show():
                 y=marginal_rois,
                 marker_color='orange'
             ))
-            fig.add_hline(y=breakeven_val, line_dash="dash", line_color="red", annotation_text="Breakeven")
+            fig.add_hline(y=breakeven_val, line_dash="dash", line_color="red", annotation_text=breakeven_label)
             fig.update_layout(
                 barmode='group',
                 title=f"Current {eff_label} vs Marginal {eff_label} by Channel",
@@ -1034,83 +1109,55 @@ def show():
             )
             st.plotly_chart(fig, width="stretch")
 
-            # -----------------------------------------------------------------
-            # Executive Summary Section (merged from old tab)
-            # -----------------------------------------------------------------
-            st.markdown("---")
-            st.subheader("Executive Summary")
+            # Diagnostic expander to help identify extreme values
+            with st.expander("Diagnostic Parameters (for debugging extreme values)"):
+                st.markdown("""
+                This table shows the underlying model parameters that determine marginal efficiency.
+                Extreme marginal values are typically caused by:
+                - **Very small beta**: Low saturation coefficient means weak channel response
+                - **Very high lam**: Steep saturation curve means already saturated
+                - **Large x_max**: High max spend in training data affects scaling
+                """)
 
-            summary = exec_generator.get_summary_dict()
+                # Get diagnostic data from the analyzer
+                diag_data = []
+                for ch in result.channel_analysis:
+                    ch_col = [c for c in marginal_analyzer.channel_cols if marginal_analyzer._get_channel_display_name(c) == ch.channel_name]
+                    if ch_col:
+                        ch_col = ch_col[0]
+                        alpha, lam, beta = marginal_analyzer._get_channel_params(ch_col)
+                        x_max = float(marginal_analyzer.df_scaled[ch_col].max())
+                        total_spend = float(marginal_analyzer.df_scaled[ch_col].sum())
+                        weekly_avg = total_spend / len(marginal_analyzer.df_scaled)
+                        x_norm = weekly_avg / (x_max + 1e-9)
+                        target_scale = float(marginal_analyzer.df_scaled[marginal_analyzer.target_col].max())
 
-            # Portfolio Overview
-            st.markdown("### Portfolio Overview")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Total Spend", f"${summary['portfolio']['total_spend']:,.0f}")
-            with col2:
-                st.metric("Total Contribution", f"${summary['portfolio']['total_contribution']:,.0f}")
-            with col3:
-                st.metric(f"Portfolio {eff_label}", f"${summary['portfolio']['portfolio_roi']:.2f}")
+                        # Calculate saturation derivative
+                        exp_term = np.exp(-lam * x_norm)
+                        sat_deriv = 2 * lam * exp_term / (1 + exp_term)**2
 
-            st.markdown("---")
+                        diag_data.append({
+                            "Channel": ch.channel_name,
+                            "alpha": f"{alpha:.4f}",
+                            "lam (λ)": f"{lam:.4f}",
+                            "beta (β)": f"{beta:.4f}",
+                            "x_max": f"{x_max:.4f}",
+                            "x_normalized": f"{x_norm:.4f}",
+                            "sat_derivative": f"{sat_deriv:.6f}",
+                            "target_scale": f"{target_scale:.2f}",
+                            "Marginal Efficiency": f"{ch.marginal_roi:.6f}",
+                        })
 
-            # Recommendations Summary
-            st.markdown("### Investment Recommendations")
+                if diag_data:
+                    diag_df = pd.DataFrame(diag_data)
+                    st.dataframe(diag_df, hide_index=True)
 
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("INCREASE", summary['counts']['increase'], delta=f"High marginal {eff_label}")
-            with col2:
-                st.metric("HOLD", summary['counts']['hold'], delta="Profitable")
-            with col3:
-                st.metric("REDUCE", summary['counts']['reduce'], delta="Below breakeven")
-            with col4:
-                st.metric("Need Validation", summary['counts']['needs_validation'], delta="Run tests")
+                    st.markdown("""
+                    **Formula**: `marginal_efficiency = beta × target_scale × sat_derivative / x_max`
 
-            st.markdown("---")
-
-            # Channel recommendations
-            st.markdown("### Channel Recommendations")
-
-            if summary['recommendations']['increase']:
-                st.markdown("**INCREASE Investment:**")
-                for ch in summary['recommendations']['increase']:
-                    test_note = " *(validate with test)*" if ch['needs_test'] else ""
-                    st.markdown(f"- **{ch['channel_name']}**: Marginal {eff_label} ${ch['marginal_roi']:.2f}, "
-                               f"Headroom ${ch['headroom_amount']:,.0f}{test_note}")
-
-            if summary['recommendations']['hold']:
-                st.markdown("**HOLD Steady:**")
-                for ch in summary['recommendations']['hold']:
-                    st.markdown(f"- **{ch['channel_name']}**: Marginal {eff_label} ${ch['marginal_roi']:.2f}")
-
-            if summary['recommendations']['reduce']:
-                st.markdown("**REDUCE/Reallocate:**")
-                for ch in summary['recommendations']['reduce']:
-                    st.markdown(f"- **{ch['channel_name']}**: Marginal {eff_label} ${ch['marginal_roi']:.2f} *(below breakeven)*")
-
-            st.markdown("---")
-
-            # Reallocation Opportunity
-            st.markdown("### Reallocation Opportunity")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric(
-                    "Funds from REDUCE channels",
-                    f"${summary['portfolio']['reallocation_potential']:,.0f}"
-                )
-            with col2:
-                st.metric(
-                    "Headroom in INCREASE channels",
-                    f"${summary['portfolio']['headroom_available']:,.0f}"
-                )
-
-            if summary['reallocation_moves']:
-                st.markdown("**Top Reallocation Moves:**")
-                for i, move in enumerate(summary['reallocation_moves'][:3]):
-                    test_note = " *(validate first)*" if move['needs_validation'] else ""
-                    st.markdown(f"{i+1}. Allocate **${move['amount']:,.0f}** to **{move['to_channel']}** "
-                               f"(expected return: ${move['expected_return']:,.0f}){test_note}")
+                    If marginal efficiency is extremely small (e.g., 0.00003), the marginal cost-per will be extremely high (1/0.00003 = $33,333).
+                    This typically indicates the channel is **heavily saturated** in the model.
+                    """)
 
         except Exception as e:
             st.error(f"Error running investment priority analysis: {str(e)}")

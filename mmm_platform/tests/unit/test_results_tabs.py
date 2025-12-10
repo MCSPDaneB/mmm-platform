@@ -421,3 +421,51 @@ class TestBackwardCompatibility:
         count_labels = KPILabels(mock_count_config)
         assert not count_labels.is_revenue_type
         assert "Cost" in count_labels.efficiency_label
+
+
+# =============================================================================
+# Import/Syntax Check Tests
+# =============================================================================
+
+class TestUIPageImports:
+    """Tests that UI pages can be imported without errors.
+
+    These tests catch basic syntax errors and invalid attribute access
+    that wouldn't be caught by mocked tests.
+    """
+
+    def test_results_page_imports(self):
+        """Results page module can be imported without syntax errors."""
+        # This catches undefined names, syntax errors, and bad imports
+        from mmm_platform.ui.pages import results
+        assert results is not None
+
+    def test_optimize_page_imports(self):
+        """Optimize page module can be imported without syntax errors."""
+        from mmm_platform.ui.pages import optimize
+        assert optimize is not None
+
+    def test_kpi_labels_attributes_used_in_results(self):
+        """Verify KPILabels has all attributes used by results page."""
+        from mmm_platform.ui.kpi_labels import KPILabels
+        from mmm_platform.config.schema import KPIType
+
+        # Create a mock config
+        mock_config = Mock()
+        mock_config.data.kpi_type = KPIType.COUNT
+        mock_config.data.kpi_display_name = "Install"
+        mock_config.data.target_column = "installs"
+
+        labels = KPILabels(mock_config)
+
+        # These are attributes used in results.py - test they exist
+        assert hasattr(labels, 'is_revenue_type')
+        assert hasattr(labels, 'efficiency_label')
+        assert hasattr(labels, 'target_name')
+        assert hasattr(labels, 'convert_internal_to_display')
+
+        # Verify they return sensible values
+        assert isinstance(labels.is_revenue_type, bool)
+        assert isinstance(labels.efficiency_label, str)
+        assert isinstance(labels.target_name, str)
+        assert callable(labels.convert_internal_to_display)

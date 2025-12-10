@@ -84,10 +84,14 @@ def find_breakeven_spend(
     lam: float,
     target_scale: float,
     x_max: float,
+    target_efficiency: float = 1.0,
     max_spend_normalized: float = 100.0
 ) -> Optional[float]:
     """
-    Find spend level where marginal ROI = 1 (breakeven).
+    Find spend level where marginal efficiency equals target threshold.
+
+    For revenue KPIs: target_efficiency = 1.0 (breakeven at ROI = $1)
+    For count KPIs: target_efficiency = 1/target_CPA (e.g., 1/15 = 0.067 for $15 CPA target)
 
     Parameters
     ----------
@@ -99,6 +103,9 @@ def find_breakeven_spend(
         Scale factor for target variable
     x_max : float
         Maximum spend value
+    target_efficiency : float
+        Efficiency threshold to find. Default 1.0 for revenue KPIs (ROI = $1).
+        For count KPIs, use 1/target_CPA.
     max_spend_normalized : float
         Maximum normalized spend to search
 
@@ -107,20 +114,20 @@ def find_breakeven_spend(
     float or None
         Normalized spend level at breakeven, or None if not found
     """
-    # Check if marginal ROI at x=0 is already below 1
+    # Check if marginal efficiency at x=0 is already below target
     marginal_at_zero = calculate_marginal_roi(1e-6, beta, lam, target_scale, x_max)
-    if marginal_at_zero < 1:
-        return 0.0  # Already below breakeven
+    if marginal_at_zero < target_efficiency:
+        return 0.0  # Already below target
 
-    # Check if marginal ROI at max is still above 1
+    # Check if marginal efficiency at max is still above target
     marginal_at_max = calculate_marginal_roi(max_spend_normalized, beta, lam, target_scale, x_max)
-    if marginal_at_max > 1:
-        return max_spend_normalized  # Still above breakeven at max
+    if marginal_at_max > target_efficiency:
+        return max_spend_normalized  # Still above target at max
 
     # Find the crossover point
     try:
         breakeven = brentq(
-            lambda x: calculate_marginal_roi(x, beta, lam, target_scale, x_max) - 1,
+            lambda x: calculate_marginal_roi(x, beta, lam, target_scale, x_max) - target_efficiency,
             1e-6,
             max_spend_normalized
         )
@@ -148,6 +155,10 @@ class ChannelMarginalROI:
     roi_uncertainty: float = 0.0
     prob_profitable: float = 0.0
     needs_test: bool = False
+
+    # Reliability flags for extreme model parameters
+    unreliable_marginal: bool = False  # True if marginal values are nonsensical
+    unreliable_reason: str = ""  # Explanation for why (for tooltips)
 
 
 @dataclass
@@ -184,9 +195,8 @@ class MarginalROIAnalyzer:
         spend_scale: float = 1.0,
         revenue_scale: float = 1.0,
         l_max: int = 8,
-        uncertainty_threshold: float = 5.0,  # ROI CI width threshold for "needs test"
-        increase_threshold: float = 1.5,  # Marginal ROI > this AND headroom -> INCREASE
-        reduce_threshold: float = 1.0,  # Marginal ROI < this -> REDUCE
+        increase_threshold: float = 1.5,  # Multiplier of target_efficiency for INCREASE
+        reduce_threshold: float = 1.0,  # Multiplier of target_efficiency for REDUCE (1.0 = breakeven)
         display_names: Optional[Dict[str, str]] = None,  # Column name -> display name
     ):
         """
@@ -210,12 +220,13 @@ class MarginalROIAnalyzer:
             Scale factor for revenue
         l_max : int
             Maximum lag for adstock
-        uncertainty_threshold : float
-            ROI CI width above which channel needs validation test
         increase_threshold : float
-            Marginal ROI threshold for INCREASE recommendation
+            Multiplier of target_efficiency for INCREASE recommendation.
+            For revenue KPIs (target=1.0): 1.5 means INCREASE if marginal ROI > $1.50.
+            For count KPIs (target=1/CPA): 1.5 means INCREASE if marginal cost < target/1.5.
         reduce_threshold : float
-            Marginal ROI threshold for REDUCE recommendation
+            Multiplier of target_efficiency for REDUCE recommendation.
+            Default 1.0 means REDUCE if marginal efficiency < target (i.e., at/past breakeven).
         display_names : dict, optional
             Mapping from column names to display names
         """
@@ -227,7 +238,6 @@ class MarginalROIAnalyzer:
         self.spend_scale = spend_scale
         self.revenue_scale = revenue_scale
         self.l_max = l_max
-        self.uncertainty_threshold = uncertainty_threshold
         self.increase_threshold = increase_threshold
         self.reduce_threshold = reduce_threshold
         self.display_names = display_names or {}
@@ -280,7 +290,9 @@ class MarginalROIAnalyzer:
                 .replace("_spend", "")
                 .replace("_", " "))
 
-    def analyze_channel(self, channel: str) -> ChannelMarginalROI:
+    def analyze_channel(
+        self, channel: str, target_efficiency: float = 1.0
+    ) -> ChannelMarginalROI:
         """
         Analyze marginal ROI for a single channel.
 
@@ -288,6 +300,10 @@ class MarginalROIAnalyzer:
         ----------
         channel : str
             Channel column name
+        target_efficiency : float
+            Efficiency threshold for breakeven calculation.
+            For revenue KPIs: 1.0 (breakeven at ROI = $1)
+            For count KPIs: 1/target_CPA (e.g., 1/15 for $15 target CPA)
 
         Returns
         -------
@@ -310,12 +326,39 @@ class MarginalROIAnalyzer:
 
         # Calculate marginal ROI at current spend
         current_spend_normalized = weekly_avg_spend / (x_max + 1e-9)
+
+        # Calculate saturation derivative for diagnostics
+        sat_deriv = logistic_saturation_derivative(np.array([current_spend_normalized]), lam)[0]
+
         marginal_roi = calculate_marginal_roi(
             current_spend_normalized, beta, lam, target_scale, x_max
         )
 
-        # Find breakeven spend
-        breakeven_normalized = find_breakeven_spend(beta, lam, target_scale, x_max)
+        # Diagnostic logging for extreme marginal ROI values
+        # For count KPIs, marginal CPI = 1/marginal_roi, so small marginal_roi = huge CPI
+        display_name = self._get_channel_display_name(channel)
+        if marginal_roi < 0.001 or marginal_roi > 100:
+            logger.warning(
+                f"DIAGNOSTIC [{display_name}]: Extreme marginal_roi={marginal_roi:.6f}\n"
+                f"  Parameters: alpha={alpha:.4f}, lam={lam:.4f}, beta={beta:.4f}\n"
+                f"  Spend data: total_spend={total_spend:.4f}, weekly_avg={weekly_avg_spend:.4f}, x_max={x_max:.4f}\n"
+                f"  Normalized: current_spend_normalized={current_spend_normalized:.6f}\n"
+                f"  Calculation: sat_deriv={sat_deriv:.6f}, target_scale={target_scale:.4f}\n"
+                f"  Formula: marginal_roi = beta * target_scale * sat_deriv / x_max\n"
+                f"         = {beta:.4f} * {target_scale:.4f} * {sat_deriv:.6f} / {x_max:.4f}\n"
+                f"         = {beta * target_scale * sat_deriv / (x_max + 1e-9):.6f}"
+            )
+        else:
+            logger.debug(
+                f"[{display_name}] marginal_roi={marginal_roi:.4f}, "
+                f"beta={beta:.4f}, lam={lam:.4f}, sat_deriv={sat_deriv:.6f}, "
+                f"target_scale={target_scale:.4f}, x_max={x_max:.4f}"
+            )
+
+        # Find breakeven spend using target_efficiency threshold
+        breakeven_normalized = find_breakeven_spend(
+            beta, lam, target_scale, x_max, target_efficiency
+        )
         if breakeven_normalized is not None:
             # Scale back to total spend over period
             breakeven_spend = breakeven_normalized * (x_max + 1e-9) * len(self.df_scaled)
@@ -346,8 +389,40 @@ class MarginalROIAnalyzer:
         roi_5pct = float(np.percentile(roi_samples, 5))
         roi_95pct = float(np.percentile(roi_samples, 95))
         roi_uncertainty = roi_95pct - roi_5pct
-        prob_profitable = float((roi_samples > 1.0).mean())
-        needs_test = roi_uncertainty > self.uncertainty_threshold
+        roi_mean = float(np.mean(roi_samples))
+
+        # Needs test if 90% credible interval spans the target efficiency (breakeven)
+        # This is statistically valid: we're uncertain about whether channel meets target
+        # - If whole CI is above target: confident it's profitable, no test needed
+        # - If whole CI is below target: confident it's not profitable, no test needed
+        # - If CI spans target: uncertain, test would help resolve
+        needs_test = (roi_5pct < target_efficiency) and (roi_95pct > target_efficiency)
+
+        prob_profitable = float((roi_samples > target_efficiency).mean())
+
+        # Detect unreliable marginal values due to extreme model parameters
+        unreliable_marginal = False
+        unreliable_reasons = []
+
+        if lam > 20:
+            unreliable_marginal = True
+            unreliable_reasons.append(f"extreme saturation (λ={lam:.1f})")
+
+        if sat_deriv < 0.01:
+            unreliable_marginal = True
+            unreliable_reasons.append("near-zero marginal response")
+
+        # Check if marginal is >100x worse than current (works for both ROI and efficiency)
+        if current_roi > 0 and marginal_roi < current_roi / 100:
+            unreliable_marginal = True
+            unreliable_reasons.append("marginal >100x worse than current")
+
+        unreliable_reason = "; ".join(unreliable_reasons) if unreliable_reasons else ""
+
+        if unreliable_marginal:
+            logger.warning(
+                f"[{display_name}] Flagged as unreliable: {unreliable_reason}"
+            )
 
         return ChannelMarginalROI(
             channel=channel,
@@ -363,11 +438,22 @@ class MarginalROIAnalyzer:
             roi_uncertainty=roi_uncertainty,
             prob_profitable=prob_profitable,
             needs_test=needs_test,
+            unreliable_marginal=unreliable_marginal,
+            unreliable_reason=unreliable_reason,
         )
 
-    def run_full_analysis(self) -> InvestmentPriorityResult:
+    def run_full_analysis(
+        self, target_efficiency: float = 1.0
+    ) -> InvestmentPriorityResult:
         """
         Run complete investment priority analysis for all channels.
+
+        Parameters
+        ----------
+        target_efficiency : float
+            Efficiency threshold for breakeven calculation.
+            For revenue KPIs: 1.0 (breakeven at ROI = $1)
+            For count KPIs: 1/target_CPA (e.g., 1/15 for $15 target CPA)
 
         Returns
         -------
@@ -378,7 +464,7 @@ class MarginalROIAnalyzer:
         channel_results = []
         for ch in self.channel_cols:
             try:
-                result = self.analyze_channel(ch)
+                result = self.analyze_channel(ch, target_efficiency)
                 channel_results.append(result)
             except Exception as e:
                 logger.warning(f"Could not analyze channel {ch}: {e}")
@@ -388,15 +474,24 @@ class MarginalROIAnalyzer:
         for i, ch in enumerate(channel_results):
             ch.priority_rank = i + 1
 
-        # Categorize channels
+        # Categorize channels using thresholds relative to target_efficiency
+        # This ensures correct behavior for both revenue KPIs (target=1.0) and count KPIs (target=1/CPA)
+        increase_threshold_actual = target_efficiency * self.increase_threshold  # e.g., 1.5x target
+        reduce_threshold_actual = target_efficiency * self.reduce_threshold  # e.g., 1.0x = breakeven
+
         increase_channels = []
         hold_channels = []
         reduce_channels = []
 
         for ch in channel_results:
-            if ch.marginal_roi > self.increase_threshold and ch.headroom:
+            # Skip unreliable channels from action categorization - put in HOLD as safe default
+            if ch.unreliable_marginal:
+                hold_channels.append(ch)
+                continue
+
+            if ch.marginal_roi > increase_threshold_actual and ch.headroom:
                 increase_channels.append(ch)
-            elif ch.marginal_roi < self.reduce_threshold:
+            elif ch.marginal_roi < reduce_threshold_actual:
                 reduce_channels.append(ch)
             else:
                 hold_channels.append(ch)
@@ -429,16 +524,23 @@ class MarginalROIAnalyzer:
             headroom_available=headroom_available,
         )
 
-    def get_priority_table(self) -> pd.DataFrame:
+    def get_priority_table(self, target_efficiency: float = 1.0) -> pd.DataFrame:
         """
         Get investment priority as a DataFrame.
+
+        Parameters
+        ----------
+        target_efficiency : float
+            Efficiency threshold for breakeven calculation.
+            For revenue KPIs: 1.0 (breakeven at ROI = $1)
+            For count KPIs: 1/target_CPA (e.g., 1/15 for $15 target CPA)
 
         Returns
         -------
         pd.DataFrame
             Priority table with all metrics
         """
-        result = self.run_full_analysis()
+        result = self.run_full_analysis(target_efficiency)
 
         data = []
         for ch in result.channel_analysis:
@@ -463,6 +565,8 @@ class MarginalROIAnalyzer:
                 "needs_test": ch.needs_test,
                 "roi_5pct": ch.roi_5pct,
                 "roi_95pct": ch.roi_95pct,
+                "unreliable_marginal": ch.unreliable_marginal,
+                "unreliable_reason": ch.unreliable_reason,
             })
 
         return pd.DataFrame(data)
