@@ -986,13 +986,19 @@ def show():
             col1, col2, col3, col4 = st.columns(4)
             with col1:
                 n_increase = len(reliable_df[reliable_df['action'] == 'INCREASE'])
-                st.metric("INCREASE", n_increase, delta=f"High marginal {eff_label}")
+                if kpi_labels.is_revenue_type:
+                    st.metric("INCREASE", n_increase, delta="High marginal ROI")
+                else:
+                    st.metric("INCREASE", n_increase, delta="Low marginal cost")
             with col2:
                 n_hold = len(reliable_df[reliable_df['action'] == 'HOLD'])
                 st.metric("HOLD", n_hold, delta="At/near target")
             with col3:
                 n_reduce = len(reliable_df[reliable_df['action'] == 'REDUCE'])
-                st.metric("REDUCE", n_reduce, delta="Below breakeven")
+                if kpi_labels.is_revenue_type:
+                    st.metric("REDUCE", n_reduce, delta="Below breakeven")
+                else:
+                    st.metric("REDUCE", n_reduce, delta="Above target cost")
             with col4:
                 n_unreliable = priority_df['unreliable_marginal'].sum()
                 if n_unreliable > 0:
