@@ -137,6 +137,69 @@ def main():
         saved_models.show()
 
 
+def _load_model_from_home(model_path: str):
+    """Load a model from the home page and navigate to Results."""
+    from mmm_platform.model.persistence import ModelPersistence
+
+    try:
+        loaded = ModelPersistence.load(model_path)
+
+        # Clear widget keys to avoid conflicts
+        keys_to_delete = [
+            k for k in st.session_state.keys()
+            if k.startswith(("channel_", "control_", "roi_", "prior_"))
+        ]
+        for k in keys_to_delete:
+            del st.session_state[k]
+
+        # Set session state
+        st.session_state.current_data = loaded["data"]
+        st.session_state.current_config = loaded["config"]
+        st.session_state.current_model = loaded["model"]
+        st.session_state.model_fitted = True
+        st.session_state.current_model_path = model_path
+
+        # Set client from config
+        if loaded["config"] and loaded["config"].client:
+            st.session_state.active_client = loaded["config"].client
+
+        st.success(f"Loaded model: {loaded['config'].config_name if loaded['config'] else 'Unknown'}")
+        st.rerun()
+    except Exception as e:
+        st.error(f"Failed to load model: {e}")
+
+
+def _show_favorite_models(client_name: str):
+    """Show favorited models for the selected client."""
+    from mmm_platform.model.persistence import ModelPersistence
+
+    try:
+        models = ModelPersistence.list_saved_models(client=client_name)
+        favorites = [
+            m for m in models
+            if m.get("is_favorite", False) and not m.get("is_archived", False)
+        ]
+
+        if favorites:
+            st.markdown("### ⭐ Favorite Models")
+
+            for model in favorites:
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    name = model.get("config_name", "Unnamed")
+                    r2 = model.get("r2", 0)
+                    target = model.get("target_column", "")
+                    target_str = f" | Target: {target}" if target else ""
+                    st.markdown(f"**{name}** (R² = {r2:.2%}{target_str})")
+                with col2:
+                    if st.button("Load", key=f"home_load_{model['path']}"):
+                        _load_model_from_home(model["path"])
+        else:
+            st.info("No favorite models for this client. Star models in 'Saved Configs & Models' to see them here.")
+    except Exception as e:
+        st.warning(f"Could not load favorites: {e}")
+
+
 def show_home():
     """Show the home page."""
     from mmm_platform.model.persistence import list_clients, get_client_configs_dir
@@ -197,6 +260,9 @@ def show_home():
     # Show active client status
     if st.session_state.get("active_client"):
         st.success(f"Working with: **{st.session_state.active_client}**")
+
+        # Show favorited models for selected client
+        _show_favorite_models(st.session_state.active_client)
     else:
         st.info("Viewing **All Clients**. Select a specific client above to filter.")
 
