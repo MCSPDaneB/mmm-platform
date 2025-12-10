@@ -66,7 +66,6 @@ def show_optimize_budget_tab(wrapper):
     )
 
     st.subheader("Allocate Budget Optimally")
-    st.caption("Find the optimal allocation of your budget across channels.")
 
     # Get channel info
     try:
@@ -76,6 +75,25 @@ def show_optimize_budget_tab(wrapper):
     except Exception as e:
         st.error(f"Error initializing optimizer: {e}")
         return
+
+    # Optimization mode selector
+    optimization_mode = st.radio(
+        "Optimization Mode",
+        ["Full Budget", "Incremental Budget"],
+        horizontal=True,
+        help=(
+            "**Full Budget**: Optimize total budget allocation from scratch.\n\n"
+            "**Incremental Budget**: You have a committed budget plan, and extra money to invest. "
+            "Find the optimal way to allocate the extra budget on top of your existing plan."
+        ),
+    )
+
+    if optimization_mode == "Incremental Budget":
+        show_incremental_budget_mode(wrapper, allocator, channel_info)
+        return
+
+    # Full budget mode (original UI)
+    st.caption("Find the optimal allocation of your budget across channels.")
 
     # Configuration section
     col1, col2 = st.columns([1, 2])
@@ -487,6 +505,263 @@ def show_optimize_budget_tab(wrapper):
                 "Download Results (CSV)",
                 csv,
                 "optimization_results.csv",
+                "text/csv",
+            )
+
+
+def show_incremental_budget_mode(wrapper, allocator, channel_info):
+    """Show the incremental budget optimization UI."""
+    from mmm_platform.optimization import BudgetAllocator
+
+    st.caption(
+        "You have a committed budget plan. Enter your current allocation below, "
+        "then specify the extra budget to optimize."
+    )
+
+    col1, col2 = st.columns([1, 2])
+
+    with col1:
+        st.markdown("### Configuration")
+
+        # Number of periods
+        num_periods = st.slider(
+            "Forecast Periods (weeks)",
+            min_value=1,
+            max_value=52,
+            value=8,
+            key="incremental_num_periods",
+        )
+
+        # Incremental budget amount
+        incremental_budget = st.number_input(
+            "Incremental Budget ($)",
+            min_value=1000,
+            max_value=100000000,
+            value=50000,
+            step=5000,
+            format="%d",
+            help="The additional budget you want to allocate on top of your committed plan",
+        )
+
+        # Utility function
+        utility_options = {
+            "Mean (Risk Neutral)": "mean",
+            "Value at Risk (Conservative)": "var",
+            "Expected Shortfall (Very Conservative)": "cvar",
+            "Sharpe Ratio (Risk-Adjusted)": "sharpe",
+        }
+        utility_label = st.selectbox(
+            "Risk Profile",
+            options=list(utility_options.keys()),
+            key="incremental_utility",
+        )
+        utility = utility_options[utility_label]
+
+        # Current allocation input
+        st.markdown("### Committed Budget")
+        st.caption(
+            "Enter your current committed spend per channel. "
+            "Pre-filled with average spend × periods."
+        )
+
+        # Initialize base allocation in session state if not exists
+        if "base_allocation" not in st.session_state:
+            st.session_state.base_allocation = {}
+
+        base_allocation = {}
+        for _, row in channel_info.iterrows():
+            ch = row["channel"]
+            display = row["display_name"]
+            avg = row["avg_period_spend"]
+            default_value = int(avg * num_periods)
+
+            # Use session state value if available, otherwise use default
+            current_val = st.session_state.base_allocation.get(ch, default_value)
+
+            base_allocation[ch] = float(st.number_input(
+                f"{display}",
+                min_value=0,
+                value=int(current_val),
+                step=1000,
+                key=f"base_{ch}",
+            ))
+
+        # Store in session state
+        st.session_state.base_allocation = base_allocation
+
+        # Show totals
+        committed_total = sum(base_allocation.values())
+        total_with_incremental = committed_total + incremental_budget
+
+        st.markdown("---")
+        st.metric("Committed Total", f"${committed_total:,.0f}")
+        st.metric("+ Incremental", f"${incremental_budget:,.0f}")
+        st.metric("**Total Budget**", f"${total_with_incremental:,.0f}")
+
+        # Run button
+        optimize_clicked = st.button(
+            "Optimize Incremental Budget",
+            type="primary",
+            key="run_incremental",
+        )
+
+    with col2:
+        st.markdown("### Results")
+
+        if optimize_clicked:
+            with st.spinner("Optimizing incremental budget..."):
+                try:
+                    # Create allocator with selected settings
+                    allocator = BudgetAllocator(
+                        wrapper,
+                        num_periods=num_periods,
+                        utility=utility,
+                    )
+
+                    # Run incremental optimization
+                    result = allocator.optimize_incremental(
+                        base_allocation=base_allocation,
+                        incremental_budget=incremental_budget,
+                    )
+
+                    # Store result in session state
+                    st.session_state.incremental_result = result
+
+                except Exception as e:
+                    st.error(f"Optimization failed: {e}")
+                    logger.exception("Incremental optimization error")
+                    return
+
+        # Display results
+        if "incremental_result" in st.session_state:
+            result = st.session_state.incremental_result
+
+            if result.success:
+                st.success(f"Optimization completed in {result.iterations} iterations")
+            else:
+                st.warning(f"Optimization message: {result.message}")
+
+            # Determine KPI type for display formatting
+            kpi_type = getattr(wrapper.config.data, 'kpi_type', 'revenue')
+            target_col = wrapper.config.data.target_column
+
+            # Calculate incremental allocation
+            incremental_allocation = {
+                ch: result.optimal_allocation.get(ch, 0) - result.current_allocation.get(ch, 0)
+                for ch in result.optimal_allocation
+            }
+
+            # Key insight message
+            top_channels = sorted(
+                incremental_allocation.items(),
+                key=lambda x: x[1],
+                reverse=True
+            )[:3]
+            top_channels = [(ch, amt) for ch, amt in top_channels if amt > 0]
+
+            if top_channels:
+                insight_parts = [f"${amt:,.0f} to {ch}" for ch, amt in top_channels]
+                st.info(f"**Recommendation:** Put {', '.join(insight_parts)}")
+
+            # Key metrics
+            metric_col1, metric_col2, metric_col3 = st.columns(3)
+            with metric_col1:
+                st.metric("Incremental Budget", f"${incremental_budget:,.0f}")
+            with metric_col2:
+                if kpi_type == "count":
+                    response_label = f"Expected {target_col.replace('_', ' ').title()}"
+                    response_value = f"{result.expected_response:,.0f}"
+                else:
+                    response_label = "Expected Response"
+                    response_value = f"${result.expected_response:,.0f}"
+                st.metric(
+                    response_label,
+                    response_value,
+                    delta=f"+{result.response_uplift_pct:.1f}%" if result.response_uplift_pct else None,
+                )
+            with metric_col3:
+                # Response uplift from incremental budget
+                if result.current_response and result.current_response > 0:
+                    uplift = result.expected_response - result.current_response
+                    if kpi_type == "count":
+                        st.metric("Incremental Response", f"+{uplift:,.0f}")
+                    else:
+                        st.metric("Incremental Response", f"+${uplift:,.0f}")
+
+            # Create comparison dataframe
+            comparison_data = []
+            for ch in result.optimal_allocation:
+                committed = result.current_allocation.get(ch, 0)
+                recommended = result.optimal_allocation.get(ch, 0)
+                incremental = recommended - committed
+                comparison_data.append({
+                    "Channel": ch,
+                    "Committed": committed,
+                    "Recommended": recommended,
+                    "Incremental": incremental,
+                })
+
+            comparison_df = pd.DataFrame(comparison_data)
+            comparison_df = comparison_df.sort_values("Incremental", ascending=False)
+
+            # Incremental allocation chart
+            fig = px.bar(
+                comparison_df[comparison_df["Incremental"] > 0],
+                x="Channel",
+                y="Incremental",
+                title="Where Your Incremental Budget Should Go",
+                labels={"Incremental": "Additional Spend ($)"},
+                text=comparison_df[comparison_df["Incremental"] > 0]["Incremental"].apply(
+                    lambda x: f"${x:,.0f}"
+                ),
+                color="Incremental",
+                color_continuous_scale="Greens",
+            )
+            fig.update_traces(textposition="outside")
+            fig.update_layout(
+                xaxis_tickangle=-45,
+                coloraxis_showscale=False,
+            )
+            st.plotly_chart(fig)
+
+            # Stacked bar chart: Committed vs Incremental
+            fig_stacked = go.Figure()
+            fig_stacked.add_trace(go.Bar(
+                name="Committed",
+                x=comparison_df["Channel"],
+                y=comparison_df["Committed"],
+                marker_color="rgba(100, 100, 100, 0.6)",
+            ))
+            fig_stacked.add_trace(go.Bar(
+                name="Incremental",
+                x=comparison_df["Channel"],
+                y=comparison_df["Incremental"].clip(lower=0),
+                marker_color="rgba(0, 200, 100, 0.8)",
+            ))
+            fig_stacked.update_layout(
+                title="Total Allocation: Committed + Incremental",
+                xaxis_title="Channel",
+                yaxis_title="Budget ($)",
+                barmode="stack",
+                xaxis_tickangle=-45,
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            )
+            st.plotly_chart(fig_stacked)
+
+            # Allocation table
+            display_df = comparison_df.copy()
+            display_df["Committed"] = display_df["Committed"].apply(lambda x: f"${x:,.0f}")
+            display_df["Recommended"] = display_df["Recommended"].apply(lambda x: f"${x:,.0f}")
+            display_df["Incremental"] = display_df["Incremental"].apply(lambda x: f"${x:+,.0f}")
+
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+            # Download results
+            csv = comparison_df.to_csv(index=False)
+            st.download_button(
+                "Download Results (CSV)",
+                csv,
+                "incremental_optimization_results.csv",
                 "text/csv",
             )
 
