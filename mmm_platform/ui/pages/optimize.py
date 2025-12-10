@@ -373,7 +373,7 @@ def show_optimize_budget_tab(wrapper):
                 else:
                     # Display read-only table
                     indices_df["Index"] = indices_df["Index"].apply(lambda x: f"{x:.2f}")
-                    st.dataframe(indices_df, use_container_width=True, hide_index=True)
+                    st.dataframe(indices_df, width="stretch", hide_index=True)
 
                     # Store computed indices
                     st.session_state.seasonal_indices = seasonal_indices
@@ -387,7 +387,7 @@ def show_optimize_budget_tab(wrapper):
                     for col in full_table.columns:
                         if col != "Display Name":
                             full_table[col] = full_table[col].apply(lambda x: f"{x:.2f}")
-                    st.dataframe(full_table, use_container_width=True)
+                    st.dataframe(full_table, width="stretch")
 
             except Exception as e:
                 st.warning(f"Could not compute seasonal indices: {e}")
@@ -465,7 +465,7 @@ def show_optimize_budget_tab(wrapper):
                     yaxis_title="Response",
                     height=300,
                 )
-                st.plotly_chart(fig_ts, use_container_width=True)
+                st.plotly_chart(fig_ts, width="stretch")
 
                 # Scatter plot
                 fig_scatter = px.scatter(
@@ -484,7 +484,7 @@ def show_optimize_budget_tab(wrapper):
                     line=dict(dash='dash', color='gray'),
                 ))
                 fig_scatter.update_layout(height=300)
-                st.plotly_chart(fig_scatter, use_container_width=True)
+                st.plotly_chart(fig_scatter, width="stretch")
 
         # Run button
         optimize_clicked = st.button(
@@ -961,7 +961,7 @@ def show_incremental_budget_mode(wrapper, allocator, channel_info):
             display_df["Recommended"] = display_df["Recommended"].apply(lambda x: f"${x:,.0f}")
             display_df["Incremental"] = display_df["Incremental"].apply(lambda x: f"${x:+,.0f}")
 
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            st.dataframe(display_df, width="stretch", hide_index=True)
 
             # Download results
             csv = comparison_df.to_csv(index=False)
