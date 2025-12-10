@@ -416,11 +416,54 @@ def show_optimize_budget_tab(wrapper):
                     full_table = seasonal_calc.to_dataframe(
                         use_quarterly=confidence_info["using_quarterly"]
                     )
-                    # Format numbers
+                    # Keep unformatted version for download
+                    full_table_raw = full_table.copy()
+                    # Format numbers for display
                     for col in full_table.columns:
                         if col != "Display Name":
                             full_table[col] = full_table[col].apply(lambda x: f"{x:.2f}")
                     st.dataframe(full_table, width="stretch")
+
+                    # Download button for seasonal indices
+                    csv = full_table_raw.to_csv(index=True)
+                    st.download_button(
+                        label="Download Seasonal Indices (CSV)",
+                        data=csv,
+                        file_name="seasonal_indices.csv",
+                        mime="text/csv",
+                    )
+
+                # Upload custom seasonal indices
+                uploaded_file = st.file_uploader(
+                    "Upload custom seasonal indices (CSV)",
+                    type=["csv"],
+                    help="Upload a CSV with channel names and index values to override computed indices",
+                    key="seasonal_upload",
+                )
+
+                if uploaded_file is not None:
+                    try:
+                        custom_df = pd.read_csv(uploaded_file, index_col=0)
+                        # Parse uploaded values into seasonal_indices dict
+                        updated_count = 0
+                        for ch in seasonal_indices.keys():
+                            if ch in custom_df.index:
+                                # Use the first numeric column for the period index
+                                for col in custom_df.columns:
+                                    if col != "Display Name":
+                                        try:
+                                            seasonal_indices[ch] = float(custom_df.loc[ch, col])
+                                            updated_count += 1
+                                            break
+                                        except (ValueError, TypeError):
+                                            continue
+                        if updated_count > 0:
+                            st.success(f"Loaded custom indices for {updated_count} channels")
+                            st.session_state.seasonal_indices = seasonal_indices
+                        else:
+                            st.warning("No matching channels found in uploaded file")
+                    except Exception as e:
+                        st.error(f"Error reading file: {e}")
 
             except Exception as e:
                 import traceback
