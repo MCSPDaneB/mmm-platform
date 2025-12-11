@@ -171,7 +171,7 @@ def _load_model_from_home(model_path: str):
         if wrapper.config and wrapper.config.client:
             st.session_state.active_client = wrapper.config.client
 
-        st.success(f"Loaded model: {wrapper.config.config_name if wrapper.config else 'Unknown'}")
+        st.success(f"Loaded model: {wrapper.config.name if wrapper.config else 'Unknown'}")
         st.rerun()
     except Exception as e:
         st.error(f"Failed to load model: {e}")
