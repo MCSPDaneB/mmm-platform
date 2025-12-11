@@ -125,6 +125,22 @@ def _show_optimize_mode_inputs(channel_info):
 
     st.markdown("### Budget Settings")
 
+    # Get available date range for fill functionality
+    try:
+        wrapper = st.session_state.current_model
+        allocator = BudgetAllocator(wrapper, num_periods=8)
+        min_date, max_date, total_periods = allocator.bridge.get_available_date_range()
+    except Exception:
+        total_periods = 52
+
+    # Initialize budget value - use filled value if available, otherwise default
+    if "filled_budget_value" in st.session_state:
+        default_budget = st.session_state.filled_budget_value
+        # Clear after use to avoid stickiness
+        del st.session_state.filled_budget_value
+    else:
+        default_budget = st.session_state.get("opt_total_budget", 100000)
+
     # Total budget with quick fill
     col_budget, col_fill = st.columns([2, 1])
 
@@ -133,7 +149,7 @@ def _show_optimize_mode_inputs(channel_info):
             "Total Budget ($)",
             min_value=1000,
             max_value=100000000,
-            value=st.session_state.get("opt_total_budget", 100000),
+            value=default_budget,
             step=10000,
             format="%d",
             key="opt_total_budget",
@@ -141,14 +157,6 @@ def _show_optimize_mode_inputs(channel_info):
 
     with col_fill:
         st.markdown("**Quick Fill**")
-
-        # Get available date range for context
-        try:
-            wrapper = st.session_state.current_model
-            allocator = BudgetAllocator(wrapper, num_periods=8)
-            min_date, max_date, total_periods = allocator.bridge.get_available_date_range()
-        except Exception:
-            total_periods = 52
 
         fill_weeks = st.number_input(
             "Last N weeks",
@@ -173,7 +181,8 @@ def _show_optimize_mode_inputs(channel_info):
                 total = sum(spend_dict.values())
 
                 if total > 0:
-                    st.session_state.opt_total_budget = int(total)
+                    # Store in a separate key that will be read on next render
+                    st.session_state.filled_budget_value = int(total)
                     st.session_state.budget_fill_info = (
                         f"Filled with ${total:,.0f} from {start_date:%Y-%m-%d} to {end_date:%Y-%m-%d}"
                     )
