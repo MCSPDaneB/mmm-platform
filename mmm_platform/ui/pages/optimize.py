@@ -655,30 +655,53 @@ def _show_channel_bounds_expander(channel_info):
                 "Use **Min** for pre-committed budgets. "
                 "Use **Max** to cap investment."
             )
-            bounds_config = {}
-            for _, row in channel_info.iterrows():
-                ch = row["channel"]
-                display = row["display_name"]
-                avg = row["avg_period_spend"]
 
-                col_min, col_max = st.columns(2)
-                with col_min:
-                    min_val = st.number_input(
-                        f"{display} Min",
+            # Build DataFrame for editing
+            bounds_data = []
+            for _, row in channel_info.iterrows():
+                avg = row["avg_period_spend"]
+                bounds_data.append({
+                    "Channel": row["display_name"],
+                    "channel_key": row["channel"],
+                    "Baseline": int(avg * num_periods),
+                    "Min": 0,
+                    "Max": int(avg * num_periods * 3),
+                })
+            bounds_df = pd.DataFrame(bounds_data)
+
+            # Editable table
+            edited_df = st.data_editor(
+                bounds_df[["Channel", "Baseline", "Min", "Max"]],
+                column_config={
+                    "Channel": st.column_config.TextColumn("Channel", disabled=True),
+                    "Baseline": st.column_config.NumberColumn(
+                        "Baseline ($)",
+                        disabled=True,
+                        format="$%d",
+                        help="Historical average spend for the optimization period"
+                    ),
+                    "Min": st.column_config.NumberColumn(
+                        "Min ($)",
                         min_value=0,
-                        value=0,
-                        step=1000,
-                        key=f"bound_min_{ch}",
-                    )
-                with col_max:
-                    max_val = st.number_input(
-                        f"{display} Max",
+                        format="$%d",
+                        help="Minimum spend (floor)"
+                    ),
+                    "Max": st.column_config.NumberColumn(
+                        "Max ($)",
                         min_value=0,
-                        value=int(avg * num_periods * 3),
-                        step=1000,
-                        key=f"bound_max_{ch}",
-                    )
-                bounds_config[ch] = (float(min_val), float(max_val))
+                        format="$%d",
+                        help="Maximum spend (ceiling)"
+                    ),
+                },
+                hide_index=True,
+                key="custom_bounds_editor",
+            )
+
+            # Convert edited table back to bounds_config dict
+            bounds_config = {}
+            for i, row in bounds_df.iterrows():
+                ch = row["channel_key"]
+                bounds_config[ch] = (float(edited_df.iloc[i]["Min"]), float(edited_df.iloc[i]["Max"]))
 
             st.session_state.bounds_config = bounds_config
 
