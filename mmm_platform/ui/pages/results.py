@@ -313,7 +313,7 @@ def show():
             column_config={
                 "Group": st.column_config.TextColumn("Group"),
                 "Contribution ($)": st.column_config.NumberColumn("Contribution ($)", format="$%,.0f"),
-                "% of Total": st.column_config.NumberColumn("% of Total", format="%.2f%%"),
+                "% of Total": st.column_config.NumberColumn("% of Total", format="%.2f"),
             },
             hide_index=True,
         )
@@ -546,8 +546,8 @@ def show():
                             st.dataframe(
                                 display_validation_df,
                                 column_config={
-                                    shift_col: st.column_config.NumberColumn(shift_col, format="%+.0f%%"),
-                                    "λ Shift (%)": st.column_config.NumberColumn("λ Shift (%)", format="%+.0f%%"),
+                                    shift_col: st.column_config.NumberColumn(shift_col, format="%+.0f"),
+                                    "λ Shift (%)": st.column_config.NumberColumn("λ Shift (%)", format="%+.0f"),
                                 },
                                 hide_index=True,
                             )

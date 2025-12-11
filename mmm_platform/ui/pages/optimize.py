@@ -1555,13 +1555,13 @@ def _show_allocation_table(df):
     col_config = {
         "channel": st.column_config.TextColumn("Channel"),
         "optimal": st.column_config.NumberColumn("Optimal ($)", format="$%,.0f"),
-        "pct_of_total": st.column_config.NumberColumn("% of Total", format="%.1f%%"),
+        "pct_of_total": st.column_config.NumberColumn("% of Total", format="%.1f"),
     }
 
     if "current" in display_df.columns:
         col_config["current"] = st.column_config.NumberColumn("Current ($)", format="$%,.0f")
         col_config["delta"] = st.column_config.NumberColumn("Delta ($)", format="$%+,.0f")
-        col_config["pct_change"] = st.column_config.NumberColumn("% Change", format="%+.1f%%")
+        col_config["pct_change"] = st.column_config.NumberColumn("% Change", format="%+.1f")
 
     st.dataframe(display_df, column_config=col_config, hide_index=True)
 
@@ -1891,9 +1891,9 @@ def _show_scenarios_results(result):
             if "delta" in df.columns:
                 col_config["delta"] = st.column_config.NumberColumn("Delta ($)", format="$%+,.0f")
             if "pct_change" in df.columns:
-                col_config["pct_change"] = st.column_config.NumberColumn("% Change", format="%.0f%%")
+                col_config["pct_change"] = st.column_config.NumberColumn("% Change", format="%.0f")
             if "pct_of_total" in df.columns:
-                col_config["pct_of_total"] = st.column_config.NumberColumn("% of Total", format="%.1f%%")
+                col_config["pct_of_total"] = st.column_config.NumberColumn("% of Total", format="%.1f")
 
             st.dataframe(df, column_config=col_config, hide_index=True)
 
