@@ -459,11 +459,13 @@ def _show_comparison_options():
 
     # Show N weeks input if "Last N weeks" is selected
     if comparison_mode == "last_n_weeks":
+        # Use session state value if set (e.g., from Quick Fill), otherwise default
+        default_n_weeks = st.session_state.get("opt_comparison_n_weeks", min(52, total_periods))
         st.number_input(
             "Number of weeks to use",
             min_value=1,
             max_value=total_periods,
-            value=min(52, total_periods),
+            value=default_n_weeks,
             step=1,
             help=f"Look back this many weeks from the most recent date. Max available: {total_periods} weeks.",
             key="opt_comparison_n_weeks",
