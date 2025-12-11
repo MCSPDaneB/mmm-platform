@@ -70,6 +70,31 @@ class BacktestValidator:
             f"target_scale={self.target_scale:.0f}"
         )
 
+        # Pre-compute actual media contributions from model decomposition
+        self._actual_media_contributions = self._get_actual_media_contributions()
+
+    def _get_actual_media_contributions(self) -> np.ndarray:
+        """
+        Get actual media contributions from model decomposition.
+
+        Uses PyMC-Marketing's compute_channel_contribution_original_scale()
+        to get the model's calculated channel contributions per period.
+
+        Returns
+        -------
+        np.ndarray
+            Media contribution per period (sum across all channels).
+        """
+        # Get channel contributions from PyMC-Marketing
+        contrib = self.wrapper.mmm.compute_channel_contribution_original_scale(prior=False)
+
+        # Sum across chains/draws (mean) and channels, keep date dimension
+        # contrib shape: (chain, draw, date, channel)
+        mean_contrib = contrib.mean(dim=['chain', 'draw'])  # (date, channel)
+        total_media_per_period = mean_contrib.sum(dim='channel')  # (date,)
+
+        return total_media_per_period.values
+
     def predict_response_at_spend(self, spend_per_channel: np.ndarray) -> float:
         """
         Predict response using saturation curves.
@@ -94,7 +119,11 @@ class BacktestValidator:
 
     def run_backtest(self, n_periods: int | None = None) -> pd.DataFrame:
         """
-        Run backtest comparing predicted vs actual response.
+        Run backtest comparing predicted vs actual MEDIA contribution.
+
+        Compares the optimizer's saturation curve predictions against the
+        model's actual media contribution decomposition. This validates that
+        the optimizer formula matches the model's internal calculations.
 
         Parameters
         ----------
@@ -106,14 +135,13 @@ class BacktestValidator:
         pd.DataFrame
             DataFrame with columns:
             - date: Period date
-            - actual: Actual response value
-            - predicted: Predicted response from saturation curves
+            - actual: Actual media contribution (from model decomposition)
+            - predicted: Predicted media contribution (from saturation curves)
             - residual: actual - predicted
             - pct_error: residual / actual * 100
             - channel spend columns
         """
         df = self.wrapper.df_scaled
-        target_col = self.config.data.target_column
         date_col = self.config.data.date_column
 
         # Use all data if n_periods not specified
@@ -125,25 +153,27 @@ class BacktestValidator:
         # Get the periods to test (most recent N)
         df_test = df.tail(n_periods).copy()
 
-        logger.info(f"Running backtest on {len(df_test)} periods")
+        # Get actual media contributions for test periods (most recent N)
+        actual_media_test = self._actual_media_contributions[-n_periods:]
+
+        logger.info(f"Running backtest on {len(df_test)} periods (comparing media contributions)")
 
         results = []
-        for idx, row in df_test.iterrows():
+        for i, (idx, row) in enumerate(df_test.iterrows()):
             # Get spend for this period (already in scaled units)
             spend = np.array([row[ch] for ch in self.channels])
 
-            # Predict response using saturation curves
+            # Predict media contribution using saturation curves
             predicted = self.predict_response_at_spend(spend)
 
-            # Get actual response (need to unscale - it's normalized by max)
-            actual_scaled = row[target_col]
-            actual = actual_scaled * self.target_scale
+            # Get actual media contribution from model decomposition
+            actual = float(actual_media_test[i])
 
             # Build result row
             result_row = {
                 'date': row[date_col],
-                'actual': actual,
-                'predicted': predicted,
+                'actual': actual,       # Actual media contribution
+                'predicted': predicted,  # Predicted media contribution
                 'residual': actual - predicted,
             }
 

@@ -124,6 +124,9 @@ def _show_configuration_tab(wrapper, allocator, channel_info):
     # Store mode in session state
     st.session_state.optimization_mode = mode
 
+    # Top run button (for quick access)
+    _show_run_button(wrapper, allocator, channel_info, mode, position="top")
+
     st.markdown("---")
 
     # Mode-specific inputs
@@ -149,9 +152,8 @@ def _show_configuration_tab(wrapper, allocator, channel_info):
         _show_seasonality_expander(wrapper, channel_info)
         _show_validation_expander(wrapper)
 
-    # Run button
-    st.markdown("---")
-    _show_run_button(wrapper, allocator, channel_info, mode)
+    # Bottom run button
+    _show_run_button(wrapper, allocator, channel_info, mode, position="bottom")
 
 
 def _show_optimize_mode_inputs(channel_info):
@@ -536,6 +538,7 @@ def _show_channel_bounds_expander(channel_info):
         bounds_mode = st.radio(
             "Bounds mode",
             ["No bounds", "Max % change", "Custom bounds"],
+            index=1,  # Default to "Max % change"
             horizontal=True,
             key="bounds_mode",
             help=(
@@ -555,36 +558,85 @@ def _show_channel_bounds_expander(channel_info):
                 value=30,
                 step=5,
                 key="max_delta_pct",
-                help="No channel can increase or decrease by more than this percentage from historical",
+                help="No channel can increase or decrease by more than this percentage from historical baseline",
             )
 
-            # Calculate bounds from historical spend
+            # Get comparison settings to use same baseline
+            compare_enabled = st.session_state.get("opt_compare_historical", True)
+            comparison_mode = st.session_state.get("opt_comparison_mode", "Average (all data)")
+            n_weeks = st.session_state.get("opt_comparison_n_weeks", num_periods)
+
+            # Calculate baseline from same source as comparison
+            from mmm_platform.optimization import BudgetAllocator
+            try:
+                allocator = BudgetAllocator(st.session_state.current_model)
+
+                if comparison_mode == "Last N weeks actual" and compare_enabled:
+                    baseline_spend, _, _ = allocator.bridge.get_last_n_weeks_spend(
+                        n_weeks, num_periods=num_periods
+                    )
+                elif comparison_mode == "Most recent period" and compare_enabled:
+                    baseline_spend, _, _, _ = allocator.bridge.get_most_recent_matching_period_spend(
+                        num_periods
+                    )
+                else:  # Average (all data) or comparison disabled
+                    baseline_spend = {
+                        row["channel"]: row["avg_period_spend"] * num_periods
+                        for _, row in channel_info.iterrows()
+                    }
+            except Exception:
+                # Fallback to average if bridge fails
+                baseline_spend = {
+                    row["channel"]: row["avg_period_spend"] * num_periods
+                    for _, row in channel_info.iterrows()
+                }
+
+            # Get total budget for fallback calculation
+            total_budget = st.session_state.get("budget_value", 100000)
+
+            # Calculate bounds from baseline
             bounds_config = {}
             for _, row in channel_info.iterrows():
                 ch = row["channel"]
-                avg = row["avg_period_spend"]
-                historical = avg * num_periods
-                min_val = historical * (1 - max_delta / 100)
-                max_val = historical * (1 + max_delta / 100)
+                historical = baseline_spend.get(ch, 0)
+
+                if historical > 0:
+                    min_val = historical * (1 - max_delta / 100)
+                    max_val = historical * (1 + max_delta / 100)
+                else:
+                    # Channel has no historical spend - allow up to 10% of total budget
+                    min_val = 0
+                    max_val = total_budget * 0.10
+
                 bounds_config[ch] = (max(0.0, min_val), max_val)
 
             st.session_state.bounds_config = bounds_config
 
-            # Show preview table
-            st.caption(f"Each channel limited to ±{max_delta}% of historical spend:")
+            # Show preview table with note about baseline source
+            baseline_source = (
+                f"last {n_weeks} weeks"
+                if comparison_mode == "Last N weeks actual" and compare_enabled
+                else "most recent period"
+                if comparison_mode == "Most recent period" and compare_enabled
+                else "all-time average"
+            )
+            st.caption(f"Bounds based on {baseline_source} (±{max_delta}%):")
+
+            import pandas as pd
             preview_data = []
             for _, row in channel_info.iterrows():
                 ch = row["channel"]
                 display = row["display_name"]
                 min_b, max_b = bounds_config[ch]
-                historical = row["avg_period_spend"] * num_periods
+                historical = baseline_spend.get(ch, 0)
+                note = "" if historical > 0 else "(no history, 10% cap)"
                 preview_data.append({
                     "Channel": display,
-                    "Historical": f"${historical:,.0f}",
+                    "Baseline": f"${historical:,.0f}",
                     "Min": f"${min_b:,.0f}",
                     "Max": f"${max_b:,.0f}",
+                    "Note": note,
                 })
-            import pandas as pd
             st.dataframe(pd.DataFrame(preview_data), hide_index=True, width="stretch")
 
         elif bounds_mode == "Custom bounds":
@@ -851,7 +903,7 @@ def _show_seasonality_expander(wrapper, channel_info):
 def _show_validation_expander(wrapper):
     """Show the optimizer validation expander."""
     with st.expander("Validate Optimizer Accuracy", expanded=False):
-        st.caption("Compare model predictions vs actual results for historical data")
+        st.caption("Validate optimizer's saturation curves vs model's media contribution")
 
         validation_periods = st.slider(
             "Periods to validate",
@@ -888,13 +940,13 @@ def _show_validation_expander(wrapper):
             m3.metric("Correlation", f"{metrics['correlation']:.3f}")
 
             if metrics['r2'] > 0.7 and metrics['mape'] < 15:
-                st.success("Excellent fit - optimizer predictions are reliable")
+                st.success("Excellent fit - optimizer formula accurately matches model")
             elif metrics['r2'] > 0.5 and metrics['mape'] < 25:
-                st.info("Good fit - optimizer predictions are reasonably accurate")
+                st.info("Good fit - optimizer formula reasonably matches model")
             elif metrics['r2'] > 0.3:
-                st.warning("Moderate fit - use optimizer results with caution")
+                st.warning("Moderate fit - some discrepancy between optimizer and model")
             else:
-                st.error("Poor fit - optimizer predictions may not be reliable")
+                st.error("Poor fit - optimizer formula may diverge from model")
 
             # Time series chart
             fig_ts = go.Figure()
@@ -902,20 +954,20 @@ def _show_validation_expander(wrapper):
                 x=backtest_df['date'],
                 y=backtest_df['actual'],
                 mode='lines+markers',
-                name='Actual',
+                name='Model Contribution',
                 line=dict(color='blue'),
             ))
             fig_ts.add_trace(go.Scatter(
                 x=backtest_df['date'],
                 y=backtest_df['predicted'],
                 mode='lines+markers',
-                name='Predicted',
+                name='Optimizer Prediction',
                 line=dict(color='orange'),
             ))
             fig_ts.update_layout(
-                title="Actual vs Predicted Response Over Time",
+                title="Media Contribution: Model vs Optimizer",
                 xaxis_title="Date",
-                yaxis_title="Response",
+                yaxis_title="Media Contribution",
                 height=300,
             )
             st.plotly_chart(fig_ts, width="stretch")
@@ -925,7 +977,7 @@ def _show_validation_expander(wrapper):
                 backtest_df,
                 x='actual',
                 y='predicted',
-                title="Predicted vs Actual (ideal = diagonal line)",
+                title="Optimizer vs Model Media Contribution (ideal = diagonal)",
             )
             max_val = max(backtest_df['actual'].max(), backtest_df['predicted'].max())
             fig_scatter.add_trace(go.Scatter(
@@ -939,7 +991,7 @@ def _show_validation_expander(wrapper):
             st.plotly_chart(fig_scatter, width="stretch")
 
 
-def _show_run_button(wrapper, allocator, channel_info, mode):
+def _show_run_button(wrapper, allocator, channel_info, mode, position="bottom"):
     """Show the run button and handle optimization execution."""
     from mmm_platform.optimization import BudgetAllocator, TargetOptimizer
 
@@ -957,10 +1009,15 @@ def _show_run_button(wrapper, allocator, channel_info, mode):
         scenarios = st.session_state.get("parsed_scenarios", [])
         disabled = len(scenarios) < 2
 
+    # Add divider for bottom button only
+    if position == "bottom":
+        st.markdown("---")
+
     run_clicked = st.button(
         button_labels[mode],
         type="primary",
         disabled=disabled,
+        key=f"run_btn_{position}",
     )
 
     if run_clicked:
@@ -1363,7 +1420,7 @@ def _show_optimize_results(wrapper, result):
 def _show_comparison_charts(result, df):
     """Show comparison charts for historical vs optimal allocation."""
     current_total = sum(result.current_allocation.values())
-    optimal_total = result.total_budget
+    optimal_total = sum(result.optimal_allocation.values())
 
     comparison_data = []
     for ch in df["channel"]:

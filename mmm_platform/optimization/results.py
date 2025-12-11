@@ -137,8 +137,11 @@ class OptimizationResult:
 
         df = pd.DataFrame(data)
 
-        # Add percentage of total
-        df["pct_of_total"] = df["optimal"] / self.total_budget * 100
+        # Add percentage of total (use actual allocated sum for consistency)
+        allocated_total = sum(self.optimal_allocation.values())
+        df["pct_of_total"] = (
+            df["optimal"] / allocated_total * 100 if allocated_total > 0 else 0
+        )
 
         return df.sort_values("optimal", ascending=False).reset_index(drop=True)
 
