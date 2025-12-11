@@ -94,14 +94,14 @@ def show_optimize_budget_tab(wrapper):
         show_incremental_budget_mode(wrapper, allocator, channel_info)
         return
 
-    # Full budget mode (original UI)
+    # Full budget mode - use tabs for Config / Results
     st.caption("Find the optimal allocation of your budget across channels.")
 
-    # Configuration section
-    col1, col2 = st.columns([1, 2])
+    # Create Config / Results tabs
+    config_tab, results_tab = st.tabs(["⚙️ Configuration", "📊 Results"])
 
-    with col1:
-        st.markdown("### Configuration")
+    with config_tab:
+        st.markdown("### Budget & Period")
 
         # Total budget
         total_budget = st.number_input(
@@ -599,9 +599,6 @@ def show_optimize_budget_tab(wrapper):
             type="primary",
         )
 
-    with col2:
-        st.markdown("### Results")
-
         if optimize_clicked:
             with st.spinner("Running optimization..."):
                 try:
@@ -645,14 +642,46 @@ def show_optimize_budget_tab(wrapper):
                     # Store result in session state
                     st.session_state.optimization_result = result
 
+                    # Store config for display in results tab
+                    st.session_state.optimizer_config = {
+                        "total_budget": total_budget,
+                        "num_periods": num_periods,
+                        "start_month": start_month,
+                        "utility": utility_label,
+                        "optimization_objective": optimization_objective,
+                        "compare_to_current": compare_to_current,
+                        "comparison_mode": comparison_mode if compare_to_current else None,
+                    }
+
+                    st.success("Optimization complete! Switch to Results tab to view.")
+
                 except Exception as e:
                     st.error(f"Optimization failed: {e}")
                     logger.exception("Optimization error")
                     return
 
+    with results_tab:
         # Display results
-        if "optimization_result" in st.session_state:
+        if "optimization_result" not in st.session_state:
+            st.info("Configure optimization settings and click 'Optimize Budget' to see results.")
+        else:
             result = st.session_state.optimization_result
+
+            # Config summary expander
+            if "optimizer_config" in st.session_state:
+                config = st.session_state.optimizer_config
+                month_names = [
+                    "January", "February", "March", "April", "May", "June",
+                    "July", "August", "September", "October", "November", "December"
+                ]
+                with st.expander("Configuration Summary", expanded=False):
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Budget", f"${config['total_budget']:,.0f}")
+                    c2.metric("Period", f"{config['num_periods']} weeks")
+                    c3.metric("Starting", month_names[config['start_month'] - 1])
+                    st.caption(f"Objective: {config['optimization_objective']} | Risk Profile: {config['utility']}")
+                    if config.get('compare_to_current'):
+                        st.caption(f"Comparison: {config.get('comparison_mode', 'average')}")
 
             if result.success:
                 st.success(f"Optimization completed in {result.iterations} iterations")
