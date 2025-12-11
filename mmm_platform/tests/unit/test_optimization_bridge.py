@@ -425,15 +425,15 @@ class TestCurrentAllocation:
             assert abs(result[ch] - expected) < 0.01
 
     def test_last_n_weeks_mode(self, bridge):
-        """Last N weeks mode calls get_last_n_weeks_spend."""
+        """Last N weeks mode calls get_last_n_weeks_spend without extrapolation."""
         result = bridge.get_current_allocation(
             comparison_mode="last_n_weeks",
             num_periods=8,
             n_weeks=52
         )
 
-        # Should match get_last_n_weeks_spend
-        expected, _, _ = bridge.get_last_n_weeks_spend(n_weeks=52, num_periods=8)
+        # Should match get_last_n_weeks_spend without extrapolation (raw actual values)
+        expected, _, _ = bridge.get_last_n_weeks_spend(n_weeks=52)
         for ch in expected:
             assert abs(result[ch] - expected[ch]) < 0.01
 

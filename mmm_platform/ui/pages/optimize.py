@@ -573,7 +573,7 @@ def _show_channel_bounds_expander(channel_info):
 
                 if comparison_mode == "Last N weeks actual" and compare_enabled:
                     baseline_spend, _, _ = allocator.bridge.get_last_n_weeks_spend(
-                        n_weeks, num_periods=num_periods
+                        n_weeks  # No extrapolation - use raw actual values
                     )
                 elif comparison_mode == "Most recent period" and compare_enabled:
                     baseline_spend, _, _, _ = allocator.bridge.get_most_recent_matching_period_spend(
@@ -638,6 +638,16 @@ def _show_channel_bounds_expander(channel_info):
                     "Note": note,
                 })
             st.dataframe(pd.DataFrame(preview_data), hide_index=True, width="stretch")
+
+            # Check if budget exceeds bounds capacity
+            total_max = sum(bounds_config[ch][1] for ch in bounds_config)
+            current_budget = st.session_state.get("budget_value", 100000)
+            if current_budget > total_max:
+                unallocated = current_budget - total_max
+                st.warning(
+                    f"**Budget exceeds bounds capacity:** ${current_budget:,.0f} budget > ${total_max:,.0f} max allocatable.\n\n"
+                    f"${unallocated:,.0f} will be unallocated. Loosen bounds or reduce budget to allocate fully."
+                )
 
         elif bounds_mode == "Custom bounds":
             st.caption(
@@ -1373,13 +1383,23 @@ def _show_optimize_results(wrapper, result):
     else:
         st.caption(f"95% CI: ${result.response_ci_low:,.0f} - ${result.response_ci_high:,.0f}")
 
-    # Efficiency floor results (if applicable)
+    # Unallocated budget results (from bounds or efficiency floor)
     if result.unallocated_budget is not None and result.unallocated_budget > 0:
-        st.warning(
-            f"**Unallocated Budget:** ${result.unallocated_budget:,.0f}\n\n"
-            f"To achieve {result.efficiency_metric.upper()} target of "
-            f"{result.efficiency_target:.2f}, only ${result.total_budget:,.0f} can be efficiently deployed."
-        )
+        if result.efficiency_metric is not None:
+            # From efficiency floor mode
+            st.warning(
+                f"**Unallocated Budget:** ${result.unallocated_budget:,.0f}\n\n"
+                f"To achieve {result.efficiency_metric.upper()} target of "
+                f"{result.efficiency_target:.2f}, only ${result.total_budget:,.0f} can be efficiently deployed."
+            )
+        else:
+            # From bounds constraints
+            max_delta = st.session_state.get("max_delta_pct", 30)
+            st.warning(
+                f"**Unallocated Budget:** ${result.unallocated_budget:,.0f}\n\n"
+                f"Channel bounds (±{max_delta}%) prevented full budget allocation. "
+                f"Only ${result.total_budget:,.0f} allocated. Loosen bounds or reduce budget."
+            )
     elif result.efficiency_metric is not None:
         st.success(
             f"Full budget achieves {result.efficiency_metric.upper()} target: "
@@ -1667,6 +1687,13 @@ def _show_scenarios_results(result):
     """Show results for scenario analysis mode."""
     st.success(f"Analyzed {len(result.results)} scenarios")
 
+    # Get KPI labels for dynamic labeling
+    from mmm_platform.ui.kpi_labels import KPILabels
+    wrapper = st.session_state.get("current_model")
+    labels = KPILabels(wrapper.config) if wrapper else None
+    marginal_label = labels.marginal_efficiency_label if labels else "Marginal ROI"
+    efficiency_label = labels.efficiency_column_label if labels else "ROI"
+
     # Efficiency curve chart
     curve = result.efficiency_curve
     fig = go.Figure()
@@ -1698,25 +1725,56 @@ def _show_scenarios_results(result):
     )
     st.plotly_chart(fig)
 
-    # Marginal ROI chart
+    # Marginal efficiency chart (ROI or Cost Per)
     fig_marginal = px.line(
         curve,
         x="budget",
         y="marginal_response",
-        title="Marginal ROI by Budget Level",
-        labels={"budget": "Budget ($)", "marginal_response": "Marginal ROI"},
+        title=f"{marginal_label} by Budget Level",
+        labels={"budget": "Budget ($)", "marginal_response": marginal_label},
         markers=True,
     )
-    fig_marginal.add_hline(y=1.0, line_dash="dash", line_color="red", annotation_text="Breakeven (ROI=1)")
+    fig_marginal.add_hline(y=1.0, line_dash="dash", line_color="red", annotation_text="Breakeven")
     st.plotly_chart(fig_marginal)
 
-    # Summary table
+    # Summary table with CPA
     summary_df = curve[["budget", "expected_response", "marginal_response"]].copy()
+    summary_df["cpa"] = curve["budget"] / curve["expected_response"]
     summary_df["budget"] = summary_df["budget"].apply(lambda x: f"${x:,.0f}")
     summary_df["expected_response"] = summary_df["expected_response"].apply(lambda x: f"${x:,.0f}")
+    summary_df["cpa"] = summary_df["cpa"].apply(lambda x: f"${x:.2f}")
     summary_df["marginal_response"] = summary_df["marginal_response"].apply(lambda x: f"{x:.2f}")
-    summary_df.columns = ["Budget", "Expected Response", "Marginal ROI"]
+    summary_df = summary_df[["budget", "expected_response", "cpa", "marginal_response"]]
+    summary_df.columns = ["Budget", "Expected Response", "CPA", marginal_label]
     st.dataframe(summary_df, width="stretch", hide_index=True)
+
+    # Scenario drill-down details
+    st.markdown("### Scenario Details")
+    st.caption("Click to expand and see channel allocation for each budget level")
+
+    for scenario_result in result.results:
+        budget = scenario_result.total_budget
+        response = scenario_result.expected_response
+        cpa = budget / response if response > 0 else 0
+
+        with st.expander(f"${budget:,.0f} Budget → ${response:,.0f} Response (CPA: ${cpa:.2f})"):
+            df = scenario_result.to_dataframe()
+            # Format the dataframe for display
+            display_df = df.copy()
+            for col in ["optimal", "current", "delta"]:
+                if col in display_df.columns:
+                    display_df[col] = display_df[col].apply(
+                        lambda x: f"${x:,.0f}" if pd.notna(x) and x != 0 else "-"
+                    )
+            if "pct_change" in display_df.columns:
+                display_df["pct_change"] = display_df["pct_change"].apply(
+                    lambda x: f"{x:.0f}%" if pd.notna(x) and x != 0 else "-"
+                )
+            if "pct_of_total" in display_df.columns:
+                display_df["pct_of_total"] = display_df["pct_of_total"].apply(
+                    lambda x: f"{x:.1f}%" if pd.notna(x) else "-"
+                )
+            st.dataframe(display_df, hide_index=True, width="stretch")
 
     # Download
     csv = result.to_dataframe().to_csv(index=False)

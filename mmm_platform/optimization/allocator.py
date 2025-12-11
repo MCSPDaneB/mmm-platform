@@ -160,6 +160,10 @@ class BudgetAllocator:
             response_sharpe = risk_metrics.get('response_sharpe')
             response_std = risk_metrics.get('response_std')
 
+            # Get actual allocated amount and unallocated budget (from bounds constraints)
+            actual_allocated = getattr(scipy_result, 'actual_allocated', total_budget)
+            unallocated_budget = getattr(scipy_result, 'unallocated_budget', 0.0)
+
             # Get current allocation for comparison
             current_allocation = None
             current_response = None
@@ -175,7 +179,7 @@ class BudgetAllocator:
 
             result = OptimizationResult(
                 optimal_allocation=allocation_dict,
-                total_budget=total_budget,
+                total_budget=actual_allocated,  # Use actual allocated, not requested
                 expected_response=expected_response,
                 response_ci_low=ci_low,
                 response_ci_high=ci_high,
@@ -191,6 +195,7 @@ class BudgetAllocator:
                 response_cvar=response_cvar,
                 response_sharpe=response_sharpe,
                 response_std=response_std,
+                unallocated_budget=unallocated_budget if unallocated_budget > 1 else None,  # >$1 threshold for floating-point noise
                 _raw_result=scipy_result,
             )
 
@@ -596,9 +601,10 @@ class BudgetAllocator:
                 ch_bounds[1] / spend_scale / num_periods
             ))
 
-        # Budget constraint (in scaled units)
+        # Budget constraint (in scaled units) - use inequality to allow partial allocation
+        # when bounds are tighter than the requested budget
         budget_per_period_scaled = total_budget / spend_scale / num_periods
-        constraints = {'type': 'eq', 'fun': lambda x: x.sum() - budget_per_period_scaled}
+        constraints = {'type': 'ineq', 'fun': lambda x: budget_per_period_scaled - x.sum()}
 
         # Initial guess: uniform allocation (in scaled units)
         x0 = np.ones(n_channels) * budget_per_period_scaled / n_channels
@@ -623,16 +629,32 @@ class BudgetAllocator:
             for ch, val in zip(channels, result.x)
         }
 
+        # Calculate actual allocated vs requested budget
+        actual_allocated = sum(allocation.values())
+        unallocated_budget = total_budget - actual_allocated
+
         # Compute all risk metrics at optimal allocation for results
         risk_metrics = risk_objective.compute_all_risk_metrics(result.x)
 
-        # Store risk metrics in result for later use
+        # Store risk metrics and unallocated budget in result for later use
         result.risk_metrics = risk_metrics
+        result.actual_allocated = actual_allocated
+        result.unallocated_budget = unallocated_budget
 
         elapsed = time.time() - start_time
+
+        # Log with unallocated info if applicable
+        if unallocated_budget > total_budget * 0.01:  # >1% unallocated
+            logger.warning(
+                f"Bounds prevented full budget allocation: "
+                f"requested=${total_budget:,.0f}, allocated=${actual_allocated:,.0f}, "
+                f"unallocated=${unallocated_budget:,.0f}"
+            )
+
         logger.info(
             f"Optimization complete ({self.utility_name}): {result.nit} iterations "
-            f"in {elapsed:.1f}s, success={result.success}"
+            f"in {elapsed:.1f}s, success={result.success}, "
+            f"allocated=${actual_allocated:,.0f}"
         )
 
         return allocation, result

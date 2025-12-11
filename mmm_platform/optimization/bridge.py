@@ -249,7 +249,7 @@ class OptimizationBridge:
         elif comparison_mode == "last_n_weeks":
             if n_weeks is None:
                 raise ValueError("n_weeks required for 'last_n_weeks' comparison mode")
-            spend, _, _ = self.get_last_n_weeks_spend(n_weeks, num_periods=num_periods)
+            spend, _, _ = self.get_last_n_weeks_spend(n_weeks)  # No extrapolation - use raw actual values
             return spend
 
         elif comparison_mode == "most_recent_period":
