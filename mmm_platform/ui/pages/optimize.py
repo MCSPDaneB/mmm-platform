@@ -181,11 +181,14 @@ def _show_optimize_mode_inputs(channel_info):
                 total = sum(spend_dict.values())
 
                 if total > 0:
-                    # Store in a separate key that will be read on next render
+                    # Store filled value and info message
                     st.session_state.filled_budget_value = int(total)
                     st.session_state.budget_fill_info = (
                         f"Filled with ${total:,.0f} from {start_date:%Y-%m-%d} to {end_date:%Y-%m-%d}"
                     )
+                    # Delete the widget key so it picks up the new value on rerun
+                    if "opt_total_budget" in st.session_state:
+                        del st.session_state["opt_total_budget"]
                     st.rerun()
                 else:
                     st.warning("No spend found for selected period")
