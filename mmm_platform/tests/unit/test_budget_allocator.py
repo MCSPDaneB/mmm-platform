@@ -307,6 +307,8 @@ class TestOptimize:
             'response_ci_low': 40000.0,
             'response_ci_high': 50000.0,
         }
+        mock_result.actual_allocated = 100000
+        mock_result.unallocated_budget = 0.0
 
         allocation = {"tv_spend": 50000, "search_spend": 35000, "email_sends": 15000}
         allocator._optimize_with_working_gradients = Mock(return_value=(allocation, mock_result))
@@ -328,6 +330,8 @@ class TestOptimize:
             'response_ci_low': 44000.0,
             'response_ci_high': 52000.0,
         }
+        mock_result.actual_allocated = 80000
+        mock_result.unallocated_budget = 0.0
 
         allocation = {"tv_spend": 45000, "search_spend": 30000, "email_sends": 5000}
         allocator._optimize_with_working_gradients = Mock(return_value=(allocation, mock_result))
@@ -349,6 +353,8 @@ class TestOptimize:
             'response_ci_low': 38000.0,
             'response_ci_high': 46000.0,
         }
+        mock_result.actual_allocated = 60000
+        mock_result.unallocated_budget = 0.0
 
         allocation = {"tv_spend": 30000, "search_spend": 20000, "email_sends": 10000}
         allocator._optimize_with_working_gradients = Mock(return_value=(allocation, mock_result))
@@ -470,6 +476,8 @@ class TestOptimizeWithEfficiencyFloor:
             'response_ci_low': 70000.0,
             'response_ci_high': 80000.0,
         }
+        mock_result.actual_allocated = 50000
+        mock_result.unallocated_budget = 0.0
 
         allocation = {"tv_spend": 25000, "search_spend": 15000, "email_sends": 10000}
         allocator._optimize_with_working_gradients = Mock(return_value=(allocation, mock_result))
