@@ -140,9 +140,10 @@ def main():
 def _load_model_from_home(model_path: str):
     """Load a model from the home page and navigate to Results."""
     from mmm_platform.model.persistence import ModelPersistence
+    from mmm_platform.model.mmm import MMMWrapper
 
     try:
-        loaded = ModelPersistence.load(model_path)
+        wrapper = ModelPersistence.load(model_path, MMMWrapper)
 
         # Clear widget keys to avoid conflicts
         keys_to_delete = [
@@ -153,17 +154,24 @@ def _load_model_from_home(model_path: str):
             del st.session_state[k]
 
         # Set session state
-        st.session_state.current_data = loaded["data"]
-        st.session_state.current_config = loaded["config"]
-        st.session_state.current_model = loaded["model"]
-        st.session_state.model_fitted = True
+        st.session_state.current_model = wrapper
+        st.session_state.current_config = wrapper.config
+        st.session_state.model_fitted = wrapper.idata is not None
         st.session_state.current_model_path = model_path
 
-        # Set client from config
-        if loaded["config"] and loaded["config"].client:
-            st.session_state.active_client = loaded["config"].client
+        # Restore data - prefer df_original (full timeseries) over df_raw
+        if getattr(wrapper, "df_original", None) is not None:
+            st.session_state.current_data = wrapper.df_original
+        elif wrapper.df_raw is not None:
+            st.session_state.current_data = wrapper.df_raw
+        elif wrapper.df_scaled is not None:
+            st.session_state.current_data = wrapper.df_scaled
 
-        st.success(f"Loaded model: {loaded['config'].config_name if loaded['config'] else 'Unknown'}")
+        # Set client from config
+        if wrapper.config and wrapper.config.client:
+            st.session_state.active_client = wrapper.config.client
+
+        st.success(f"Loaded model: {wrapper.config.config_name if wrapper.config else 'Unknown'}")
         st.rerun()
     except Exception as e:
         st.error(f"Failed to load model: {e}")
