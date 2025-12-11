@@ -385,85 +385,89 @@ def show_optimize_budget_tab(wrapper):
                         "Edit the indices below. Values > 1.0 mean more effective, < 1.0 means less effective."
                     )
 
-                    # Create editable inputs for each channel
+                    # Create editable dataframe
+                    edited_df = st.data_editor(
+                        indices_df,
+                        column_config={
+                            "Channel": st.column_config.TextColumn("Channel", disabled=True),
+                            "Index": st.column_config.NumberColumn(
+                                "Index",
+                                min_value=0.1,
+                                max_value=3.0,
+                                step=0.05,
+                                format="%.2f",
+                            ),
+                            "Interpretation": st.column_config.TextColumn("Interpretation", disabled=True),
+                        },
+                        hide_index=True,
+                        use_container_width=True,
+                        key="seasonal_editor",
+                    )
+
+                    # Extract edited indices back to dict
                     edited_indices = {}
-                    for ch, idx in seasonal_indices.items():
-                        display_name = channel_info[channel_info["channel"] == ch]["display_name"].values
-                        display_name = display_name[0] if len(display_name) > 0 else ch
+                    for _, row in edited_df.iterrows():
+                        # Find the original channel key from display name
+                        display_name = row["Channel"]
+                        for ch in seasonal_indices.keys():
+                            ch_display = channel_info[channel_info["channel"] == ch]["display_name"].values
+                            ch_display = ch_display[0] if len(ch_display) > 0 else ch
+                            if ch_display == display_name:
+                                edited_indices[ch] = float(row["Index"])
+                                break
 
-                        edited_indices[ch] = st.number_input(
-                            f"{display_name}",
-                            min_value=0.1,
-                            max_value=3.0,
-                            value=float(idx),
-                            step=0.05,
-                            format="%.2f",
-                            key=f"seasonal_{ch}",
-                        )
-
-                    # Use edited indices
                     st.session_state.seasonal_indices = edited_indices
                 else:
                     # Display read-only table
                     indices_df["Index"] = indices_df["Index"].apply(lambda x: f"{x:.2f}")
-                    st.dataframe(indices_df, width="stretch", hide_index=True)
+                    st.dataframe(indices_df, use_container_width=True, hide_index=True)
 
                     # Store computed indices
                     st.session_state.seasonal_indices = seasonal_indices
 
-                # Show full monthly/quarterly table
-                with st.expander("View Full Seasonal Table"):
-                    full_table = seasonal_calc.to_dataframe(
-                        use_quarterly=confidence_info["using_quarterly"]
-                    )
-                    # Keep unformatted version for download
-                    full_table_raw = full_table.copy()
-                    # Format numbers for display
-                    for col in full_table.columns:
-                        if col != "Display Name":
-                            full_table[col] = full_table[col].apply(lambda x: f"{x:.2f}")
-                    st.dataframe(full_table, width="stretch")
+                # Download buttons for seasonality data
+                st.markdown("---")
+                col1, col2 = st.columns(2)
 
-                    # Download button for seasonal indices
-                    csv = full_table_raw.to_csv(index=True)
+                with col1:
+                    # Channel seasonality CSV
+                    channel_csv_data = []
+                    for ch, idx in seasonal_indices.items():
+                        display_name = channel_info[channel_info["channel"] == ch]["display_name"].values
+                        display_name = display_name[0] if len(display_name) > 0 else ch
+                        channel_csv_data.append({
+                            "Channel": ch,
+                            "Display Name": display_name,
+                            "Index": idx,
+                        })
+                    channel_df = pd.DataFrame(channel_csv_data)
+                    channel_csv = channel_df.to_csv(index=False)
                     st.download_button(
-                        label="Download Seasonal Indices (CSV)",
-                        data=csv,
-                        file_name="seasonal_indices.csv",
+                        label="Download Channel Seasonality",
+                        data=channel_csv,
+                        file_name="channel_seasonality.csv",
                         mime="text/csv",
                     )
 
-                # Upload custom seasonal indices
-                uploaded_file = st.file_uploader(
-                    "Upload custom seasonal indices (CSV)",
-                    type=["csv"],
-                    help="Upload a CSV with channel names and index values to override computed indices",
-                    key="seasonal_upload",
-                )
-
-                if uploaded_file is not None:
-                    try:
-                        custom_df = pd.read_csv(uploaded_file, index_col=0)
-                        # Parse uploaded values into seasonal_indices dict
-                        updated_count = 0
-                        for ch in seasonal_indices.keys():
-                            if ch in custom_df.index:
-                                # Use the first numeric column for the period index
-                                for col in custom_df.columns:
-                                    if col != "Display Name":
-                                        try:
-                                            seasonal_indices[ch] = float(custom_df.loc[ch, col])
-                                            updated_count += 1
-                                            break
-                                        except (ValueError, TypeError):
-                                            continue
-                        if updated_count > 0:
-                            st.success(f"Loaded custom indices for {updated_count} channels")
-                            st.session_state.seasonal_indices = seasonal_indices
-                        else:
-                            st.warning("No matching channels found in uploaded file")
-                    except Exception as e:
-                        st.error(f"Error reading file: {e}")
+                with col2:
+                    # Demand seasonality CSV
+                    demand_csv_data = [{
+                        "Period": f"{start_month} ({num_months} months)",
+                        "Demand Index": demand_index,
+                        "Interpretation": (
+                            "Above average" if demand_index > 1.05 else
+                            "Below average" if demand_index < 0.95 else
+                            "Average"
+                        ),
+                    }]
+                    demand_df = pd.DataFrame(demand_csv_data)
+                    demand_csv = demand_df.to_csv(index=False)
+                    st.download_button(
+                        label="Download Demand Seasonality",
+                        data=demand_csv,
+                        file_name="demand_seasonality.csv",
+                        mime="text/csv",
+                    )
 
             except Exception as e:
                 import traceback
