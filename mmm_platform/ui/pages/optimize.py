@@ -1693,9 +1693,26 @@ def _show_scenarios_results(result):
     labels = KPILabels(wrapper.config) if wrapper else None
     marginal_label = labels.marginal_efficiency_label if labels else "Marginal ROI"
     efficiency_label = labels.efficiency_column_label if labels else "ROI"
+    is_count_kpi = labels and not labels.is_revenue_type
+
+    # For count KPIs, let user set target CPA as breakeven threshold
+    target_cpa = None
+    if is_count_kpi:
+        kpi_name = labels.target_name or "Conversion"
+        st.markdown(f"**Set your target {efficiency_label}** to define the breakeven threshold:")
+        target_cpa = st.number_input(
+            f"Target {efficiency_label} (maximum acceptable cost per {kpi_name})",
+            min_value=0.01,
+            value=15.0,
+            step=1.0,
+            format="%.2f",
+            help=f"Your target cost per {kpi_name}. Breakeven = budget level where marginal cost exceeds this target.",
+            key="scenario_target_cpa_input"
+        )
+        st.markdown("---")
 
     # Efficiency curve chart
-    curve = result.efficiency_curve
+    curve = result.efficiency_curve.copy()
     fig = go.Figure()
 
     # Response line
@@ -1726,6 +1743,10 @@ def _show_scenarios_results(result):
     st.plotly_chart(fig)
 
     # Marginal efficiency chart (ROI or Cost Per)
+    # For count KPIs, invert marginal_response to show cost-per (dollars per install)
+    if is_count_kpi:
+        curve["marginal_response"] = 1 / curve["marginal_response"]
+
     fig_marginal = px.line(
         curve,
         x="budget",
@@ -1734,18 +1755,48 @@ def _show_scenarios_results(result):
         labels={"budget": "Budget ($)", "marginal_response": marginal_label},
         markers=True,
     )
-    fig_marginal.add_hline(y=1.0, line_dash="dash", line_color="red", annotation_text="Breakeven")
+
+    # Add breakeven line: ROI=1.0 for revenue KPIs, target CPA for count KPIs
+    if is_count_kpi and target_cpa:
+        fig_marginal.add_hline(
+            y=target_cpa, line_dash="dash", line_color="red",
+            annotation_text=f"Target (${target_cpa:.2f})"
+        )
+    elif not is_count_kpi:
+        fig_marginal.add_hline(
+            y=1.0, line_dash="dash", line_color="red",
+            annotation_text="Breakeven ($1 ROI)"
+        )
     st.plotly_chart(fig_marginal)
 
-    # Summary table with CPA
+    # Summary table with ROI or CPA depending on KPI type
     summary_df = curve[["budget", "expected_response", "marginal_response"]].copy()
-    summary_df["cpa"] = curve["budget"] / curve["expected_response"]
+
+    # Add efficiency column (ROI for revenue, CPA for count)
+    if is_count_kpi:
+        summary_df["efficiency"] = curve["budget"] / curve["expected_response"]
+        eff_col_name = "CPA"
+        eff_format = lambda x: f"${x:.2f}"
+    else:
+        summary_df["efficiency"] = curve["expected_response"] / curve["budget"]
+        eff_col_name = "ROI"
+        eff_format = lambda x: f"{x:.2f}"
+
+    # Format columns
     summary_df["budget"] = summary_df["budget"].apply(lambda x: f"${x:,.0f}")
-    summary_df["expected_response"] = summary_df["expected_response"].apply(lambda x: f"${x:,.0f}")
-    summary_df["cpa"] = summary_df["cpa"].apply(lambda x: f"${x:.2f}")
-    summary_df["marginal_response"] = summary_df["marginal_response"].apply(lambda x: f"{x:.2f}")
-    summary_df = summary_df[["budget", "expected_response", "cpa", "marginal_response"]]
-    summary_df.columns = ["Budget", "Expected Response", "CPA", marginal_label]
+    if is_count_kpi:
+        # Count KPIs: response is a count, not dollars
+        summary_df["expected_response"] = summary_df["expected_response"].apply(lambda x: f"{x:,.0f}")
+        summary_df["marginal_response"] = summary_df["marginal_response"].apply(lambda x: f"${x:.2f}")
+    else:
+        # Revenue KPIs: response is dollars
+        summary_df["expected_response"] = summary_df["expected_response"].apply(lambda x: f"${x:,.0f}")
+        summary_df["marginal_response"] = summary_df["marginal_response"].apply(lambda x: f"{x:.2f}")
+    summary_df["efficiency"] = summary_df["efficiency"].apply(eff_format)
+
+    summary_df = summary_df[["budget", "expected_response", "efficiency", "marginal_response"]]
+    response_label = labels.target_name if is_count_kpi else "Expected Response"
+    summary_df.columns = ["Budget", response_label, eff_col_name, marginal_label]
     st.dataframe(summary_df, width="stretch", hide_index=True)
 
     # Scenario drill-down details
@@ -1755,9 +1806,17 @@ def _show_scenarios_results(result):
     for scenario_result in result.results:
         budget = scenario_result.total_budget
         response = scenario_result.expected_response
-        cpa = budget / response if response > 0 else 0
 
-        with st.expander(f"${budget:,.0f} Budget → ${response:,.0f} Response (CPA: ${cpa:.2f})"):
+        # Format expander label based on KPI type
+        if is_count_kpi:
+            cpa = budget / response if response > 0 else 0
+            response_label = labels.target_name or "Response"
+            expander_label = f"${budget:,.0f} Budget → {response:,.0f} {response_label} (CPA: ${cpa:.2f})"
+        else:
+            roi = response / budget if budget > 0 else 0
+            expander_label = f"${budget:,.0f} Budget → ${response:,.0f} Response (ROI: {roi:.2f})"
+
+        with st.expander(expander_label):
             df = scenario_result.to_dataframe()
             # Format the dataframe for display
             display_df = df.copy()
