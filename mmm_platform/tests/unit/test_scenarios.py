@@ -135,12 +135,12 @@ class TestTargetOptimizer:
             target_response=3000,
             budget_range=(1000, 50000),
             tolerance=0.01,
-            max_iterations=20,
         )
 
         assert result.achievable is True
-        assert result.iterations <= 20
-        # Should converge well within tolerance
+        # Binary search should converge quickly (well under safety limit of 50)
+        assert result.iterations <= 25
+        # Should converge within tolerance
         relative_error = abs(result.expected_response - 3000) / 3000
         assert relative_error <= 0.05
 

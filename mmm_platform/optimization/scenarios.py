@@ -48,14 +48,14 @@ class TargetOptimizer:
         target_response: float,
         budget_range: tuple[float, float] = (10000, 1000000),
         tolerance: float = 0.01,
-        max_iterations: int = 20,
         **optimize_kwargs,
     ) -> TargetResult:
         """
         Find minimum budget to achieve target response.
 
         Uses binary search to find the budget level where
-        expected response equals the target.
+        expected response equals the target. Continues until
+        within tolerance (not iteration-limited).
 
         Parameters
         ----------
@@ -64,9 +64,7 @@ class TargetOptimizer:
         budget_range : tuple
             (min_budget, max_budget) to search within.
         tolerance : float
-            Relative tolerance for target matching.
-        max_iterations : int
-            Maximum search iterations.
+            Relative tolerance for target matching (default 1%).
         **optimize_kwargs
             Additional arguments passed to allocator.optimize().
 
@@ -74,6 +72,7 @@ class TargetOptimizer:
         -------
         TargetResult
             Result with required budget and allocation.
+            achievable=False if target cannot be met within tolerance.
         """
         min_budget, max_budget = budget_range
         logger.info(
@@ -120,18 +119,19 @@ class TargetOptimizer:
                 optimization_result=min_result,
             )
 
-        # Binary search
+        # Binary search - continue until within tolerance (not iteration-based)
         iterations = 0
         low, high = min_budget, max_budget
+        safety_limit = 50  # Should never hit with binary search
 
-        while iterations < max_iterations:
+        while True:
             iterations += 1
             mid = (low + high) / 2
 
             result = self._get_response_at_budget(mid, **optimize_kwargs)
             response = result.expected_response
 
-            # Check if we're close enough
+            # Check if we're within tolerance - SUCCESS
             relative_error = abs(response - target_response) / target_response
             if relative_error <= tolerance:
                 logger.info(
@@ -152,6 +152,48 @@ class TargetOptimizer:
                     optimization_result=result,
                 )
 
+            # Check if search has converged but not within tolerance
+            # This means target is not achievable at any budget in range
+            range_ratio = (high - low) / max_budget
+            if range_ratio < 1e-6:
+                logger.warning(
+                    f"Search converged but could not achieve target within {tolerance:.1%}. "
+                    f"Best error: {relative_error:.2%}"
+                )
+                return TargetResult(
+                    target_response=target_response,
+                    budget_range_searched=budget_range,
+                    required_budget=mid,
+                    optimal_allocation=result.optimal_allocation,
+                    achievable=False,
+                    expected_response=response,
+                    response_ci_low=result.response_ci_low,
+                    response_ci_high=result.response_ci_high,
+                    iterations=iterations,
+                    message=f"Converged but could not achieve target within {tolerance:.1%}. Best error: {relative_error:.1%}",
+                    optimization_result=result,
+                )
+
+            # Safety limit (should never hit with proper binary search)
+            if iterations >= safety_limit:
+                logger.warning(
+                    f"Safety limit reached after {iterations} iterations. "
+                    f"Best error: {relative_error:.2%}"
+                )
+                return TargetResult(
+                    target_response=target_response,
+                    budget_range_searched=budget_range,
+                    required_budget=mid,
+                    optimal_allocation=result.optimal_allocation,
+                    achievable=False,
+                    expected_response=response,
+                    response_ci_low=result.response_ci_low,
+                    response_ci_high=result.response_ci_high,
+                    iterations=iterations,
+                    message=f"Safety limit reached. Best error: {relative_error:.1%}",
+                    optimization_result=result,
+                )
+
             # Narrow the search
             if response < target_response:
                 low = mid
@@ -160,29 +202,8 @@ class TargetOptimizer:
 
             logger.debug(
                 f"Iteration {iterations}: budget=${mid:,.0f}, "
-                f"response={response:,.0f}, target={target_response:,.0f}"
+                f"response={response:,.0f}, target={target_response:,.0f}, error={relative_error:.2%}"
             )
-
-        # Return best result after max iterations
-        final_result = self._get_response_at_budget((low + high) / 2, **optimize_kwargs)
-        logger.warning(
-            f"Max iterations reached. Best: budget=${(low + high) / 2:,.0f}, "
-            f"response={final_result.expected_response:,.0f}"
-        )
-
-        return TargetResult(
-            target_response=target_response,
-            budget_range_searched=budget_range,
-            required_budget=(low + high) / 2,
-            optimal_allocation=final_result.optimal_allocation,
-            achievable=True,
-            expected_response=final_result.expected_response,
-            response_ci_low=final_result.response_ci_low,
-            response_ci_high=final_result.response_ci_high,
-            iterations=iterations,
-            message=f"Max iterations reached. Response within {abs(final_result.expected_response - target_response) / target_response:.1%}",
-            optimization_result=final_result,
-        )
 
     def _get_response_at_budget(
         self,
