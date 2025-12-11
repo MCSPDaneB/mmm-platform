@@ -528,15 +528,69 @@ def _show_channel_bounds_expander(channel_info):
     """Show the channel bounds configuration expander."""
     with st.expander("Channel Bounds", expanded=False):
         st.caption(
-            "Set minimum and maximum spend per channel. "
-            "Use **Min** for pre-committed budgets that can't be reduced. "
-            "Use **Max** to cap investment in any single channel."
+            "Constrain how much each channel can change from historical spend."
         )
 
-        use_custom_bounds = st.checkbox("Use custom bounds", value=False, key="use_custom_bounds")
+        bounds_mode = st.radio(
+            "Bounds mode",
+            ["No bounds", "Max % change", "Custom bounds"],
+            horizontal=True,
+            key="bounds_mode",
+            help=(
+                "**No bounds**: Optimizer can freely reallocate budget.\n\n"
+                "**Max % change**: Limit each channel to ±X% of historical spend.\n\n"
+                "**Custom bounds**: Set specific min/max for each channel."
+            ),
+        )
 
-        if use_custom_bounds:
-            num_periods = st.session_state.get("opt_num_periods", 8)
+        num_periods = st.session_state.get("opt_num_periods", 8)
+
+        if bounds_mode == "Max % change":
+            max_delta = st.slider(
+                "Maximum change per channel (%)",
+                min_value=10,
+                max_value=100,
+                value=30,
+                step=5,
+                key="max_delta_pct",
+                help="No channel can increase or decrease by more than this percentage from historical",
+            )
+
+            # Calculate bounds from historical spend
+            bounds_config = {}
+            for _, row in channel_info.iterrows():
+                ch = row["channel"]
+                avg = row["avg_period_spend"]
+                historical = avg * num_periods
+                min_val = historical * (1 - max_delta / 100)
+                max_val = historical * (1 + max_delta / 100)
+                bounds_config[ch] = (max(0.0, min_val), max_val)
+
+            st.session_state.bounds_config = bounds_config
+
+            # Show preview table
+            st.caption(f"Each channel limited to ±{max_delta}% of historical spend:")
+            preview_data = []
+            for _, row in channel_info.iterrows():
+                ch = row["channel"]
+                display = row["display_name"]
+                min_b, max_b = bounds_config[ch]
+                historical = row["avg_period_spend"] * num_periods
+                preview_data.append({
+                    "Channel": display,
+                    "Historical": f"${historical:,.0f}",
+                    "Min": f"${min_b:,.0f}",
+                    "Max": f"${max_b:,.0f}",
+                })
+            import pandas as pd
+            st.dataframe(pd.DataFrame(preview_data), hide_index=True, use_container_width=True)
+
+        elif bounds_mode == "Custom bounds":
+            st.caption(
+                "Set minimum and maximum spend per channel. "
+                "Use **Min** for pre-committed budgets. "
+                "Use **Max** to cap investment."
+            )
             bounds_config = {}
             for _, row in channel_info.iterrows():
                 ch = row["channel"]
@@ -563,7 +617,8 @@ def _show_channel_bounds_expander(channel_info):
                 bounds_config[ch] = (float(min_val), float(max_val))
 
             st.session_state.bounds_config = bounds_config
-        else:
+
+        else:  # No bounds
             st.session_state.bounds_config = None
 
 
