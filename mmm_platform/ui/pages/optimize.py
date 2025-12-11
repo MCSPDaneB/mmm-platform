@@ -297,23 +297,41 @@ def _show_incremental_mode_inputs(channel_info):
     if "base_allocation" not in st.session_state:
         st.session_state.base_allocation = {}
 
-    base_allocation = {}
+    # Build DataFrame for editable table
+    committed_data = []
     for _, row in channel_info.iterrows():
         ch = row["channel"]
         display = row["display_name"]
         avg = row["avg_period_spend"]
         default_value = int(avg * num_periods)
-
         # Use session state value if available, otherwise use default
         current_val = st.session_state.base_allocation.get(ch, default_value)
+        committed_data.append({
+            "channel_key": ch,
+            "Channel": display,
+            "Default": default_value,
+            "Committed": int(current_val),
+        })
 
-        base_allocation[ch] = float(st.number_input(
-            f"{display}",
-            min_value=0,
-            value=int(current_val),
-            step=1000,
-            key=f"base_{ch}",
-        ))
+    committed_df = pd.DataFrame(committed_data)
+
+    # Editable table for committed budget
+    edited_df = st.data_editor(
+        committed_df[["Channel", "Default", "Committed"]],
+        column_config={
+            "Channel": st.column_config.TextColumn("Channel", disabled=True),
+            "Default": st.column_config.NumberColumn("Default ($)", disabled=True, format="$%d"),
+            "Committed": st.column_config.NumberColumn("Committed ($)", min_value=0, format="$%d"),
+        },
+        hide_index=True,
+        key="committed_budget_editor",
+    )
+
+    # Extract values back to base_allocation dict
+    base_allocation = {}
+    for i, row in committed_df.iterrows():
+        ch = row["channel_key"]
+        base_allocation[ch] = float(edited_df.iloc[i]["Committed"])
 
     # Store in session state
     st.session_state.base_allocation = base_allocation
@@ -1532,15 +1550,20 @@ def _show_comparison_charts(result, df):
 def _show_allocation_table(df):
     """Show the allocation table with formatting."""
     display_df = df.copy()
-    display_df["optimal"] = display_df["optimal"].apply(lambda x: f"${x:,.0f}")
-    display_df["pct_of_total"] = display_df["pct_of_total"].apply(lambda x: f"{x:.1f}%")
+
+    # Build column config for sortable, formatted display
+    col_config = {
+        "channel": st.column_config.TextColumn("Channel"),
+        "optimal": st.column_config.NumberColumn("Optimal ($)", format="$%,.0f"),
+        "pct_of_total": st.column_config.NumberColumn("% of Total", format="%.1f%%"),
+    }
 
     if "current" in display_df.columns:
-        display_df["current"] = display_df["current"].apply(lambda x: f"${x:,.0f}")
-        display_df["delta"] = display_df["delta"].apply(lambda x: f"${x:+,.0f}")
-        display_df["pct_change"] = display_df["pct_change"].apply(lambda x: f"{x:+.1f}%")
+        col_config["current"] = st.column_config.NumberColumn("Current ($)", format="$%,.0f")
+        col_config["delta"] = st.column_config.NumberColumn("Delta ($)", format="$%+,.0f")
+        col_config["pct_change"] = st.column_config.NumberColumn("% Change", format="%+.1f%%")
 
-    st.dataframe(display_df, width="stretch", hide_index=True)
+    st.dataframe(display_df, column_config=col_config, hide_index=True)
 
 
 def _show_incremental_results(wrapper, result):
@@ -1658,13 +1681,17 @@ def _show_incremental_results(wrapper, result):
     )
     st.plotly_chart(fig_stacked)
 
-    # Allocation table
-    display_df = comparison_df.copy()
-    display_df["Committed"] = display_df["Committed"].apply(lambda x: f"${x:,.0f}")
-    display_df["Recommended"] = display_df["Recommended"].apply(lambda x: f"${x:,.0f}")
-    display_df["Incremental"] = display_df["Incremental"].apply(lambda x: f"${x:+,.0f}")
-
-    st.dataframe(display_df, width="stretch", hide_index=True)
+    # Allocation table with sortable columns
+    st.dataframe(
+        comparison_df,
+        column_config={
+            "Channel": st.column_config.TextColumn("Channel"),
+            "Committed": st.column_config.NumberColumn("Committed ($)", format="$%,.0f"),
+            "Recommended": st.column_config.NumberColumn("Recommended ($)", format="$%,.0f"),
+            "Incremental": st.column_config.NumberColumn("Incremental ($)", format="$%+,.0f"),
+        },
+        hide_index=True,
+    )
 
     # Download results
     csv = comparison_df.to_csv(index=False)
@@ -1697,10 +1724,17 @@ def _show_target_results(result):
     # Allocation breakdown
     st.markdown("#### Optimal Allocation")
     alloc_df = pd.DataFrame([
-        {"Channel": ch, "Budget": f"${amt:,.0f}"}
+        {"Channel": ch, "Budget": amt}
         for ch, amt in result.optimal_allocation.items()
     ])
-    st.dataframe(alloc_df, width="stretch", hide_index=True)
+    st.dataframe(
+        alloc_df,
+        column_config={
+            "Channel": st.column_config.TextColumn("Channel"),
+            "Budget": st.column_config.NumberColumn("Budget ($)", format="$%,.0f"),
+        },
+        hide_index=True,
+    )
 
     # Show message
     st.info(result.message)
@@ -1799,28 +1833,32 @@ def _show_scenarios_results(result):
     if is_count_kpi:
         summary_df["efficiency"] = curve["budget"] / curve["expected_response"]
         eff_col_name = "CPA"
-        eff_format = lambda x: f"${x:.2f}"
     else:
         summary_df["efficiency"] = curve["expected_response"] / curve["budget"]
         eff_col_name = "ROI"
-        eff_format = lambda x: f"{x:.2f}"
 
-    # Format columns
-    summary_df["budget"] = summary_df["budget"].apply(lambda x: f"${x:,.0f}")
-    if is_count_kpi:
-        # Count KPIs: response is a count, not dollars
-        summary_df["expected_response"] = summary_df["expected_response"].apply(lambda x: f"{x:,.0f}")
-        summary_df["marginal_response"] = summary_df["marginal_response"].apply(lambda x: f"${x:.2f}")
-    else:
-        # Revenue KPIs: response is dollars
-        summary_df["expected_response"] = summary_df["expected_response"].apply(lambda x: f"${x:,.0f}")
-        summary_df["marginal_response"] = summary_df["marginal_response"].apply(lambda x: f"{x:.2f}")
-    summary_df["efficiency"] = summary_df["efficiency"].apply(eff_format)
-
+    # Keep numeric values, rename columns
     summary_df = summary_df[["budget", "expected_response", "efficiency", "marginal_response"]]
     response_label = labels.target_name if is_count_kpi else "Expected Response"
     summary_df.columns = ["Budget", response_label, eff_col_name, marginal_label]
-    st.dataframe(summary_df, width="stretch", hide_index=True)
+
+    # Build column config based on KPI type
+    if is_count_kpi:
+        col_config = {
+            "Budget": st.column_config.NumberColumn("Budget", format="$%,.0f"),
+            response_label: st.column_config.NumberColumn(response_label, format="%,.0f"),
+            eff_col_name: st.column_config.NumberColumn(eff_col_name, format="$%.2f"),
+            marginal_label: st.column_config.NumberColumn(marginal_label, format="$%.2f"),
+        }
+    else:
+        col_config = {
+            "Budget": st.column_config.NumberColumn("Budget", format="$%,.0f"),
+            response_label: st.column_config.NumberColumn(response_label, format="$%,.0f"),
+            eff_col_name: st.column_config.NumberColumn(eff_col_name, format="%.2f"),
+            marginal_label: st.column_config.NumberColumn(marginal_label, format="%.2f"),
+        }
+
+    st.dataframe(summary_df, column_config=col_config, hide_index=True)
 
     # Scenario drill-down details
     st.markdown("### Scenario Details")
@@ -1841,22 +1879,23 @@ def _show_scenarios_results(result):
 
         with st.expander(expander_label):
             df = scenario_result.to_dataframe()
-            # Format the dataframe for display
-            display_df = df.copy()
-            for col in ["optimal", "current", "delta"]:
-                if col in display_df.columns:
-                    display_df[col] = display_df[col].apply(
-                        lambda x: f"${x:,.0f}" if pd.notna(x) and x != 0 else "-"
-                    )
-            if "pct_change" in display_df.columns:
-                display_df["pct_change"] = display_df["pct_change"].apply(
-                    lambda x: f"{x:.0f}%" if pd.notna(x) and x != 0 else "-"
-                )
-            if "pct_of_total" in display_df.columns:
-                display_df["pct_of_total"] = display_df["pct_of_total"].apply(
-                    lambda x: f"{x:.1f}%" if pd.notna(x) else "-"
-                )
-            st.dataframe(display_df, hide_index=True, width="stretch")
+
+            # Build column config for sortable, formatted display
+            col_config = {
+                "channel": st.column_config.TextColumn("Channel"),
+            }
+            if "optimal" in df.columns:
+                col_config["optimal"] = st.column_config.NumberColumn("Optimal ($)", format="$%,.0f")
+            if "current" in df.columns:
+                col_config["current"] = st.column_config.NumberColumn("Current ($)", format="$%,.0f")
+            if "delta" in df.columns:
+                col_config["delta"] = st.column_config.NumberColumn("Delta ($)", format="$%+,.0f")
+            if "pct_change" in df.columns:
+                col_config["pct_change"] = st.column_config.NumberColumn("% Change", format="%.0f%%")
+            if "pct_of_total" in df.columns:
+                col_config["pct_of_total"] = st.column_config.NumberColumn("% of Total", format="%.1f%%")
+
+            st.dataframe(df, column_config=col_config, hide_index=True)
 
     # Download
     csv = result.to_dataframe().to_csv(index=False)

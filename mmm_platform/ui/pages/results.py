@@ -306,16 +306,15 @@ def show():
             st.plotly_chart(fig_grouped, width="stretch")
 
         display_grouped = grouped[["group", "contribution_real", "pct_of_total"]].copy()
-        display_grouped["contribution_real"] = display_grouped["contribution_real"].apply(lambda x: f"${x:,.0f}")
-        display_grouped["pct_of_total"] = display_grouped["pct_of_total"].apply(lambda x: f"{x:.2f}%")
+        display_grouped.columns = ["Group", "Contribution ($)", "% of Total"]
 
         st.dataframe(
-            display_grouped.rename(columns={
-                "group": "Group",
-                "contribution_real": "Contribution ($)",
-                "pct_of_total": "% of Total"
-            }),
-            width="stretch",
+            display_grouped,
+            column_config={
+                "Group": st.column_config.TextColumn("Group"),
+                "Contribution ($)": st.column_config.NumberColumn("Contribution ($)", format="$%,.0f"),
+                "% of Total": st.column_config.NumberColumn("% of Total", format="%.2f%%"),
+            },
             hide_index=True,
         )
 
@@ -512,9 +511,10 @@ def show():
                                         axis=1
                                     ),
                                     "Prior in HDI": validation_df["prior_in_hdi"].apply(lambda x: "✅" if x else "⚠️"),
-                                    f"{eff_label} Shift": validation_df["roi_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
-                                    "λ Shift": validation_df["lambda_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
+                                    f"{eff_label} Shift (%)": validation_df["roi_shift_pct"] * 100,
+                                    "λ Shift (%)": validation_df["lambda_shift_pct"] * 100,
                                 })
+                                shift_col = f"{eff_label} Shift (%)"
                             else:
                                 # Count KPI: convert efficiency to cost-per for display
                                 # Calculate CPA shift properly: (posterior_cpa - prior_cpa) / prior_cpa
@@ -524,7 +524,7 @@ def show():
                                         return None
                                     prior_cpa = 1 / r['prior_roi_mid']
                                     posterior_cpa = 1 / r['posterior_roi_mean']
-                                    return (posterior_cpa - prior_cpa) / prior_cpa
+                                    return (posterior_cpa - prior_cpa) / prior_cpa * 100
 
                                 display_validation_df = pd.DataFrame({
                                     "Channel": validation_df["channel"],
@@ -537,11 +537,20 @@ def show():
                                         axis=1
                                     ),
                                     "Prior in HDI": validation_df["prior_in_hdi"].apply(lambda x: "✅" if x else "⚠️"),
-                                    f"{eff_label} Shift": validation_df.apply(lambda r: f"{calc_cpa_shift(r):+.0%}" if calc_cpa_shift(r) is not None else "-", axis=1),
-                                    "λ Shift": validation_df["lambda_shift_pct"].apply(lambda x: f"{x:+.0%}" if pd.notna(x) else "-"),
+                                    f"{eff_label} Shift (%)": validation_df.apply(calc_cpa_shift, axis=1),
+                                    "λ Shift (%)": validation_df["lambda_shift_pct"] * 100,
                                 })
+                                shift_col = f"{eff_label} Shift (%)"
 
-                            st.dataframe(display_validation_df, hide_index=True, width='stretch')
+                            # Column config with sortable shift columns
+                            st.dataframe(
+                                display_validation_df,
+                                column_config={
+                                    shift_col: st.column_config.NumberColumn(shift_col, format="%+.0f%%"),
+                                    "λ Shift (%)": st.column_config.NumberColumn("λ Shift (%)", format="%+.0f%%"),
+                                },
+                                hide_index=True,
+                            )
 
                         # Warnings
                         if roi_report.channels_with_prior_tension:

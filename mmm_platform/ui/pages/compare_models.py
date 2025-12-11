@@ -378,19 +378,20 @@ def _show_channel_roi_tab(data: Dict[str, Any]):
     # Calculate differences
     merged["ROI Diff"] = merged["ROI (B)"].fillna(0) - merged["ROI (A)"].fillna(0)
 
-    # Format for display
-    display_df = merged.copy()
-    display_df["ROI (A)"] = display_df["ROI (A)"].apply(lambda x: f"${x:.2f}" if pd.notna(x) else "N/A")
-    display_df["ROI (B)"] = display_df["ROI (B)"].apply(lambda x: f"${x:.2f}" if pd.notna(x) else "N/A")
-    display_df["ROI Diff"] = display_df["ROI Diff"].apply(
-        lambda x: f"+${x:.2f}" if x > 0 else (f"-${abs(x):.2f}" if x < 0 else "$0.00")
-    )
+    # Prepare display dataframe with numeric values
+    display_df = merged[[name_col, "ROI (A)", "ROI (B)", "ROI Diff"]].copy()
+    display_df = display_df.rename(columns={name_col: "Channel"})
 
-    # Show table
+    # Show table with sortable columns
     st.dataframe(
-        display_df[[name_col, "ROI (A)", "ROI (B)", "ROI Diff"]].rename(columns={name_col: "Channel"}),
-        width="stretch",
-        hide_index=True
+        display_df,
+        column_config={
+            "Channel": st.column_config.TextColumn("Channel"),
+            "ROI (A)": st.column_config.NumberColumn("ROI (A)", format="$%.2f"),
+            "ROI (B)": st.column_config.NumberColumn("ROI (B)", format="$%.2f"),
+            "ROI Diff": st.column_config.NumberColumn("ROI Diff", format="$%+.2f"),
+        },
+        hide_index=True,
     )
 
     st.markdown("---")
@@ -462,12 +463,18 @@ def _show_contributions_tab(data: Dict[str, Any]):
             )
             st.plotly_chart(fig_a, width="stretch")
 
-            # Table
+            # Table with sortable columns
             display_a = contrib_a[["group", "pct_of_total", "contribution_real"]].copy()
-            display_a["pct_of_total"] = display_a["pct_of_total"].apply(lambda x: f"{x:.1f}%")
-            display_a["contribution_real"] = display_a["contribution_real"].apply(lambda x: f"${x:,.0f}")
             display_a.columns = ["Category", "% of Total", "Contribution"]
-            st.dataframe(display_a, width="stretch", hide_index=True)
+            st.dataframe(
+                display_a,
+                column_config={
+                    "Category": st.column_config.TextColumn("Category"),
+                    "% of Total": st.column_config.NumberColumn("% of Total", format="%.1f%%"),
+                    "Contribution": st.column_config.NumberColumn("Contribution", format="$%,.0f"),
+                },
+                hide_index=True,
+            )
 
     with col2:
         st.markdown(f"### {data['model_b']['name']}")
@@ -482,12 +489,18 @@ def _show_contributions_tab(data: Dict[str, Any]):
             )
             st.plotly_chart(fig_b, width="stretch")
 
-            # Table
+            # Table with sortable columns
             display_b = contrib_b[["group", "pct_of_total", "contribution_real"]].copy()
-            display_b["pct_of_total"] = display_b["pct_of_total"].apply(lambda x: f"{x:.1f}%")
-            display_b["contribution_real"] = display_b["contribution_real"].apply(lambda x: f"${x:,.0f}")
             display_b.columns = ["Category", "% of Total", "Contribution"]
-            st.dataframe(display_b, width="stretch", hide_index=True)
+            st.dataframe(
+                display_b,
+                column_config={
+                    "Category": st.column_config.TextColumn("Category"),
+                    "% of Total": st.column_config.NumberColumn("% of Total", format="%.1f%%"),
+                    "Contribution": st.column_config.NumberColumn("Contribution", format="$%,.0f"),
+                },
+                hide_index=True,
+            )
 
     # Side-by-side comparison chart
     st.markdown("---")
@@ -506,18 +519,22 @@ def _show_contributions_tab(data: Dict[str, Any]):
 
     merged_contrib["% Diff"] = merged_contrib["% (B)"] - merged_contrib["% (A)"]
 
-    # Display comparison table
-    display_merged = merged_contrib.copy()
-    display_merged["% (A)"] = display_merged["% (A)"].apply(lambda x: f"{x:.1f}%")
-    display_merged["% (B)"] = display_merged["% (B)"].apply(lambda x: f"{x:.1f}%")
-    display_merged["% Diff"] = display_merged["% Diff"].apply(
-        lambda x: f"+{x:.1f}%" if x > 0 else f"{x:.1f}%"
-    )
+    # Display comparison table with sortable columns
+    display_merged = merged_contrib[["group", "% (A)", "Value (A)", "% (B)", "Value (B)", "% Diff"]].copy()
     display_merged.columns = ["Category", "% (A)", "Value (A)", "% (B)", "Value (B)", "% Diff"]
-    display_merged["Value (A)"] = merged_contrib["Value (A)"].apply(lambda x: f"${x:,.0f}")
-    display_merged["Value (B)"] = merged_contrib["Value (B)"].apply(lambda x: f"${x:,.0f}")
 
-    st.dataframe(display_merged, width="stretch", hide_index=True)
+    st.dataframe(
+        display_merged,
+        column_config={
+            "Category": st.column_config.TextColumn("Category"),
+            "% (A)": st.column_config.NumberColumn("% (A)", format="%.1f%%"),
+            "Value (A)": st.column_config.NumberColumn("Value (A)", format="$%,.0f"),
+            "% (B)": st.column_config.NumberColumn("% (B)", format="%.1f%%"),
+            "Value (B)": st.column_config.NumberColumn("Value (B)", format="$%,.0f"),
+            "% Diff": st.column_config.NumberColumn("% Diff", format="%+.1f%%"),
+        },
+        hide_index=True,
+    )
 
 
 def _show_coefficients_tab(data: Dict[str, Any]):
