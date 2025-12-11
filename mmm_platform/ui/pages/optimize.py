@@ -169,7 +169,7 @@ def _show_optimize_mode_inputs(channel_info):
     col_budget, col_fill = st.columns([2, 1])
 
     with col_budget:
-        # Widget reads from budget_value, NOT from its own key
+        # No key parameter - allows programmatic control via value parameter
         total_budget = st.number_input(
             "Total Budget ($)",
             min_value=1000,
@@ -177,7 +177,6 @@ def _show_optimize_mode_inputs(channel_info):
             value=st.session_state.budget_value,
             step=10000,
             format="%d",
-            key="opt_total_budget",
         )
         # Sync user edits back to our storage
         st.session_state.budget_value = total_budget
