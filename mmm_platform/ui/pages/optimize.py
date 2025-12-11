@@ -18,6 +18,33 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _fill_budget_callback():
+    """Callback for Fill Budget button - runs BEFORE widgets render on next run."""
+    from mmm_platform.optimization import BudgetAllocator
+
+    try:
+        wrapper = st.session_state.current_model
+        fill_weeks = st.session_state.get("fill_weeks", 8)
+        num_periods = st.session_state.get("opt_num_periods", 8)
+
+        allocator = BudgetAllocator(wrapper, num_periods=num_periods)
+        spend_dict, start_date, end_date = allocator.bridge.get_last_n_weeks_spend(
+            n_weeks=fill_weeks,
+            num_periods=num_periods,
+        )
+        total = sum(spend_dict.values())
+
+        if total > 0:
+            st.session_state.opt_total_budget = int(total)
+            st.session_state.budget_fill_info = (
+                f"Filled with ${total:,.0f} from {start_date:%Y-%m-%d} to {end_date:%Y-%m-%d}"
+            )
+        else:
+            st.session_state.budget_fill_error = "No spend found for selected period"
+    except Exception as e:
+        st.session_state.budget_fill_error = str(e)
+
+
 def show():
     """Display the budget optimization page with unified 2-tab layout."""
     st.title("🎯 Budget Optimization")
@@ -163,35 +190,20 @@ def _show_optimize_mode_inputs(channel_info):
             help="Fill budget with actual spend from the last N weeks",
         )
 
-        if st.button("📥 Fill", key="fill_budget_btn", help="Fill budget from historical spend"):
-            try:
-                wrapper = st.session_state.current_model
-                num_periods = st.session_state.get("opt_num_periods", 8)
-                allocator = BudgetAllocator(wrapper, num_periods=num_periods)
+        # Use on_click callback - runs BEFORE widgets render on next run
+        st.button(
+            "📥 Fill",
+            key="fill_budget_btn",
+            on_click=_fill_budget_callback,
+            help="Fill budget from historical spend",
+        )
 
-                spend_dict, start_date, end_date = allocator.bridge.get_last_n_weeks_spend(
-                    n_weeks=fill_weeks,
-                    num_periods=num_periods,
-                )
-                total = sum(spend_dict.values())
-
-                if total > 0:
-                    # Set the value directly in session state BEFORE rerun
-                    # This works because we set it after the widget has been rendered
-                    # and then immediately rerun
-                    st.session_state["opt_total_budget"] = int(total)
-                    st.session_state.budget_fill_info = (
-                        f"Filled with ${total:,.0f} from {start_date:%Y-%m-%d} to {end_date:%Y-%m-%d}"
-                    )
-                    st.rerun()
-                else:
-                    st.warning("No spend found for selected period")
-            except Exception as e:
-                st.error(f"Could not fill budget: {e}")
-
-    # Show fill info if available
+    # Show fill info/error messages
     if "budget_fill_info" in st.session_state:
         st.info(st.session_state.budget_fill_info)
+    if "budget_fill_error" in st.session_state:
+        st.error(f"Could not fill budget: {st.session_state.budget_fill_error}")
+        del st.session_state.budget_fill_error
 
     # Optimization objective
     optimization_objective = st.selectbox(
