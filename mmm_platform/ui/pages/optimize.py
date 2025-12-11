@@ -583,7 +583,7 @@ def _show_channel_bounds_expander(channel_info):
                     "Max": f"${max_b:,.0f}",
                 })
             import pandas as pd
-            st.dataframe(pd.DataFrame(preview_data), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(preview_data), hide_index=True, width="stretch")
 
         elif bounds_mode == "Custom bounds":
             st.caption(
