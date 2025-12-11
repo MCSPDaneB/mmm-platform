@@ -30,7 +30,7 @@ def _fill_budget_callback():
         allocator = BudgetAllocator(wrapper, num_periods=num_periods)
         spend_dict, start_date, end_date = allocator.bridge.get_last_n_weeks_spend(
             n_weeks=fill_weeks,
-            num_periods=num_periods,
+            # Don't pass num_periods - we want actual spend, not extrapolated
         )
         total = sum(spend_dict.values())
 
