@@ -333,6 +333,26 @@ def show_optimize_budget_tab(wrapper):
                 # Store demand index in session state
                 st.session_state.demand_index = demand_index
 
+                # Download demand seasonality
+                demand_csv_data = [{
+                    "Period": f"{start_month} ({num_months} months)",
+                    "Demand Index": demand_index,
+                    "Interpretation": (
+                        "Above average" if demand_index > 1.05 else
+                        "Below average" if demand_index < 0.95 else
+                        "Average"
+                    ),
+                }]
+                demand_df = pd.DataFrame(demand_csv_data)
+                demand_csv = demand_df.to_csv(index=False)
+                st.download_button(
+                    label="Download Demand Seasonality",
+                    data=demand_csv,
+                    file_name="demand_seasonality.csv",
+                    mime="text/csv",
+                    key="download_demand_seasonality",
+                )
+
                 st.markdown("---")
                 st.markdown("**Channel Effectiveness**")
 
@@ -400,7 +420,7 @@ def show_optimize_budget_tab(wrapper):
                             "Interpretation": st.column_config.TextColumn("Interpretation", disabled=True),
                         },
                         hide_index=True,
-                        use_container_width=True,
+                        width="stretch",
                         key="seasonal_editor",
                     )
 
@@ -420,54 +440,58 @@ def show_optimize_budget_tab(wrapper):
                 else:
                     # Display read-only table
                     indices_df["Index"] = indices_df["Index"].apply(lambda x: f"{x:.2f}")
-                    st.dataframe(indices_df, use_container_width=True, hide_index=True)
+                    st.dataframe(indices_df, width="stretch", hide_index=True)
 
                     # Store computed indices
                     st.session_state.seasonal_indices = seasonal_indices
 
-                # Download buttons for seasonality data
-                st.markdown("---")
-                col1, col2 = st.columns(2)
+                # Download channel seasonality
+                channel_csv_data = []
+                for ch, idx in seasonal_indices.items():
+                    display_name = channel_info[channel_info["channel"] == ch]["display_name"].values
+                    display_name = display_name[0] if len(display_name) > 0 else ch
+                    channel_csv_data.append({
+                        "Channel": ch,
+                        "Display Name": display_name,
+                        "Index": idx,
+                    })
+                channel_df = pd.DataFrame(channel_csv_data)
+                channel_csv = channel_df.to_csv(index=False)
+                st.download_button(
+                    label="Download Channel Seasonality",
+                    data=channel_csv,
+                    file_name="channel_seasonality.csv",
+                    mime="text/csv",
+                    key="download_channel_seasonality",
+                )
 
-                with col1:
-                    # Channel seasonality CSV
-                    channel_csv_data = []
-                    for ch, idx in seasonal_indices.items():
-                        display_name = channel_info[channel_info["channel"] == ch]["display_name"].values
-                        display_name = display_name[0] if len(display_name) > 0 else ch
-                        channel_csv_data.append({
-                            "Channel": ch,
-                            "Display Name": display_name,
-                            "Index": idx,
-                        })
-                    channel_df = pd.DataFrame(channel_csv_data)
-                    channel_csv = channel_df.to_csv(index=False)
-                    st.download_button(
-                        label="Download Channel Seasonality",
-                        data=channel_csv,
-                        file_name="channel_seasonality.csv",
-                        mime="text/csv",
-                    )
+                # Upload custom channel indices
+                uploaded_file = st.file_uploader(
+                    "Upload custom channel indices (CSV)",
+                    type=["csv"],
+                    help="Upload a CSV with Channel and Index columns to override computed indices",
+                    key="seasonal_upload",
+                )
 
-                with col2:
-                    # Demand seasonality CSV
-                    demand_csv_data = [{
-                        "Period": f"{start_month} ({num_months} months)",
-                        "Demand Index": demand_index,
-                        "Interpretation": (
-                            "Above average" if demand_index > 1.05 else
-                            "Below average" if demand_index < 0.95 else
-                            "Average"
-                        ),
-                    }]
-                    demand_df = pd.DataFrame(demand_csv_data)
-                    demand_csv = demand_df.to_csv(index=False)
-                    st.download_button(
-                        label="Download Demand Seasonality",
-                        data=demand_csv,
-                        file_name="demand_seasonality.csv",
-                        mime="text/csv",
-                    )
+                if uploaded_file is not None:
+                    try:
+                        custom_df = pd.read_csv(uploaded_file)
+                        # Parse uploaded values into seasonal_indices dict
+                        updated_count = 0
+                        for ch in seasonal_indices.keys():
+                            # Match by Channel column
+                            if "Channel" in custom_df.columns and ch in custom_df["Channel"].values:
+                                row = custom_df[custom_df["Channel"] == ch]
+                                if "Index" in custom_df.columns:
+                                    seasonal_indices[ch] = float(row["Index"].values[0])
+                                    updated_count += 1
+                        if updated_count > 0:
+                            st.success(f"Loaded custom indices for {updated_count} channels")
+                            st.session_state.seasonal_indices = seasonal_indices
+                        else:
+                            st.warning("No matching channels found in uploaded file. Ensure CSV has 'Channel' and 'Index' columns.")
+                    except Exception as e:
+                        st.error(f"Error reading file: {e}")
 
             except Exception as e:
                 import traceback
