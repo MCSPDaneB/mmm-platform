@@ -608,6 +608,9 @@ class ConfigPersistence:
             "control_multiselect": session_state.get("control_multiselect", []),
             # Also save include_trend explicitly for backwards compatibility
             "include_trend": session_state.get("config_state", {}).get("include_trend", True),
+            # Optimization settings
+            "bounds_config": session_state.get("bounds_config"),
+            "seasonal_indices": session_state.get("seasonal_indices"),
         }
 
         with open(config_dir / cls.SESSION_FILE, "w") as f:
@@ -965,6 +968,12 @@ def restore_config_to_session(config: Any, data: pd.DataFrame, session_state: di
         updates["control_multiselect"] = [ctrl.name for ctrl in config.controls if not ctrl.is_dummy]
     elif session_state.get("control_multiselect"):
         updates["control_multiselect"] = session_state["control_multiselect"]
+
+    # Restore optimization settings
+    if session_state.get("bounds_config"):
+        updates["bounds_config"] = session_state["bounds_config"]
+    if session_state.get("seasonal_indices"):
+        updates["seasonal_indices"] = session_state["seasonal_indices"]
 
     return updates
 

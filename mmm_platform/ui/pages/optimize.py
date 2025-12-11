@@ -146,10 +146,11 @@ def _show_configuration_tab(wrapper, allocator, channel_info):
         _show_common_settings(allocator)
         st.markdown("---")
 
-    # Shared expanders (bounds, seasonality) - for optimize and incremental modes
+    # Bounds and seasonality available for all optimization modes
+    _show_channel_bounds_expander(channel_info)
+    _show_seasonality_expander(wrapper, channel_info)
+    # Validation only for optimize/incremental modes
     if mode in ["optimize", "incremental"]:
-        _show_channel_bounds_expander(channel_info)
-        _show_seasonality_expander(wrapper, channel_info)
         _show_validation_expander(wrapper)
 
     # Bottom run button
@@ -553,6 +554,14 @@ def _show_channel_bounds_expander(channel_info):
             "Constrain how much each channel can change from historical spend."
         )
 
+        # Reset button
+        if st.button("Reset to Defaults", key="reset_bounds", type="secondary"):
+            # Clear bounds-related session state to recalculate from defaults
+            for key in ["bounds_config", "bounds_mode", "max_delta_pct", "custom_bounds_editor"]:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.rerun()
+
         bounds_mode = st.radio(
             "Bounds mode",
             ["No bounds", "Max % change", "Custom bounds"],
@@ -736,6 +745,14 @@ def _show_seasonality_expander(wrapper, channel_info):
             "Seasonality affects both overall demand and channel effectiveness. "
             "These indices help the optimizer account for time-of-year variations."
         )
+
+        # Reset button
+        if st.button("Reset to Defaults", key="reset_seasonal", type="secondary"):
+            # Clear seasonal-related session state to recalculate from model
+            for key in ["seasonal_indices", "seasonal_editor"]:
+                if key in st.session_state:
+                    del st.session_state[key]
+            st.rerun()
 
         try:
             seasonal_calc = SeasonalIndexCalculator(wrapper)
@@ -1251,9 +1268,15 @@ def _run_target(wrapper):
             allocator = BudgetAllocator(wrapper, num_periods=num_periods)
             target_opt = TargetOptimizer(allocator)
 
+            # Get bounds and seasonal settings
+            channel_bounds = st.session_state.get("bounds_config")
+            seasonal_indices = st.session_state.get("seasonal_indices")
+
             result = target_opt.find_budget_for_target(
                 target_response=target_response,
                 budget_range=(min_budget, max_budget),
+                channel_bounds=channel_bounds,
+                seasonal_indices=seasonal_indices,
             )
 
             # Store result
@@ -1266,6 +1289,8 @@ def _run_target(wrapper):
                 "target_response": target_response,
                 "budget_range": (min_budget, max_budget),
                 "num_periods": num_periods,
+                "has_bounds": channel_bounds is not None,
+                "has_seasonal": seasonal_indices is not None,
             }
 
             st.success("Search complete! Switch to Results tab to view.")
@@ -1289,7 +1314,16 @@ def _run_scenarios(wrapper):
             num_periods = st.session_state.get("scenario_num_periods", 8)
 
             allocator = BudgetAllocator(wrapper, num_periods=num_periods)
-            result = allocator.scenario_analysis(scenarios)
+
+            # Get bounds and seasonal settings
+            channel_bounds = st.session_state.get("bounds_config")
+            seasonal_indices = st.session_state.get("seasonal_indices")
+
+            result = allocator.scenario_analysis(
+                scenarios,
+                channel_bounds=channel_bounds,
+                seasonal_indices=seasonal_indices,
+            )
 
             # Store result
             st.session_state.optimization_result = result
@@ -1300,6 +1334,8 @@ def _run_scenarios(wrapper):
                 "mode": "scenarios",
                 "scenarios": scenarios,
                 "num_periods": num_periods,
+                "has_bounds": channel_bounds is not None,
+                "has_seasonal": seasonal_indices is not None,
             }
 
             st.success("Analysis complete! Switch to Results tab to view.")
