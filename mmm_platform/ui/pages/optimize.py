@@ -37,8 +37,15 @@ def _fill_budget_callback():
         if total > 0:
             # Set our own variable - NOT the widget key
             st.session_state.budget_value = int(total)
+
+            # Also auto-configure comparison to match the filled period
+            st.session_state.opt_compare_historical = True
+            st.session_state.opt_comparison_mode = "Last N weeks actual"
+            st.session_state.opt_comparison_n_weeks = fill_weeks
+
             st.session_state.budget_fill_info = (
-                f"Filled with ${total:,.0f} from {start_date:%Y-%m-%d} to {end_date:%Y-%m-%d}"
+                f"Filled with ${total:,.0f} from {start_date:%Y-%m-%d} to {end_date:%Y-%m-%d}. "
+                f"Comparison set to last {fill_weeks} weeks."
             )
         else:
             st.session_state.budget_fill_error = "No spend found for selected period"

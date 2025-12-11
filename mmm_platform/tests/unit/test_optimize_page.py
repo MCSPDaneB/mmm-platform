@@ -93,6 +93,32 @@ class TestFillBudgetCallback:
                 # Should NOT set the widget key directly
                 assert "opt_total_budget" not in mock_session_state
 
+    def test_fill_budget_auto_configures_comparison(
+        self, mock_session_state, mock_allocator
+    ):
+        """Callback auto-configures comparison to match filled period."""
+        mock_session_state.current_model = Mock()
+
+        with patch(
+            "mmm_platform.ui.pages.optimize.st.session_state", mock_session_state
+        ):
+            with patch(
+                "mmm_platform.optimization.BudgetAllocator",
+                return_value=mock_allocator,
+            ):
+                from mmm_platform.ui.pages.optimize import _fill_budget_callback
+
+                _fill_budget_callback()
+
+                # Should enable comparison
+                assert mock_session_state["opt_compare_historical"] is True
+
+                # Should set mode to "Last N weeks actual"
+                assert mock_session_state["opt_comparison_mode"] == "Last N weeks actual"
+
+                # Should set N weeks to match fill_weeks (8 from fixture)
+                assert mock_session_state["opt_comparison_n_weeks"] == 8
+
     def test_fill_budget_shows_info_message(
         self, mock_session_state, mock_allocator
     ):
