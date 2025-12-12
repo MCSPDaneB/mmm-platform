@@ -72,3 +72,7 @@ Thumbs.db
 *.pem
 *.key
 credentials.json
+
+# Claude Code local files (not tracked)
+CLAUDE.local.md
+.claude/settings.local.json
