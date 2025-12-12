@@ -551,6 +551,69 @@ class OptimizationBridge:
 
         return total_response, ci_low, ci_high
 
+    def get_contributions_for_period(
+        self,
+        num_periods: int,
+        comparison_mode: str = "average",
+        n_weeks: int | None = None,
+    ) -> float:
+        """
+        Get actual total channel contributions for a historical period.
+
+        Returns the sum of actual contributions (from model decomposition),
+        not an estimate based on ROI. This provides a true apples-to-apples
+        comparison with the optimizer's predicted response.
+
+        Parameters
+        ----------
+        num_periods : int
+            Number of periods in the optimization horizon.
+        comparison_mode : str
+            How to calculate baseline:
+            - "average": Average contribution per period × num_periods
+            - "last_n_weeks": Actual contributions from last N weeks
+            - "most_recent_period": Actual contributions from most recent num_periods
+        n_weeks : int, optional
+            Number of weeks for "last_n_weeks" mode.
+
+        Returns
+        -------
+        float
+            Total channel contributions for the period in original units.
+        """
+        # Get contributions in real units
+        contribs = self.wrapper.get_contributions_real_units()
+        date_col = self.config.data.date_column
+        df = self.wrapper.df_scaled
+
+        # Get only channel columns (not controls/baseline)
+        channel_cols = [c for c in self.channel_columns if c in contribs.columns]
+
+        if comparison_mode == "average":
+            # Average contribution per period × num_periods
+            total_channel_contribs = contribs[channel_cols].sum().sum()
+            avg_per_period = total_channel_contribs / len(df)
+            return avg_per_period * num_periods
+
+        elif comparison_mode == "last_n_weeks":
+            if n_weeks is None:
+                raise ValueError("n_weeks required for 'last_n_weeks' comparison mode")
+            # Sum contributions from last n_weeks
+            # Sort both df and contribs by date, then take tail
+            sort_order = df[date_col].argsort()
+            contribs_sorted = contribs.iloc[sort_order]
+            return contribs_sorted.tail(n_weeks)[channel_cols].sum().sum()
+
+        elif comparison_mode == "most_recent_period":
+            # Sum contributions from most recent num_periods
+            # Sort both df and contribs by date, then take tail
+            sort_order = df[date_col].argsort()
+            contribs_sorted = contribs.iloc[sort_order]
+            return contribs_sorted.tail(num_periods)[channel_cols].sum().sum()
+
+        else:
+            raise ValueError(f"Unknown comparison_mode: {comparison_mode}")
+
     def get_scales(self) -> dict[str, float]:
         """
         Get the scaling factors used in the model.

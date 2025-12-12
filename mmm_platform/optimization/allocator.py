@@ -164,7 +164,7 @@ class BudgetAllocator:
             actual_allocated = getattr(scipy_result, 'actual_allocated', total_budget)
             unallocated_budget = getattr(scipy_result, 'unallocated_budget', 0.0)
 
-            # Get current allocation for comparison
+            # Get current allocation and actual contributions for comparison
             current_allocation = None
             current_response = None
             if compare_to_current:
@@ -173,8 +173,11 @@ class BudgetAllocator:
                     comparison_mode=comparison_mode,
                     n_weeks=comparison_n_weeks,
                 )
-                current_response, _, _ = self.bridge.estimate_response_at_allocation(
-                    current_allocation, self.num_periods
+                # Use actual historical contributions (not ROI estimate) for fair comparison
+                current_response = self.bridge.get_contributions_for_period(
+                    num_periods=self.num_periods,
+                    comparison_mode=comparison_mode,
+                    n_weeks=comparison_n_weeks,
                 )
 
             result = OptimizationResult(
