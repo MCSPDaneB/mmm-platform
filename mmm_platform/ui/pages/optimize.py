@@ -1465,15 +1465,21 @@ def _show_optimize_results(wrapper, result):
             else:
                 exp_response_label = "Expected Response"
                 exp_response_value = f"${result.expected_response:,.0f}"
-            st.metric(
-                exp_response_label,
-                exp_response_value,
-                delta=f"+{result.response_uplift_pct:.1f}%" if result.response_uplift_pct else None,
-            )
+            st.metric(exp_response_label, exp_response_value)
         with resp_col3:
-            # Show response uplift as a standalone metric for emphasis
+            # Show response uplift as colored pill
             if result.response_uplift_pct is not None:
-                st.metric("Response Uplift", f"+{result.response_uplift_pct:.1f}%")
+                color = "#28a745" if result.response_uplift_pct >= 0 else "#dc3545"
+                sign = "+" if result.response_uplift_pct >= 0 else ""
+                st.markdown(f"""
+                    <div style="text-align: center; padding-top: 8px;">
+                        <p style="margin: 0 0 4px 0; font-size: 14px; color: #666;">Response Uplift</p>
+                        <span style="background-color: {color}; color: white; padding: 6px 16px;
+                                     border-radius: 16px; font-weight: bold; font-size: 16px;">
+                            {sign}{result.response_uplift_pct:.1f}%
+                        </span>
+                    </div>
+                """, unsafe_allow_html=True)
 
         # Row 3: Efficiency comparison (Historical ROI/CPA | Expected ROI/CPA | Change %)
         eff_col1, eff_col2, eff_col3 = st.columns(3)
@@ -1492,23 +1498,41 @@ def _show_optimize_results(wrapper, result):
                 exp_roi = result.expected_response / result.total_budget if result.total_budget > 0 else 0
                 st.metric("Expected ROI", f"{exp_roi:.2f}x")
         with eff_col3:
-            # Calculate efficiency change percentage
+            # Calculate efficiency change percentage and display as colored pill
             if kpi_type == "count":
                 # CPA: lower is better, so show improvement as positive when CPA decreases
                 hist_cpa = historical_budget / result.current_response
                 exp_cpa = result.total_budget / result.expected_response if result.expected_response > 0 else 0
                 if hist_cpa > 0:
                     cpa_change_pct = ((hist_cpa - exp_cpa) / hist_cpa) * 100
-                    delta_str = f"+{cpa_change_pct:.1f}%" if cpa_change_pct >= 0 else f"{cpa_change_pct:.1f}%"
-                    st.metric("CPA Improvement", delta_str)
+                    color = "#28a745" if cpa_change_pct >= 0 else "#dc3545"
+                    sign = "+" if cpa_change_pct >= 0 else ""
+                    st.markdown(f"""
+                        <div style="text-align: center; padding-top: 8px;">
+                            <p style="margin: 0 0 4px 0; font-size: 14px; color: #666;">CPA Improvement</p>
+                            <span style="background-color: {color}; color: white; padding: 6px 16px;
+                                         border-radius: 16px; font-weight: bold; font-size: 16px;">
+                                {sign}{cpa_change_pct:.1f}%
+                            </span>
+                        </div>
+                    """, unsafe_allow_html=True)
             else:
                 # ROI: higher is better
                 hist_roi = result.current_response / historical_budget if historical_budget > 0 else 0
                 exp_roi = result.expected_response / result.total_budget if result.total_budget > 0 else 0
                 if hist_roi > 0:
                     roi_change_pct = ((exp_roi - hist_roi) / hist_roi) * 100
-                    delta_str = f"+{roi_change_pct:.1f}%" if roi_change_pct >= 0 else f"{roi_change_pct:.1f}%"
-                    st.metric("ROI Improvement", delta_str)
+                    color = "#28a745" if roi_change_pct >= 0 else "#dc3545"
+                    sign = "+" if roi_change_pct >= 0 else ""
+                    st.markdown(f"""
+                        <div style="text-align: center; padding-top: 8px;">
+                            <p style="margin: 0 0 4px 0; font-size: 14px; color: #666;">ROI Improvement</p>
+                            <span style="background-color: {color}; color: white; padding: 6px 16px;
+                                         border-radius: 16px; font-weight: bold; font-size: 16px;">
+                                {sign}{roi_change_pct:.1f}%
+                            </span>
+                        </div>
+                    """, unsafe_allow_html=True)
     else:
         # No historical comparison - use original simple layout
         metric_col1, metric_col2, metric_col3 = st.columns(3)
