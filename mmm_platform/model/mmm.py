@@ -339,16 +339,17 @@ class MMMWrapper:
 
     def get_contributions_real_units(self) -> pd.DataFrame:
         """
-        Get contributions rescaled to original units.
+        Get contributions in original units.
+
+        Note: get_contributions() already uses original_scale=True,
+        so no additional scaling is needed.
 
         Returns
         -------
         pd.DataFrame
             Contributions in original revenue units.
         """
-        contribs = self.get_contributions()
-        contribs_real = contribs * self.config.data.revenue_scale
-        return contribs_real
+        return self.get_contributions()
 
     def get_channel_roi(self) -> pd.DataFrame:
         """
