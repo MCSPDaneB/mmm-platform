@@ -543,20 +543,6 @@ def _show_common_settings(allocator):
         period_info += f" → {month_names[end_month_idx]}"
     st.caption(f"Period: {period_info} ({num_periods} weeks)")
 
-    # Risk profile (simplified to 3 intuitive options)
-    utility_options = {
-        "Aggressive": "mean",
-        "Moderate": "var_moderate",
-        "Conservative": "var",
-    }
-    st.selectbox(
-        "Risk Profile",
-        options=list(utility_options.keys()),
-        index=1,  # Default to Moderate
-        key="opt_utility",
-        help="Aggressive: maximize expected return. Moderate: balance risk/reward. Conservative: protect against downside.",
-    )
-
 
 def _show_channel_bounds_expander(channel_info):
     """Show the channel bounds configuration expander."""
@@ -1142,18 +1128,11 @@ def _run_optimize(wrapper):
     with st.spinner("Running optimization..."):
         try:
             num_periods = st.session_state.get("opt_num_periods", 8)
-            utility_options = {
-                "Aggressive": "mean",
-                "Moderate": "var_moderate",
-                "Conservative": "var",
-            }
-            utility_label = st.session_state.get("opt_utility", "Moderate")
-            utility = utility_options.get(utility_label, "var_moderate")
 
             allocator = BudgetAllocator(
                 wrapper,
                 num_periods=num_periods,
-                utility=utility,
+                utility="mean",
             )
 
             total_budget = st.session_state.get("budget_value", 100000)
@@ -1220,7 +1199,7 @@ def _run_optimize(wrapper):
                 "total_budget": total_budget,
                 "num_periods": num_periods,
                 "start_month": st.session_state.get("opt_start_month", 1),
-                "utility": utility_label,
+                "utility": "mean",
                 "optimization_objective": optimization_objective,
                 "compare_to_current": compare_to_current,
                 "comparison_mode": comparison_mode if compare_to_current else None,
@@ -1240,18 +1219,11 @@ def _run_incremental(wrapper):
     with st.spinner("Optimizing incremental budget..."):
         try:
             num_periods = st.session_state.get("opt_num_periods", 8)
-            utility_options = {
-                "Aggressive": "mean",
-                "Moderate": "var_moderate",
-                "Conservative": "var",
-            }
-            utility_label = st.session_state.get("opt_utility", "Moderate")
-            utility = utility_options.get(utility_label, "var_moderate")
 
             allocator = BudgetAllocator(
                 wrapper,
                 num_periods=num_periods,
-                utility=utility,
+                utility="mean",
             )
 
             incremental_budget = st.session_state.get("inc_budget", 50000)
@@ -1273,7 +1245,7 @@ def _run_incremental(wrapper):
                 "incremental_budget": incremental_budget,
                 "committed_total": sum(base_allocation.values()),
                 "num_periods": num_periods,
-                "utility": utility_label,
+                "utility": "mean",
             }
 
             st.success("Optimization complete! Switch to Results tab to view.")
@@ -1422,7 +1394,7 @@ def _show_config_summary(config):
             c1.metric("Budget", f"${config.get('total_budget', 0):,.0f}")
             c2.metric("Period", f"{config.get('num_periods', 8)} weeks")
             c3.metric("Starting", month_names[config.get('start_month', 1) - 1])
-            st.caption(f"Objective: {config.get('optimization_objective', 'Maximize Response')} | Risk Profile: {config.get('utility', 'Moderate')}")
+            st.caption(f"Objective: {config.get('optimization_objective', 'Maximize Response')}")
             if config.get('compare_to_current'):
                 st.caption(f"Comparison: {config.get('comparison_mode', 'average')}")
 
@@ -1431,7 +1403,6 @@ def _show_config_summary(config):
             c1.metric("Committed", f"${config.get('committed_total', 0):,.0f}")
             c2.metric("Incremental", f"${config.get('incremental_budget', 0):,.0f}")
             c3.metric("Period", f"{config.get('num_periods', 8)} weeks")
-            st.caption(f"Risk Profile: {config.get('utility', 'Moderate')}")
 
         elif mode == "target":
             c1, c2, c3 = st.columns(3)
@@ -1459,6 +1430,22 @@ def _show_optimize_results(wrapper, result):
             "Used enhanced gradient-based optimization for better results. "
             "The default optimizer had convergence issues with this model."
         )
+
+    # Confidence level selector for viewing results
+    confidence_view = st.selectbox(
+        "View results as",
+        ["Expected", "Optimistic (95th percentile)", "Pessimistic (5th percentile)"],
+        key="results_confidence_view",
+        help="View the same optimized allocation under different confidence assumptions",
+    )
+
+    # Select response value based on confidence view
+    if "Optimistic" in confidence_view:
+        display_response = result.response_ci_high
+    elif "Pessimistic" in confidence_view:
+        display_response = result.response_ci_low
+    else:
+        display_response = result.expected_response
 
     # Determine KPI type for display formatting
     kpi_type = getattr(wrapper.config.data, 'kpi_type', 'revenue')
@@ -1494,22 +1481,23 @@ def _show_optimize_results(wrapper, result):
         with resp_col2:
             if kpi_type == "count":
                 exp_response_label = f"Expected {kpi_label}"
-                exp_response_value = f"{result.expected_response:,.0f}"
+                exp_response_value = f"{display_response:,.0f}"
             else:
                 exp_response_label = "Expected Response"
-                exp_response_value = f"${result.expected_response:,.0f}"
+                exp_response_value = f"${display_response:,.0f}"
             st.metric(exp_response_label, exp_response_value)
         with resp_col3:
-            # Show response uplift as colored pill
-            if result.response_uplift_pct is not None:
-                color = "#28a745" if result.response_uplift_pct >= 0 else "#dc3545"
-                sign = "+" if result.response_uplift_pct >= 0 else ""
+            # Show response uplift as colored pill (dynamically calculated based on confidence view)
+            if result.current_response is not None and result.current_response > 0:
+                response_uplift_pct = ((display_response - result.current_response) / result.current_response) * 100
+                color = "#28a745" if response_uplift_pct >= 0 else "#dc3545"
+                sign = "+" if response_uplift_pct >= 0 else ""
                 st.markdown(f"""
                     <div style="text-align: center; padding-top: 8px;">
                         <p style="margin: 0 0 4px 0; font-size: 14px; color: #666;">Response Uplift</p>
                         <span style="background-color: {color}; color: white; padding: 6px 16px;
                                      border-radius: 16px; font-weight: bold; font-size: 16px;">
-                            {sign}{result.response_uplift_pct:.1f}%
+                            {sign}{response_uplift_pct:.1f}%
                         </span>
                     </div>
                 """, unsafe_allow_html=True)
@@ -1525,17 +1513,17 @@ def _show_optimize_results(wrapper, result):
                 st.metric("Historical ROI", f"{hist_roi:.2f}x")
         with eff_col2:
             if kpi_type == "count":
-                exp_cpa = result.total_budget / result.expected_response if result.expected_response > 0 else 0
+                exp_cpa = result.total_budget / display_response if display_response > 0 else 0
                 st.metric("Expected CPA", f"${exp_cpa:,.2f}")
             else:
-                exp_roi = result.expected_response / result.total_budget if result.total_budget > 0 else 0
+                exp_roi = display_response / result.total_budget if result.total_budget > 0 else 0
                 st.metric("Expected ROI", f"{exp_roi:.2f}x")
         with eff_col3:
             # Calculate efficiency change percentage and display as colored pill
             if kpi_type == "count":
                 # CPA: lower is better, so show improvement as positive when CPA decreases
                 hist_cpa = historical_budget / result.current_response
-                exp_cpa = result.total_budget / result.expected_response if result.expected_response > 0 else 0
+                exp_cpa = result.total_budget / display_response if display_response > 0 else 0
                 if hist_cpa > 0:
                     cpa_change_pct = ((hist_cpa - exp_cpa) / hist_cpa) * 100
                     color = "#28a745" if cpa_change_pct >= 0 else "#dc3545"
@@ -1552,7 +1540,7 @@ def _show_optimize_results(wrapper, result):
             else:
                 # ROI: higher is better
                 hist_roi = result.current_response / historical_budget if historical_budget > 0 else 0
-                exp_roi = result.expected_response / result.total_budget if result.total_budget > 0 else 0
+                exp_roi = display_response / result.total_budget if result.total_budget > 0 else 0
                 if hist_roi > 0:
                     roi_change_pct = ((exp_roi - hist_roi) / hist_roi) * 100
                     color = "#28a745" if roi_change_pct >= 0 else "#dc3545"
@@ -1574,21 +1562,27 @@ def _show_optimize_results(wrapper, result):
         with metric_col2:
             if kpi_type == "count":
                 response_label = f"Expected {kpi_label}"
-                response_value = f"{result.expected_response:,.0f}"
+                response_value = f"{display_response:,.0f}"
             else:
                 response_label = "Expected Response"
-                response_value = f"${result.expected_response:,.0f}"
+                response_value = f"${display_response:,.0f}"
+            # Calculate uplift dynamically based on confidence view
+            uplift_delta = None
+            if result.current_response is not None and result.current_response > 0:
+                uplift_pct = ((display_response - result.current_response) / result.current_response) * 100
+                sign = "+" if uplift_pct >= 0 else ""
+                uplift_delta = f"{sign}{uplift_pct:.1f}%"
             st.metric(
                 response_label,
                 response_value,
-                delta=f"+{result.response_uplift_pct:.1f}%" if result.response_uplift_pct else None,
+                delta=uplift_delta,
             )
         with metric_col3:
             if kpi_type == "count":
-                cpa = result.total_budget / result.expected_response if result.expected_response > 0 else 0
+                cpa = result.total_budget / display_response if display_response > 0 else 0
                 st.metric("Expected CPA", f"${cpa:,.2f}")
             else:
-                roi = result.expected_response / result.total_budget if result.total_budget > 0 else 0
+                roi = display_response / result.total_budget if result.total_budget > 0 else 0
                 st.metric("Expected ROI", f"{roi:.2f}x")
 
     # CI caption
