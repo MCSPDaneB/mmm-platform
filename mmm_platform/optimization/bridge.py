@@ -26,6 +26,7 @@ UTILITY_FUNCTIONS = {
     "mean": average_response,
     "average": average_response,
     "var": value_at_risk,
+    "var_moderate": value_at_risk,  # VaR at 75% confidence (25th percentile)
     "value_at_risk": value_at_risk,
     "cvar": conditional_value_at_risk,
     "expected_shortfall": conditional_value_at_risk,
@@ -504,6 +505,9 @@ class OptimizationBridge:
         if utility_name_lower in ["var", "value_at_risk"]:
             confidence_level = kwargs.get("confidence_level", 0.95)
             return value_at_risk(confidence_level=confidence_level)
+        elif utility_name_lower == "var_moderate":
+            # VaR at 75% confidence = 25th percentile (moderate risk)
+            return value_at_risk(confidence_level=0.75)
         elif utility_name_lower in ["cvar", "expected_shortfall"]:
             confidence_level = kwargs.get("confidence_level", 0.95)
             return conditional_value_at_risk(confidence_level=confidence_level)

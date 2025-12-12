@@ -655,7 +655,12 @@ class TestContributionScaleConsistency:
         # Create mock xarray response
         mock_xarray = Mock()
         mock_mean = Mock()
-        mock_mean.coords = {'channel': Mock(values=np.array(['ch1', 'ch2']))}
+        # Include date coordinate (required since date alignment fix)
+        mock_dates = np.array(['2024-01-01', '2024-01-08', '2024-01-15'], dtype='datetime64[ns]')
+        mock_mean.coords = {
+            'channel': Mock(values=np.array(['ch1', 'ch2'])),
+            'date': Mock(values=mock_dates)
+        }
         mock_mean.values = np.array([[100, 200], [150, 250], [120, 180]])
         mock_xarray.mean.return_value = mock_mean
 
@@ -682,6 +687,62 @@ class TestContributionScaleConsistency:
         # Verify result shape
         assert result.shape == (3, 2)
         assert list(result.columns) == ['ch1', 'ch2']
+
+    def test_get_contributions_sorts_by_date(self):
+        """Verify get_contributions() sorts output by date.
+
+        This prevents date alignment bugs where xarray returns dates in
+        different order than df_scaled, causing wrong rows to be selected
+        when computing historical contributions for specific periods.
+        """
+        from mmm_platform.model.mmm import MMMWrapper
+
+        # Create mock wrapper
+        mock_wrapper = Mock()
+        mock_wrapper.idata = Mock()
+
+        # Create mock xarray with OUT-OF-ORDER dates to simulate the bug
+        mock_xarray = Mock()
+        mock_mean = Mock()
+
+        # Dates deliberately out of order (e.g., xarray might return them this way)
+        out_of_order_dates = np.array(['2024-01-15', '2024-01-01', '2024-01-08'], dtype='datetime64[ns]')
+        mock_mean.coords = {
+            'channel': Mock(values=np.array(['ch1', 'ch2'])),
+            'date': Mock(values=out_of_order_dates)
+        }
+        # Values corresponding to out-of-order dates
+        # Row 0: 2024-01-15, Row 1: 2024-01-01, Row 2: 2024-01-08
+        mock_mean.values = np.array([
+            [300, 600],  # Jan 15 values
+            [100, 200],  # Jan 1 values
+            [200, 400],  # Jan 8 values
+        ])
+        mock_xarray.mean.return_value = mock_mean
+
+        mock_mmm = Mock()
+        mock_mmm.compute_channel_contribution_original_scale.return_value = mock_xarray
+
+        # Patch and test
+        with patch.object(MMMWrapper, '__init__', lambda x, y: None):
+            wrapper = MMMWrapper(None)
+            wrapper.idata = mock_wrapper.idata
+            wrapper.mmm = mock_mmm
+
+            result = wrapper.get_contributions()
+
+        # After sorting by date, order should be: Jan 1, Jan 8, Jan 15
+        # So values should be reordered to: [100,200], [200,400], [300,600]
+        expected_first_row = [100, 200]   # Jan 1
+        expected_last_row = [300, 600]    # Jan 15
+
+        assert list(result.iloc[0].values) == expected_first_row, \
+            f"First row should be Jan 1 values, got {result.iloc[0].values}"
+        assert list(result.iloc[2].values) == expected_last_row, \
+            f"Last row should be Jan 15 values, got {result.iloc[2].values}"
+
+        # Verify index is reset to 0-based
+        assert list(result.index) == [0, 1, 2]
 
     def test_backtest_validator_uses_same_method(self):
         """Verify BacktestValidator uses compute_channel_contribution_original_scale.

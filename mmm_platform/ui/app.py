@@ -139,42 +139,10 @@ def main():
 
 def _load_model_from_home(model_path: str):
     """Load a model from the home page and navigate to Results."""
-    from mmm_platform.model.persistence import ModelPersistence
-    from mmm_platform.model.mmm import MMMWrapper
-
-    try:
-        wrapper = ModelPersistence.load(model_path, MMMWrapper)
-
-        # Clear widget keys to avoid conflicts
-        keys_to_delete = [
-            k for k in st.session_state.keys()
-            if k.startswith(("channel_", "control_", "roi_", "prior_"))
-        ]
-        for k in keys_to_delete:
-            del st.session_state[k]
-
-        # Set session state
-        st.session_state.current_model = wrapper
-        st.session_state.current_config = wrapper.config
-        st.session_state.model_fitted = wrapper.idata is not None
-        st.session_state.current_model_path = model_path
-
-        # Restore data - prefer df_original (full timeseries) over df_raw
-        if getattr(wrapper, "df_original", None) is not None:
-            st.session_state.current_data = wrapper.df_original
-        elif wrapper.df_raw is not None:
-            st.session_state.current_data = wrapper.df_raw
-        elif wrapper.df_scaled is not None:
-            st.session_state.current_data = wrapper.df_scaled
-
-        # Set client from config
-        if wrapper.config and wrapper.config.client:
-            st.session_state.active_client = wrapper.config.client
-
-        st.success(f"Loaded model: {wrapper.config.name if wrapper.config else 'Unknown'}")
-        st.rerun()
-    except Exception as e:
-        st.error(f"Failed to load model: {e}")
+    # Use the comprehensive load function from saved_models to ensure
+    # all config state (config_state, category_columns, etc.) is restored
+    from mmm_platform.ui.pages.saved_models import _load_model
+    _load_model(model_path, navigate_to_results=True)
 
 
 def _show_favorite_models(client_name: str):

@@ -43,6 +43,9 @@ def _fill_budget_callback():
             st.session_state.opt_comparison_mode = "Last N weeks actual"
             st.session_state.opt_comparison_n_weeks = fill_weeks
 
+            # Sync forecast period with fill period for consistent comparison
+            st.session_state.opt_num_periods = fill_weeks
+
             # Update start month to match the period for correct seasonality
             st.session_state.opt_start_month = start_date.month
 
@@ -52,7 +55,7 @@ def _fill_budget_callback():
 
             st.session_state.budget_fill_info = (
                 f"Filled with ${total:,.0f} from {start_date:%Y-%m-%d} to {end_date:%Y-%m-%d}. "
-                f"Comparison and seasonality updated to match."
+                f"Forecast period, comparison and seasonality updated to match."
             )
         else:
             st.session_state.budget_fill_error = "No spend found for selected period"
@@ -540,17 +543,18 @@ def _show_common_settings(allocator):
         period_info += f" → {month_names[end_month_idx]}"
     st.caption(f"Period: {period_info} ({num_periods} weeks)")
 
-    # Risk profile / Utility function
+    # Risk profile (simplified to 3 intuitive options)
     utility_options = {
-        "Mean (Risk Neutral)": "mean",
-        "Value at Risk (Conservative)": "var",
-        "Expected Shortfall (Very Conservative)": "cvar",
-        "Sharpe Ratio (Risk-Adjusted)": "sharpe",
+        "Aggressive": "mean",
+        "Moderate": "var_moderate",
+        "Conservative": "var",
     }
     st.selectbox(
         "Risk Profile",
         options=list(utility_options.keys()),
+        index=1,  # Default to Moderate
         key="opt_utility",
+        help="Aggressive: maximize expected return. Moderate: balance risk/reward. Conservative: protect against downside.",
     )
 
 
@@ -595,6 +599,27 @@ def _show_channel_bounds_expander(channel_info):
                 help="No channel can increase or decrease by more than this percentage from historical baseline",
             )
 
+            keep_zero_channels_zero = st.checkbox(
+                "Keep zero-spend channels at zero",
+                value=True,
+                key="keep_zero_channels_zero",
+                help="Channels with $0 historical spend will not receive any budget allocation",
+            )
+
+            # Show percentage slider only when allowing zero-spend channels to receive budget
+            if not keep_zero_channels_zero:
+                zero_spend_max_pct = st.slider(
+                    "Max % of budget for zero-spend channels",
+                    min_value=1,
+                    max_value=50,
+                    value=10,
+                    step=1,
+                    key="zero_spend_max_pct",
+                    help="Maximum percentage of total budget that can be allocated to each channel with no historical spend",
+                )
+            else:
+                zero_spend_max_pct = 0
+
             # Get comparison settings to use same baseline
             compare_enabled = st.session_state.get("opt_compare_historical", True)
             comparison_mode = st.session_state.get("opt_comparison_mode", "Average (all data)")
@@ -638,9 +663,9 @@ def _show_channel_bounds_expander(channel_info):
                     min_val = historical * (1 - max_delta / 100)
                     max_val = historical * (1 + max_delta / 100)
                 else:
-                    # Channel has no historical spend - allow up to 10% of total budget
+                    # Channel has no historical spend
                     min_val = 0
-                    max_val = total_budget * 0.10
+                    max_val = total_budget * (zero_spend_max_pct / 100)
 
                 bounds_config[ch] = (max(0.0, min_val), max_val)
 
@@ -1118,13 +1143,12 @@ def _run_optimize(wrapper):
         try:
             num_periods = st.session_state.get("opt_num_periods", 8)
             utility_options = {
-                "Mean (Risk Neutral)": "mean",
-                "Value at Risk (Conservative)": "var",
-                "Expected Shortfall (Very Conservative)": "cvar",
-                "Sharpe Ratio (Risk-Adjusted)": "sharpe",
+                "Aggressive": "mean",
+                "Moderate": "var_moderate",
+                "Conservative": "var",
             }
-            utility_label = st.session_state.get("opt_utility", "Mean (Risk Neutral)")
-            utility = utility_options.get(utility_label, "mean")
+            utility_label = st.session_state.get("opt_utility", "Moderate")
+            utility = utility_options.get(utility_label, "var_moderate")
 
             allocator = BudgetAllocator(
                 wrapper,
@@ -1217,13 +1241,12 @@ def _run_incremental(wrapper):
         try:
             num_periods = st.session_state.get("opt_num_periods", 8)
             utility_options = {
-                "Mean (Risk Neutral)": "mean",
-                "Value at Risk (Conservative)": "var",
-                "Expected Shortfall (Very Conservative)": "cvar",
-                "Sharpe Ratio (Risk-Adjusted)": "sharpe",
+                "Aggressive": "mean",
+                "Moderate": "var_moderate",
+                "Conservative": "var",
             }
-            utility_label = st.session_state.get("opt_utility", "Mean (Risk Neutral)")
-            utility = utility_options.get(utility_label, "mean")
+            utility_label = st.session_state.get("opt_utility", "Moderate")
+            utility = utility_options.get(utility_label, "var_moderate")
 
             allocator = BudgetAllocator(
                 wrapper,
@@ -1399,7 +1422,7 @@ def _show_config_summary(config):
             c1.metric("Budget", f"${config.get('total_budget', 0):,.0f}")
             c2.metric("Period", f"{config.get('num_periods', 8)} weeks")
             c3.metric("Starting", month_names[config.get('start_month', 1) - 1])
-            st.caption(f"Objective: {config.get('optimization_objective', 'Maximize Response')} | Risk Profile: {config.get('utility', 'Mean')}")
+            st.caption(f"Objective: {config.get('optimization_objective', 'Maximize Response')} | Risk Profile: {config.get('utility', 'Moderate')}")
             if config.get('compare_to_current'):
                 st.caption(f"Comparison: {config.get('comparison_mode', 'average')}")
 
@@ -1408,7 +1431,7 @@ def _show_config_summary(config):
             c1.metric("Committed", f"${config.get('committed_total', 0):,.0f}")
             c2.metric("Incremental", f"${config.get('incremental_budget', 0):,.0f}")
             c3.metric("Period", f"{config.get('num_periods', 8)} weeks")
-            st.caption(f"Risk Profile: {config.get('utility', 'Mean')}")
+            st.caption(f"Risk Profile: {config.get('utility', 'Moderate')}")
 
         elif mode == "target":
             c1, c2, c3 = st.columns(3)

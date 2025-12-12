@@ -322,6 +322,7 @@ class MMMWrapper:
         -------
         pd.DataFrame
             Contributions dataframe with channels as columns and periods as rows.
+            Rows are sorted by date to align with df_scaled ordering.
         """
         if self.idata is None:
             raise ValueError("Model not fitted. Call fit() first.")
@@ -334,12 +335,17 @@ class MMMWrapper:
         # contrib shape: (chain, draw, date, channel)
         mean_contrib = contrib.mean(dim=['chain', 'draw'])  # (date, channel)
 
-        # Convert xarray to DataFrame
-        # Get channel names and create DataFrame directly from values
+        # Extract dates and channels from xarray coordinates
+        # CRITICAL: We must sort by date to ensure rows align with df_scaled
+        # xarray may return dates in different order than df_scaled
+        dates = mean_contrib.coords['date'].values
         channels = list(mean_contrib.coords['channel'].values)
         values = mean_contrib.values  # Shape: (n_dates, n_channels)
-        df = pd.DataFrame(values, columns=channels)
-        return df
+
+        # Create DataFrame with dates as index, sort by date, then reset to 0-based index
+        df = pd.DataFrame(values, columns=channels, index=pd.to_datetime(dates))
+        df = df.sort_index()  # Ensure date order matches df_scaled
+        return df.reset_index(drop=True)
 
     def get_contributions_real_units(self) -> pd.DataFrame:
         """

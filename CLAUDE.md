@@ -113,3 +113,23 @@ Tests in `mmm_platform/tests/unit/` cover:
 - Optimization functionality
 
 Use `pytest -x` to stop on first failure during debugging.
+
+## Debugging Guidelines
+
+### Debugging with User Input
+
+When the user has already performed debugging and shares observations:
+
+1. **Trust their validated findings** - If they say something works (e.g., "the validator matches perfectly"), don't re-investigate that component
+2. **Ask what they've already ruled out** before starting a fresh investigation
+3. **Focus on the gap** between what works and what doesn't, rather than re-examining everything from scratch
+4. **Leverage their insights** - The user often has domain knowledge and debugging context that can shortcut investigation
+
+### UI Bug Investigation
+
+When investigating UI-related issues in the Streamlit app:
+
+1. **Ask for the exact workflow** - Get the user to describe their click-by-click steps
+2. **Identify related state variables** - Check `st.session_state` keys that should update together
+3. **Look for sync issues** - Common bug pattern: one state variable updates but related variables don't
+4. **Check callbacks** - Streamlit callbacks (like `_fill_budget_callback`) may not update all dependent state

@@ -524,3 +524,95 @@ class TestEdgeCases:
         # Should not raise
         responses = obj.compute_response_distribution(x)
         assert len(responses) == posterior_samples.n_samples
+
+
+class TestRiskProfilesProduceDifferentOptima:
+    """Test that different risk profiles lead to different optimal allocations."""
+
+    def test_different_profiles_different_allocations(self):
+        """Different risk profiles should produce different optimal allocations.
+
+        This test verifies that optimizing with different risk profiles
+        (mean, var_moderate, var) produces meaningfully different allocation
+        recommendations when there's a budget constraint forcing trade-offs.
+        """
+        from mmm_platform.optimization.risk_objectives import (
+            RiskAwareObjective,
+            PosteriorSamples,
+        )
+        from scipy.optimize import minimize
+
+        # Create posterior samples with high variance in one channel
+        # to create interesting risk/reward trade-offs
+        np.random.seed(123)
+        n_samples = 200
+        n_channels = 3
+
+        # Channel 0: High mean, high variance (risky high-return)
+        # Channel 1: Medium mean, medium variance (balanced)
+        # Channel 2: Low mean, low variance (safe low-return)
+        beta_samples = np.column_stack([
+            np.random.lognormal(mean=0.5, sigma=0.8, size=n_samples),  # High var
+            np.random.lognormal(mean=0.3, sigma=0.3, size=n_samples),  # Medium var
+            np.random.lognormal(mean=0.1, sigma=0.1, size=n_samples),  # Low var
+        ])
+        lam_samples = np.random.uniform(1.5, 2.5, (n_samples, n_channels))
+
+        posterior_samples = PosteriorSamples(
+            beta_samples=beta_samples,
+            lam_samples=lam_samples,
+            n_samples=n_samples,
+            n_channels=n_channels,
+        )
+
+        x_maxes = np.array([10.0, 10.0, 10.0])
+        bounds = [(0, x) for x in x_maxes]
+        x0 = np.array([5.0, 5.0, 5.0])
+        total_budget = 15.0  # Force trade-offs (can't max all channels)
+
+        # Budget constraint: sum(x) <= total_budget
+        constraints = [{"type": "ineq", "fun": lambda x: total_budget - np.sum(x)}]
+
+        results = {}
+        for profile in ["mean", "var_moderate", "var"]:
+            obj = RiskAwareObjective(
+                posterior_samples=posterior_samples,
+                x_maxes=x_maxes,
+                target_scale=1000.0,
+                num_periods=8,
+                risk_profile=profile,
+            )
+
+            result = minimize(
+                obj.objective,
+                x0,
+                method='SLSQP',
+                jac=obj.gradient,
+                bounds=bounds,
+                constraints=constraints,
+            )
+            results[profile] = result.x
+
+        mean_alloc = results["mean"]
+        var_moderate_alloc = results["var_moderate"]
+        var_alloc = results["var"]
+
+        # With budget constraint, different profiles should allocate differently
+        # Mean should favor high-return channel (channel 0)
+        # VaR should favor low-variance channel (channel 2)
+        # VaR moderate should be in between
+        assert mean_alloc[0] > mean_alloc[2], \
+            "Mean profile should allocate more to high-return channel"
+        assert var_alloc[2] > mean_alloc[2], \
+            "VaR profile should allocate more to safe channel than mean does"
+
+        # At least one pair should differ meaningfully
+        alloc_diff = np.abs(mean_alloc - var_alloc).max()
+        assert alloc_diff > 0.5, \
+            f"Mean and VaR allocations should differ by at least 0.5, got max diff {alloc_diff}"
+
+        # All profiles should use full budget (unlike Sharpe which may not)
+        for profile, alloc in results.items():
+            total_spent = np.sum(alloc)
+            assert total_spent >= total_budget * 0.99, \
+                f"{profile} profile should use full budget, spent {total_spent:.2f}/{total_budget}"

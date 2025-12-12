@@ -87,7 +87,7 @@ class PosteriorSamples:
         )
 
 
-RiskProfile = Literal["mean", "var", "cvar", "sharpe"]
+RiskProfile = Literal["mean", "var", "var_moderate", "cvar", "sharpe"]
 
 
 class RiskAwareObjective:
@@ -97,6 +97,7 @@ class RiskAwareObjective:
     Supports:
     - mean: Expected response (risk neutral) - uses fast path with posterior means
     - var: Value at Risk (5th percentile - conservative)
+    - var_moderate: Value at Risk (25th percentile - moderate)
     - cvar: Conditional VaR (mean of bottom 5% - very conservative)
     - sharpe: Sharpe ratio (mean / std - risk-adjusted)
 
@@ -213,6 +214,8 @@ class RiskAwareObjective:
             return self._objective_mean(x)
         elif self.risk_profile == "var":
             return self._objective_var(x)
+        elif self.risk_profile == "var_moderate":
+            return self._objective_var_moderate(x)
         elif self.risk_profile == "cvar":
             return self._objective_cvar(x)
         elif self.risk_profile == "sharpe":
@@ -239,6 +242,13 @@ class RiskAwareObjective:
         percentile = (1 - self.confidence_level) * 100
         var = np.percentile(responses, percentile)
         return -var  # Maximize the worst-case response
+
+    def _objective_var_moderate(self, x: np.ndarray) -> float:
+        """Value at Risk at 75% confidence (25th percentile) - moderate risk."""
+        responses = self.compute_response_distribution(x)
+        # VaR at 75% confidence = 25th percentile
+        var = np.percentile(responses, 25)
+        return -var  # Maximize the 25th percentile response
 
     def _objective_cvar(self, x: np.ndarray) -> float:
         """Conditional VaR: Expected response below VaR threshold."""
