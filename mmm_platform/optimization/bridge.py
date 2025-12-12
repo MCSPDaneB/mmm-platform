@@ -390,8 +390,8 @@ class OptimizationBridge:
         max_date = pd.to_datetime(df[date_col].max())
         min_date = pd.to_datetime(df[date_col].min())
 
-        # Calculate start date
-        start_date = max_date - pd.Timedelta(weeks=n_weeks)
+        # Calculate start date (n_weeks - 1 because both endpoints are included)
+        start_date = max_date - pd.Timedelta(weeks=n_weeks - 1)
 
         # Warn if requested range exceeds available data
         available_weeks = (max_date - min_date).days // 7 + 1
