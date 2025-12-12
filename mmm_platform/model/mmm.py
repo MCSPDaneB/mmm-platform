@@ -335,10 +335,10 @@ class MMMWrapper:
         mean_contrib = contrib.mean(dim=['chain', 'draw'])  # (date, channel)
 
         # Convert xarray to DataFrame
-        df = mean_contrib.to_dataframe().unstack('channel')
-        # Remove multi-level column index if present
-        if hasattr(df.columns, 'droplevel'):
-            df.columns = df.columns.droplevel(0)
+        # Get channel names and create DataFrame directly from values
+        channels = list(mean_contrib.coords['channel'].values)
+        values = mean_contrib.values  # Shape: (n_dates, n_channels)
+        df = pd.DataFrame(values, columns=channels)
         return df
 
     def get_contributions_real_units(self) -> pd.DataFrame:
