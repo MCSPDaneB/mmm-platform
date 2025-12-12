@@ -1434,29 +1434,105 @@ def _show_optimize_results(wrapper, result):
     kpi_type = getattr(wrapper.config.data, 'kpi_type', 'revenue')
     target_col = wrapper.config.data.target_column
 
-    # Key metrics
-    metric_col1, metric_col2, metric_col3 = st.columns(3)
-    with metric_col1:
+    # Check if we have historical comparison data
+    has_historical = (
+        result.current_response is not None
+        and result.current_response > 0
+        and result.current_allocation is not None
+    )
+
+    if has_historical:
+        # Calculate historical budget from current allocation
+        historical_budget = sum(result.current_allocation.values())
+
+        # Row 1: Budget metric
         st.metric("Total Budget", f"${result.total_budget:,.0f}")
-    with metric_col2:
-        if kpi_type == "count":
-            response_label = f"Expected {target_col.replace('_', ' ').title()}"
-            response_value = f"{result.expected_response:,.0f}"
-        else:
-            response_label = "Expected Response"
-            response_value = f"${result.expected_response:,.0f}"
-        st.metric(
-            response_label,
-            response_value,
-            delta=f"+{result.response_uplift_pct:.1f}%" if result.response_uplift_pct else None,
-        )
-    with metric_col3:
-        if kpi_type == "count":
-            cpa = result.total_budget / result.expected_response if result.expected_response > 0 else 0
-            st.metric("Expected CPA", f"${cpa:,.2f}")
-        else:
-            roi = result.expected_response / result.total_budget if result.total_budget > 0 else 0
-            st.metric("Expected ROI", f"{roi:.2f}x")
+
+        # Row 2: Response comparison (Historical | Expected | Uplift %)
+        resp_col1, resp_col2, resp_col3 = st.columns(3)
+        with resp_col1:
+            if kpi_type == "count":
+                hist_response_label = f"Historical {target_col.replace('_', ' ').title()}"
+                hist_response_value = f"{result.current_response:,.0f}"
+            else:
+                hist_response_label = "Historical Response"
+                hist_response_value = f"${result.current_response:,.0f}"
+            st.metric(hist_response_label, hist_response_value)
+        with resp_col2:
+            if kpi_type == "count":
+                exp_response_label = f"Expected {target_col.replace('_', ' ').title()}"
+                exp_response_value = f"{result.expected_response:,.0f}"
+            else:
+                exp_response_label = "Expected Response"
+                exp_response_value = f"${result.expected_response:,.0f}"
+            st.metric(
+                exp_response_label,
+                exp_response_value,
+                delta=f"+{result.response_uplift_pct:.1f}%" if result.response_uplift_pct else None,
+            )
+        with resp_col3:
+            # Show response uplift as a standalone metric for emphasis
+            if result.response_uplift_pct is not None:
+                st.metric("Response Uplift", f"+{result.response_uplift_pct:.1f}%")
+
+        # Row 3: Efficiency comparison (Historical ROI/CPA | Expected ROI/CPA | Change %)
+        eff_col1, eff_col2, eff_col3 = st.columns(3)
+        with eff_col1:
+            if kpi_type == "count":
+                hist_cpa = historical_budget / result.current_response
+                st.metric("Historical CPA", f"${hist_cpa:,.2f}")
+            else:
+                hist_roi = result.current_response / historical_budget if historical_budget > 0 else 0
+                st.metric("Historical ROI", f"{hist_roi:.2f}x")
+        with eff_col2:
+            if kpi_type == "count":
+                exp_cpa = result.total_budget / result.expected_response if result.expected_response > 0 else 0
+                st.metric("Expected CPA", f"${exp_cpa:,.2f}")
+            else:
+                exp_roi = result.expected_response / result.total_budget if result.total_budget > 0 else 0
+                st.metric("Expected ROI", f"{exp_roi:.2f}x")
+        with eff_col3:
+            # Calculate efficiency change percentage
+            if kpi_type == "count":
+                # CPA: lower is better, so show improvement as positive when CPA decreases
+                hist_cpa = historical_budget / result.current_response
+                exp_cpa = result.total_budget / result.expected_response if result.expected_response > 0 else 0
+                if hist_cpa > 0:
+                    cpa_change_pct = ((hist_cpa - exp_cpa) / hist_cpa) * 100
+                    delta_str = f"+{cpa_change_pct:.1f}%" if cpa_change_pct >= 0 else f"{cpa_change_pct:.1f}%"
+                    st.metric("CPA Improvement", delta_str)
+            else:
+                # ROI: higher is better
+                hist_roi = result.current_response / historical_budget if historical_budget > 0 else 0
+                exp_roi = result.expected_response / result.total_budget if result.total_budget > 0 else 0
+                if hist_roi > 0:
+                    roi_change_pct = ((exp_roi - hist_roi) / hist_roi) * 100
+                    delta_str = f"+{roi_change_pct:.1f}%" if roi_change_pct >= 0 else f"{roi_change_pct:.1f}%"
+                    st.metric("ROI Improvement", delta_str)
+    else:
+        # No historical comparison - use original simple layout
+        metric_col1, metric_col2, metric_col3 = st.columns(3)
+        with metric_col1:
+            st.metric("Total Budget", f"${result.total_budget:,.0f}")
+        with metric_col2:
+            if kpi_type == "count":
+                response_label = f"Expected {target_col.replace('_', ' ').title()}"
+                response_value = f"{result.expected_response:,.0f}"
+            else:
+                response_label = "Expected Response"
+                response_value = f"${result.expected_response:,.0f}"
+            st.metric(
+                response_label,
+                response_value,
+                delta=f"+{result.response_uplift_pct:.1f}%" if result.response_uplift_pct else None,
+            )
+        with metric_col3:
+            if kpi_type == "count":
+                cpa = result.total_budget / result.expected_response if result.expected_response > 0 else 0
+                st.metric("Expected CPA", f"${cpa:,.2f}")
+            else:
+                roi = result.expected_response / result.total_budget if result.total_budget > 0 else 0
+                st.metric("Expected ROI", f"{roi:.2f}x")
 
     # CI caption
     if kpi_type == "count":
