@@ -1433,6 +1433,9 @@ def _show_optimize_results(wrapper, result):
     # Determine KPI type for display formatting
     kpi_type = getattr(wrapper.config.data, 'kpi_type', 'revenue')
     target_col = wrapper.config.data.target_column
+    # Use kpi_display_name if configured, otherwise format the column name
+    kpi_display_name = getattr(wrapper.config.data, 'kpi_display_name', None)
+    kpi_label = kpi_display_name or target_col.replace('_', ' ').title()
 
     # Check if we have historical comparison data
     has_historical = (
@@ -1452,7 +1455,7 @@ def _show_optimize_results(wrapper, result):
         resp_col1, resp_col2, resp_col3 = st.columns([2, 2, 1])
         with resp_col1:
             if kpi_type == "count":
-                hist_response_label = f"Historical {target_col.replace('_', ' ').title()}"
+                hist_response_label = f"Historical {kpi_label}"
                 hist_response_value = f"{result.current_response:,.0f}"
             else:
                 hist_response_label = "Historical Response"
@@ -1460,7 +1463,7 @@ def _show_optimize_results(wrapper, result):
             st.metric(hist_response_label, hist_response_value)
         with resp_col2:
             if kpi_type == "count":
-                exp_response_label = f"Expected {target_col.replace('_', ' ').title()}"
+                exp_response_label = f"Expected {kpi_label}"
                 exp_response_value = f"{result.expected_response:,.0f}"
             else:
                 exp_response_label = "Expected Response"
@@ -1540,7 +1543,7 @@ def _show_optimize_results(wrapper, result):
             st.metric("Total Budget", f"${result.total_budget:,.0f}")
         with metric_col2:
             if kpi_type == "count":
-                response_label = f"Expected {target_col.replace('_', ' ').title()}"
+                response_label = f"Expected {kpi_label}"
                 response_value = f"{result.expected_response:,.0f}"
             else:
                 response_label = "Expected Response"
