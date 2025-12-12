@@ -1589,18 +1589,19 @@ def _show_comparison_charts(result, df):
 
 def _show_allocation_table(df):
     """Show the allocation table with formatting."""
-    display_df = df.copy()
+    # Replace inf/NaN with 0 for display (sprintf can't handle special floats)
+    display_df = df.replace([np.inf, -np.inf], np.nan).fillna(0)
 
     # Build column config for sortable, formatted display
     col_config = {
         "channel": st.column_config.TextColumn("Channel"),
-        "optimal": st.column_config.NumberColumn("Optimal ($)", format="$%,.0f"),
+        "optimal": st.column_config.NumberColumn("Optimal ($)", format="$%.0f"),
         "pct_of_total": st.column_config.NumberColumn("% of Total", format="%.1f"),
     }
 
     if "current" in display_df.columns:
-        col_config["current"] = st.column_config.NumberColumn("Current ($)", format="$%,.0f")
-        col_config["delta"] = st.column_config.NumberColumn("Delta ($)", format="$%+,.0f")
+        col_config["current"] = st.column_config.NumberColumn("Current ($)", format="$%.0f")
+        col_config["delta"] = st.column_config.NumberColumn("Delta ($)", format="$%+.0f")
         col_config["pct_change"] = st.column_config.NumberColumn("% Change", format="%+.1f")
 
     st.dataframe(display_df, column_config=col_config, hide_index=True)
@@ -1722,13 +1723,15 @@ def _show_incremental_results(wrapper, result):
     st.plotly_chart(fig_stacked)
 
     # Allocation table with sortable columns
+    # Replace inf/NaN with 0 for display (sprintf can't handle special floats)
+    display_comparison_df = comparison_df.replace([np.inf, -np.inf], np.nan).fillna(0)
     st.dataframe(
-        comparison_df,
+        display_comparison_df,
         column_config={
             "Channel": st.column_config.TextColumn("Channel"),
-            "Committed": st.column_config.NumberColumn("Committed ($)", format="$%,.0f"),
-            "Recommended": st.column_config.NumberColumn("Recommended ($)", format="$%,.0f"),
-            "Incremental": st.column_config.NumberColumn("Incremental ($)", format="$%+,.0f"),
+            "Committed": st.column_config.NumberColumn("Committed ($)", format="$%.0f"),
+            "Recommended": st.column_config.NumberColumn("Recommended ($)", format="$%.0f"),
+            "Incremental": st.column_config.NumberColumn("Incremental ($)", format="$%+.0f"),
         },
         hide_index=True,
     )
@@ -1767,11 +1770,13 @@ def _show_target_results(result):
         {"Channel": ch, "Budget": amt}
         for ch, amt in result.optimal_allocation.items()
     ])
+    # Replace inf/NaN with 0 for display (sprintf can't handle special floats)
+    display_alloc_df = alloc_df.replace([np.inf, -np.inf], np.nan).fillna(0)
     st.dataframe(
-        alloc_df,
+        display_alloc_df,
         column_config={
             "Channel": st.column_config.TextColumn("Channel"),
-            "Budget": st.column_config.NumberColumn("Budget ($)", format="$%,.0f"),
+            "Budget": st.column_config.NumberColumn("Budget ($)", format="$%.0f"),
         },
         hide_index=True,
     )
@@ -1842,7 +1847,10 @@ def _show_scenarios_results(result):
     # Marginal efficiency chart (ROI or Cost Per)
     # For count KPIs, invert marginal_response to show cost-per (dollars per install)
     if is_count_kpi:
+        # Handle division by zero: replace 0 with NaN, then invert, then replace inf with NaN
+        curve["marginal_response"] = curve["marginal_response"].replace(0, np.nan)
         curve["marginal_response"] = 1 / curve["marginal_response"]
+        curve["marginal_response"] = curve["marginal_response"].replace([np.inf, -np.inf], np.nan)
 
     fig_marginal = px.line(
         curve,
@@ -1870,11 +1878,14 @@ def _show_scenarios_results(result):
     summary_df = curve[["budget", "expected_response", "marginal_response"]].copy()
 
     # Add efficiency column (ROI for revenue, CPA for count)
+    # Handle division by zero by replacing inf with NaN
     if is_count_kpi:
-        summary_df["efficiency"] = curve["budget"] / curve["expected_response"]
+        summary_df["efficiency"] = curve["budget"] / curve["expected_response"].replace(0, np.nan)
+        summary_df["efficiency"] = summary_df["efficiency"].replace([np.inf, -np.inf], np.nan)
         eff_col_name = "CPA"
     else:
-        summary_df["efficiency"] = curve["expected_response"] / curve["budget"]
+        summary_df["efficiency"] = curve["expected_response"] / curve["budget"].replace(0, np.nan)
+        summary_df["efficiency"] = summary_df["efficiency"].replace([np.inf, -np.inf], np.nan)
         eff_col_name = "ROI"
 
     # Keep numeric values, rename columns
@@ -1885,20 +1896,22 @@ def _show_scenarios_results(result):
     # Build column config based on KPI type
     if is_count_kpi:
         col_config = {
-            "Budget": st.column_config.NumberColumn("Budget", format="$%,.0f"),
-            response_label: st.column_config.NumberColumn(response_label, format="%,.0f"),
+            "Budget": st.column_config.NumberColumn("Budget", format="$%.0f"),
+            response_label: st.column_config.NumberColumn(response_label, format="%.0f"),
             eff_col_name: st.column_config.NumberColumn(eff_col_name, format="$%.2f"),
             marginal_label: st.column_config.NumberColumn(marginal_label, format="$%.2f"),
         }
     else:
         col_config = {
-            "Budget": st.column_config.NumberColumn("Budget", format="$%,.0f"),
-            response_label: st.column_config.NumberColumn(response_label, format="$%,.0f"),
+            "Budget": st.column_config.NumberColumn("Budget", format="$%.0f"),
+            response_label: st.column_config.NumberColumn(response_label, format="$%.0f"),
             eff_col_name: st.column_config.NumberColumn(eff_col_name, format="%.2f"),
             marginal_label: st.column_config.NumberColumn(marginal_label, format="%.2f"),
         }
 
-    st.dataframe(summary_df, column_config=col_config, hide_index=True)
+    # Replace NaN/inf with 0 for display (sprintf can't handle special floats)
+    display_summary_df = summary_df.replace([np.inf, -np.inf], np.nan).fillna(0)
+    st.dataframe(display_summary_df, column_config=col_config, hide_index=True)
 
     # Scenario drill-down details
     st.markdown("### Scenario Details")
@@ -1925,17 +1938,19 @@ def _show_scenarios_results(result):
                 "channel": st.column_config.TextColumn("Channel"),
             }
             if "optimal" in df.columns:
-                col_config["optimal"] = st.column_config.NumberColumn("Optimal ($)", format="$%,.0f")
+                col_config["optimal"] = st.column_config.NumberColumn("Optimal ($)", format="$%.0f")
             if "current" in df.columns:
-                col_config["current"] = st.column_config.NumberColumn("Current ($)", format="$%,.0f")
+                col_config["current"] = st.column_config.NumberColumn("Current ($)", format="$%.0f")
             if "delta" in df.columns:
-                col_config["delta"] = st.column_config.NumberColumn("Delta ($)", format="$%+,.0f")
+                col_config["delta"] = st.column_config.NumberColumn("Delta ($)", format="$%+.0f")
             if "pct_change" in df.columns:
                 col_config["pct_change"] = st.column_config.NumberColumn("% Change", format="%.0f")
             if "pct_of_total" in df.columns:
                 col_config["pct_of_total"] = st.column_config.NumberColumn("% of Total", format="%.1f")
 
-            st.dataframe(df, column_config=col_config, hide_index=True)
+            # Replace inf/NaN with 0 for display (sprintf can't handle special floats)
+            display_df = df.replace([np.inf, -np.inf], np.nan).fillna(0)
+            st.dataframe(display_df, column_config=col_config, hide_index=True)
 
     # Download
     csv = result.to_dataframe().to_csv(index=False)

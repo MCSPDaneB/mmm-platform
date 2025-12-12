@@ -312,7 +312,7 @@ def show():
             display_grouped,
             column_config={
                 "Group": st.column_config.TextColumn("Group"),
-                "Contribution ($)": st.column_config.NumberColumn("Contribution ($)", format="$%,.0f"),
+                "Contribution ($)": st.column_config.NumberColumn("Contribution ($)", format="$%.0f"),
                 "% of Total": st.column_config.NumberColumn("% of Total", format="%.2f"),
             },
             hide_index=True,

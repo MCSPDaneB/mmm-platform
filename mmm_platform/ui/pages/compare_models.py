@@ -471,7 +471,7 @@ def _show_contributions_tab(data: Dict[str, Any]):
                 column_config={
                     "Category": st.column_config.TextColumn("Category"),
                     "% of Total": st.column_config.NumberColumn("% of Total", format="%.1f"),
-                    "Contribution": st.column_config.NumberColumn("Contribution", format="$%,.0f"),
+                    "Contribution": st.column_config.NumberColumn("Contribution", format="$%.0f"),
                 },
                 hide_index=True,
             )
@@ -497,7 +497,7 @@ def _show_contributions_tab(data: Dict[str, Any]):
                 column_config={
                     "Category": st.column_config.TextColumn("Category"),
                     "% of Total": st.column_config.NumberColumn("% of Total", format="%.1f"),
-                    "Contribution": st.column_config.NumberColumn("Contribution", format="$%,.0f"),
+                    "Contribution": st.column_config.NumberColumn("Contribution", format="$%.0f"),
                 },
                 hide_index=True,
             )
@@ -528,9 +528,9 @@ def _show_contributions_tab(data: Dict[str, Any]):
         column_config={
             "Category": st.column_config.TextColumn("Category"),
             "% (A)": st.column_config.NumberColumn("% (A)", format="%.1f"),
-            "Value (A)": st.column_config.NumberColumn("Value (A)", format="$%,.0f"),
+            "Value (A)": st.column_config.NumberColumn("Value (A)", format="$%.0f"),
             "% (B)": st.column_config.NumberColumn("% (B)", format="%.1f"),
-            "Value (B)": st.column_config.NumberColumn("Value (B)", format="$%,.0f"),
+            "Value (B)": st.column_config.NumberColumn("Value (B)", format="$%.0f"),
             "% Diff": st.column_config.NumberColumn("% Diff", format="%+.1f"),
         },
         hide_index=True,
