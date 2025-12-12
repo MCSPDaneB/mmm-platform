@@ -969,9 +969,13 @@ def _show_seasonality_expander(wrapper, channel_info):
 
 
 def _show_validation_expander(wrapper):
-    """Show the optimizer validation expander."""
-    with st.expander("Validate Optimizer Accuracy", expanded=False):
-        st.caption("Validate optimizer's saturation curves vs model's media contribution")
+    """Show the optimizer calibration check expander."""
+    with st.expander("Optimizer Calibration Check", expanded=False):
+        st.caption(
+            "Validates that the optimizer's saturation formula matches the model's "
+            "channel contribution calculations. This checks internal consistency, "
+            "not future prediction accuracy."
+        )
 
         validation_periods = st.slider(
             "Periods to validate",
@@ -1033,7 +1037,7 @@ def _show_validation_expander(wrapper):
                 line=dict(color='orange'),
             ))
             fig_ts.update_layout(
-                title="Media Contribution: Model vs Optimizer",
+                title="Calibration: Model vs Optimizer Formula",
                 xaxis_title="Date",
                 yaxis_title="Media Contribution",
                 height=300,
