@@ -1449,7 +1449,7 @@ def _show_optimize_results(wrapper, result):
         st.metric("Total Budget", f"${result.total_budget:,.0f}")
 
         # Row 2: Response comparison (Historical | Expected | Uplift %)
-        resp_col1, resp_col2, resp_col3 = st.columns(3)
+        resp_col1, resp_col2, resp_col3 = st.columns([2, 2, 1])
         with resp_col1:
             if kpi_type == "count":
                 hist_response_label = f"Historical {target_col.replace('_', ' ').title()}"
@@ -1482,7 +1482,7 @@ def _show_optimize_results(wrapper, result):
                 """, unsafe_allow_html=True)
 
         # Row 3: Efficiency comparison (Historical ROI/CPA | Expected ROI/CPA | Change %)
-        eff_col1, eff_col2, eff_col3 = st.columns(3)
+        eff_col1, eff_col2, eff_col3 = st.columns([2, 2, 1])
         with eff_col1:
             if kpi_type == "count":
                 hist_cpa = historical_budget / result.current_response
