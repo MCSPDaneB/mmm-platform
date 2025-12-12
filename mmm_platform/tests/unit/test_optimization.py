@@ -629,3 +629,106 @@ class TestOptimizerUIKPITypeFormatting:
         # Full metric label
         full_label = f"Expected {label}"
         assert full_label == "Expected App Installs"
+
+
+# =============================================================================
+# Contribution Scale Consistency Tests
+# =============================================================================
+
+class TestContributionScaleConsistency:
+    """Tests that contribution calculations are consistent across the system.
+
+    This prevents regressions where historical contributions and optimizer
+    expected response end up in different scales (which caused a ~50% mismatch).
+    """
+
+    def test_get_contributions_uses_correct_method(self):
+        """Verify get_contributions() uses compute_channel_contribution_original_scale.
+
+        Both get_contributions() and BacktestValidator must use the same
+        PyMC-Marketing method to ensure scale consistency with the optimizer.
+        """
+        # Create mock wrapper
+        mock_wrapper = Mock()
+        mock_wrapper.idata = Mock()
+
+        # Create mock xarray response
+        mock_xarray = Mock()
+        mock_mean = Mock()
+        mock_mean.coords = {'channel': Mock(values=np.array(['ch1', 'ch2']))}
+        mock_mean.values = np.array([[100, 200], [150, 250], [120, 180]])
+        mock_xarray.mean.return_value = mock_mean
+
+        # Set up the mmm mock
+        mock_mmm = Mock()
+        mock_mmm.compute_channel_contribution_original_scale.return_value = mock_xarray
+        mock_wrapper.mmm = mock_mmm
+
+        # Import and call get_contributions
+        from mmm_platform.model.mmm import MMMWrapper
+
+        # Patch the method to use our mock
+        with patch.object(MMMWrapper, '__init__', lambda x, y: None):
+            wrapper = MMMWrapper(None)
+            wrapper.idata = mock_wrapper.idata
+            wrapper.mmm = mock_mmm
+
+            # Call get_contributions
+            result = wrapper.get_contributions()
+
+        # Verify the correct method was called
+        mock_mmm.compute_channel_contribution_original_scale.assert_called_once_with(prior=False)
+
+        # Verify result shape
+        assert result.shape == (3, 2)
+        assert list(result.columns) == ['ch1', 'ch2']
+
+    def test_backtest_validator_uses_same_method(self):
+        """Verify BacktestValidator uses compute_channel_contribution_original_scale.
+
+        This ensures the calibration validation uses the same scale as
+        get_contributions() for historical baseline.
+        """
+        from mmm_platform.analysis.backtest import BacktestValidator
+
+        # Create comprehensive mock wrapper
+        mock_wrapper = Mock()
+        mock_wrapper.idata = Mock()
+        mock_wrapper.idata.posterior = {
+            'saturation_beta': Mock(),
+            'saturation_lam': Mock(),
+        }
+        mock_wrapper.idata.posterior['saturation_beta'].mean.return_value = Mock(values=np.array([0.1, 0.2]))
+        mock_wrapper.idata.posterior['saturation_lam'].mean.return_value = Mock(values=np.array([1.0, 1.0]))
+
+        # Mock config
+        mock_config = Mock()
+        mock_config.data.target_column = 'revenue'
+        mock_wrapper.config = mock_config
+
+        # Mock df_scaled
+        mock_df = pd.DataFrame({
+            'revenue': [1000, 2000, 1500],
+            'ch1': [100, 150, 120],
+            'ch2': [200, 250, 180],
+        })
+        mock_wrapper.df_scaled = mock_df
+
+        # Mock MMM
+        mock_mmm = Mock()
+        mock_mmm.channel_columns = ['ch1', 'ch2']
+
+        # Create mock xarray for compute_channel_contribution_original_scale
+        mock_xarray = Mock()
+        mock_mean = Mock()
+        mock_mean.sum.return_value = Mock(values=np.array([300, 400, 300]))
+        mock_xarray.mean.return_value = mock_mean
+        mock_mmm.compute_channel_contribution_original_scale.return_value = mock_xarray
+
+        mock_wrapper.mmm = mock_mmm
+
+        # Create BacktestValidator
+        validator = BacktestValidator(mock_wrapper)
+
+        # Verify the correct method was called
+        mock_mmm.compute_channel_contribution_original_scale.assert_called_once_with(prior=False)
