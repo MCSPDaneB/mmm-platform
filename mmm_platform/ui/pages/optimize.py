@@ -43,9 +43,16 @@ def _fill_budget_callback():
             st.session_state.opt_comparison_mode = "Last N weeks actual"
             st.session_state.opt_comparison_n_weeks = fill_weeks
 
+            # Update start month to match the period for correct seasonality
+            st.session_state.opt_start_month = start_date.month
+
+            # Clear cached seasonal indices so they recalculate with new start month
+            if "seasonal_indices" in st.session_state:
+                del st.session_state.seasonal_indices
+
             st.session_state.budget_fill_info = (
                 f"Filled with ${total:,.0f} from {start_date:%Y-%m-%d} to {end_date:%Y-%m-%d}. "
-                f"Comparison set to last {fill_weeks} weeks."
+                f"Comparison and seasonality updated to match."
             )
         else:
             st.session_state.budget_fill_error = "No spend found for selected period"
