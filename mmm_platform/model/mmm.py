@@ -312,30 +312,34 @@ class MMMWrapper:
 
     def get_contributions(self) -> pd.DataFrame:
         """
-        Get channel and control contributions over time.
+        Get channel contributions over time.
+
+        Uses compute_channel_contribution_original_scale() to ensure contributions
+        are in the same scale as the optimizer's expected response calculations.
+        This matches the method used by BacktestValidator for consistency.
 
         Returns
         -------
         pd.DataFrame
-            Contributions dataframe.
+            Contributions dataframe with channels as columns and periods as rows.
         """
         if self.idata is None:
             raise ValueError("Model not fitted. Call fit() first.")
 
-        # Handle different PyMC-Marketing versions:
-        # - v0.17+: compute_mean_contributions_over_time(original_scale=False) - uses self.idata internally
-        # - older: compute_mean_contributions_over_time(idata, original_scale=False) - needs idata passed
-        import inspect
-        sig = inspect.signature(self.mmm.compute_mean_contributions_over_time)
-        params = list(sig.parameters.keys())
+        # Use compute_channel_contribution_original_scale to match optimizer's scale
+        # This is the same method used by the BacktestValidator
+        contrib = self.mmm.compute_channel_contribution_original_scale(prior=False)
 
-        if 'idata' in params:
-            # Older version - pass idata explicitly
-            contribs = self.mmm.compute_mean_contributions_over_time(idata=self.idata, original_scale=True)
-        else:
-            # Newer version (0.17+) - idata is stored internally
-            contribs = self.mmm.compute_mean_contributions_over_time(original_scale=True)
-        return contribs
+        # Average across chains/draws to get mean contribution per period
+        # contrib shape: (chain, draw, date, channel)
+        mean_contrib = contrib.mean(dim=['chain', 'draw'])  # (date, channel)
+
+        # Convert xarray to DataFrame
+        df = mean_contrib.to_dataframe().unstack('channel')
+        # Remove multi-level column index if present
+        if hasattr(df.columns, 'droplevel'):
+            df.columns = df.columns.droplevel(0)
+        return df
 
     def get_contributions_real_units(self) -> pd.DataFrame:
         """
