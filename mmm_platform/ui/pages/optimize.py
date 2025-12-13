@@ -2025,8 +2025,13 @@ def _show_constraint_comparison_results(results, config, wrapper):
     # Get KPI labels
     from mmm_platform.ui.kpi_labels import KPILabels
     labels = KPILabels(wrapper.config) if wrapper else None
-    response_label = labels.response_column_label if labels else "Expected Response"
     is_count_kpi = labels and not labels.is_revenue_type
+    # Use target name for response label (e.g., "Expected Revenue" or "Expected Conversions")
+    if labels:
+        target_name = getattr(labels, 'target_name', None) or wrapper.config.data.target_column
+        response_label = f"Expected {target_name}"
+    else:
+        response_label = "Expected Response"
 
     # Color scheme for constraint levels
     colors = {
