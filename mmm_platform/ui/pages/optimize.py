@@ -1497,14 +1497,14 @@ def _show_optimize_results(wrapper, result):
                 st.metric("Historical CPA", f"${hist_cpa:,.2f}")
             else:
                 hist_roi = result.current_response / historical_budget if historical_budget > 0 else 0
-                st.metric("Historical ROI", f"{hist_roi:.2f}x")
+                st.metric("Historical ROI", f"${hist_roi:.2f}")
         with eff_col2:
             if kpi_type == "count":
                 exp_cpa = result.total_budget / display_response if display_response > 0 else 0
                 st.metric("Expected CPA", f"${exp_cpa:,.2f}")
             else:
                 exp_roi = display_response / result.total_budget if result.total_budget > 0 else 0
-                st.metric("Expected ROI", f"{exp_roi:.2f}x")
+                st.metric("Expected ROI", f"${exp_roi:.2f}")
         with eff_col3:
             # Calculate efficiency change percentage and display as colored pill
             if kpi_type == "count":
@@ -1570,7 +1570,7 @@ def _show_optimize_results(wrapper, result):
                 st.metric("Expected CPA", f"${cpa:,.2f}")
             else:
                 roi = display_response / result.total_budget if result.total_budget > 0 else 0
-                st.metric("Expected ROI", f"{roi:.2f}x")
+                st.metric("Expected ROI", f"${roi:.2f}")
 
     # Unallocated budget results (from bounds or efficiency floor)
     if result.unallocated_budget is not None and result.unallocated_budget > 0:

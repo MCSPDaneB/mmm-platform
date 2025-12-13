@@ -587,17 +587,20 @@ class OptimizationBridge:
         float
             Total channel contributions for the period in original units.
         """
-        # Get ONLY channel contributions (not baseline/controls/trend/seasonality)
-        # This uses compute_channel_contribution_original_scale which returns
-        # values already in original scale
-        contribs = self.wrapper.get_channel_contributions()
-        date_col = self.config.data.date_column
+        # Use get_contributions() which uses compute_mean_contributions_over_time()
+        # This is the SAME method used by the export, ensuring consistency.
+        # Note: get_channel_contributions() uses compute_channel_contribution_original_scale()
+        # which returns different values for revenue models (2.7x discrepancy).
+        contribs = self.wrapper.get_contributions()
         df = self.wrapper.df_scaled
 
-        # Get only channel columns that exist in contributions
-        channel_cols = [c for c in self.channel_columns if c in contribs.columns]
+        # Filter to only PAID MEDIA channels (exclude owned media, baseline, controls, trend, seasonality)
+        # This matches the export which only sums PaidMedia_* columns
+        paid_channels = list(self.config.get_channel_columns())
+        channel_cols = [c for c in paid_channels if c in contribs.columns]
 
-        # Revenue scale for unit conversion
+        # Multiply by revenue_scale to convert from model units to original units
+        # This matches the export's behavior exactly
         revenue_scale = self.config.data.revenue_scale
 
         if comparison_mode == "average":

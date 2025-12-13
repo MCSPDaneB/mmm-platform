@@ -556,7 +556,9 @@ class BudgetAllocator:
         df_scaled = self.bridge.wrapper.df_scaled
         spend_scale = self.bridge.config.data.spend_scale
         target_col = self.bridge.config.data.target_column
-        target_scale = float(df_scaled[target_col].max())
+        revenue_scale = self.bridge.config.data.revenue_scale
+        # Include revenue_scale to convert model units to original dollars
+        target_scale = float(df_scaled[target_col].max()) * revenue_scale
 
         # Get x_max for each channel (in scaled units)
         x_maxes = np.array([float(df_scaled[ch].max()) for ch in channels])
