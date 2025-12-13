@@ -134,6 +134,11 @@ def _show_configuration_tab(wrapper, allocator, channel_info):
     # Store mode in session state
     st.session_state.optimization_mode = mode
 
+    # Initialize parsed_scenarios for scenarios mode button enablement
+    # Must happen BEFORE top button renders
+    if mode == "scenarios" and "parsed_scenarios" not in st.session_state:
+        st.session_state.parsed_scenarios = [50000, 100000, 150000, 200000, 250000]
+
     # Top run button (for quick access)
     _show_run_button(wrapper, allocator, channel_info, mode, position="top")
 
