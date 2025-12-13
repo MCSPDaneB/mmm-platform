@@ -116,6 +116,15 @@ Use `pytest -x` to stop on first failure during debugging.
 
 ## Debugging Guidelines
 
+### Validating Feature Concepts
+
+Before implementing features borrowed from other domains (finance, portfolio theory, etc.):
+
+1. **Question the analogy** - Does the concept actually apply to MMM/marketing? (e.g., VaR optimization doesn't create intuitive risk/return trade-offs in MMM due to saturation curves)
+2. **Check for meaningful trade-offs** - Will different options produce meaningfully different results with the expected ordering?
+3. **Validate with simple tests** - Run quick tests to confirm expected behavior before full implementation
+4. **Ask the user** - If unsure whether a concept translates, ask before implementing
+
 ### Debugging with User Input
 
 When the user has already performed debugging and shares observations:
