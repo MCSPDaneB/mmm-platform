@@ -616,6 +616,13 @@ class BudgetAllocator:
         # Initial guess: uniform allocation (in scaled units)
         x0 = np.ones(n_channels) * budget_per_period_scaled / n_channels
 
+        # Pre-check: can bounds accommodate budget?
+        total_max_bounds = sum(b[1] for b in bounds_list) * spend_scale * num_periods
+        if total_max_bounds < total_budget * 0.99:  # Allow 1% tolerance
+            logger.warning(
+                f"Bounds cannot accommodate budget: max=${total_max_bounds:,.0f}, budget=${total_budget:,.0f}"
+            )
+
         # Progress tracking
         start_time = time.time()
 
@@ -638,10 +645,21 @@ class BudgetAllocator:
 
         # Calculate actual allocated vs requested budget
         actual_allocated = sum(allocation.values())
-        unallocated_budget = total_budget - actual_allocated
 
-        # Compute all risk metrics at optimal allocation for results
-        risk_metrics = risk_objective.compute_all_risk_metrics(result.x)
+        # Only normalize if within 1% (floating point / optimizer tolerance)
+        # Real constraint violations (>1%) are NOT normalized - they're flagged
+        if actual_allocated > 0 and abs(actual_allocated - total_budget) / total_budget < 0.01:
+            scale = total_budget / actual_allocated
+            x_scaled = result.x * scale
+            allocation = {ch: float(val * spend_scale * num_periods) for ch, val in zip(channels, x_scaled)}
+            actual_allocated = total_budget
+            # Recalculate response with adjusted allocation (saturation is non-linear)
+            risk_metrics = risk_objective.compute_all_risk_metrics(x_scaled)
+        else:
+            # Real constraint violation - compute metrics on original result
+            risk_metrics = risk_objective.compute_all_risk_metrics(result.x)
+
+        unallocated_budget = total_budget - actual_allocated
 
         # Store risk metrics and unallocated budget in result for later use
         result.risk_metrics = risk_metrics
