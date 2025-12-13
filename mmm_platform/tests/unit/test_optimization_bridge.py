@@ -95,8 +95,9 @@ def mock_mmm():
 def mock_transform_engine():
     """Create mock transform engine."""
     engine = Mock()
+    # Only paid media channels (email_sends is owned media, excluded from optimization)
     engine.get_effective_channel_columns = Mock(
-        return_value=["tv_spend", "search_spend", "email_sends"]
+        return_value=["tv_spend", "search_spend"]
     )
     return engine
 
@@ -152,18 +153,18 @@ class TestOptimizationBridgeInit:
             OptimizationBridge(wrapper)
 
     def test_init_extracts_channels(self, bridge):
-        """Bridge extracts channel columns from transform engine."""
+        """Bridge extracts paid media channel columns from transform engine."""
         channels = bridge.channel_columns
         assert "tv_spend" in channels
         assert "search_spend" in channels
-        assert "email_sends" in channels
+        # email_sends is owned media, excluded from optimization
 
     def test_init_extracts_display_names(self, bridge):
-        """Bridge extracts display name mapping."""
+        """Bridge extracts display name mapping for paid media."""
         names = bridge.channel_display_names
         assert names["tv_spend"] == "TV"
         assert names["search_spend"] == "Search"
-        assert names["email_sends"] == "Email"
+        # email_sends is owned media, excluded from optimization
 
 
 # =============================================================================
@@ -214,11 +215,11 @@ class TestHistoricalSpendMethods:
         assert isinstance(result, dict)
 
     def test_get_historical_spend_all_channels(self, bridge):
-        """get_historical_spend includes all channel columns."""
+        """get_historical_spend includes all paid media channels."""
         result = bridge.get_historical_spend()
         assert "tv_spend" in result
         assert "search_spend" in result
-        assert "email_sends" in result
+        # email_sends is owned media, excluded from optimization
 
     def test_get_historical_spend_positive_values(self, bridge):
         """Historical spend values are positive."""
@@ -269,8 +270,8 @@ class TestLastNWeeksSpend:
         _, max_date, _ = bridge.get_available_date_range()
         assert end_date == max_date
 
-        # Start date should be approximately n_weeks before
-        expected_start = max_date - pd.Timedelta(weeks=n_weeks)
+        # Start date should be n_weeks - 1 before (both endpoints included)
+        expected_start = max_date - pd.Timedelta(weeks=n_weeks - 1)
         assert start_date == expected_start
 
     def test_get_last_n_weeks_spend_extrapolation(self, bridge):
@@ -298,11 +299,11 @@ class TestLastNWeeksSpend:
         assert start_date == min_date
 
     def test_get_last_n_weeks_spend_all_channels_present(self, bridge):
-        """All channels are present in result."""
+        """All paid media channels are present in result."""
         spend, _, _ = bridge.get_last_n_weeks_spend(n_weeks=8)
         assert "tv_spend" in spend
         assert "search_spend" in spend
-        assert "email_sends" in spend
+        # email_sends is owned media, not paid media, so excluded from optimization
 
 
 class TestMostRecentMatchingPeriodSpend:
