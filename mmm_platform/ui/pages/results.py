@@ -1703,6 +1703,8 @@ def show():
         contribs = wrapper.get_contributions()
         target_col = config.data.target_column
 
+        # compute_mean_contributions_over_time returns DataFrame with DatetimeIndex
+        # Align actual values using the same index
         df_indexed = wrapper.df_scaled.set_index(config.data.date_column)
         actual = df_indexed[target_col].reindex(contribs.index) * config.data.revenue_scale
 

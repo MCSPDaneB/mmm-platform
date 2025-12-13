@@ -1431,21 +1431,8 @@ def _show_optimize_results(wrapper, result):
             "The default optimizer had convergence issues with this model."
         )
 
-    # Confidence level selector for viewing results
-    confidence_view = st.selectbox(
-        "View results as",
-        ["Expected", "Optimistic (95th percentile)", "Pessimistic (5th percentile)"],
-        key="results_confidence_view",
-        help="View the same optimized allocation under different confidence assumptions",
-    )
-
-    # Select response value based on confidence view
-    if "Optimistic" in confidence_view:
-        display_response = result.response_ci_high
-    elif "Pessimistic" in confidence_view:
-        display_response = result.response_ci_low
-    else:
-        display_response = result.expected_response
+    # Always use expected response
+    display_response = result.expected_response
 
     # Determine KPI type for display formatting
     kpi_type = getattr(wrapper.config.data, 'kpi_type', 'revenue')
@@ -1584,12 +1571,6 @@ def _show_optimize_results(wrapper, result):
             else:
                 roi = display_response / result.total_budget if result.total_budget > 0 else 0
                 st.metric("Expected ROI", f"{roi:.2f}x")
-
-    # CI caption
-    if kpi_type == "count":
-        st.caption(f"95% CI: {result.response_ci_low:,.0f} - {result.response_ci_high:,.0f}")
-    else:
-        st.caption(f"95% CI: ${result.response_ci_low:,.0f} - ${result.response_ci_high:,.0f}")
 
     # Unallocated budget results (from bounds or efficiency floor)
     if result.unallocated_budget is not None and result.unallocated_budget > 0:
@@ -1888,8 +1869,6 @@ def _show_target_results(result):
         st.metric("Required Budget", f"${result.required_budget:,.0f}")
     with metric_col3:
         st.metric("Expected Response", f"${result.expected_response:,.0f}")
-
-    st.caption(f"95% CI: ${result.response_ci_low:,.0f} - ${result.response_ci_high:,.0f}")
 
     # Allocation breakdown
     st.markdown("#### Optimal Allocation")

@@ -333,9 +333,10 @@ class OptimizationBridge:
             logger.warning(f"No data found for date range {start_date} to {end_date}")
             return {ch: 0.0 for ch in self.channel_columns}
 
-        # Sum spend per channel
+        # Sum spend per channel (only paid media, not owned media)
         spend = {}
-        for ch in self.channel_columns:
+        paid_channels = list(self.config.get_channel_columns())
+        for ch in paid_channels:
             if ch in df_filtered.columns:
                 raw_sum = float(df_filtered[ch].sum())
                 # If using df_original, values are already in original units
@@ -449,9 +450,10 @@ class OptimizationBridge:
         start_date = pd.to_datetime(df_recent[date_col].min())
         end_date = pd.to_datetime(df_recent[date_col].max())
 
-        # Sum spend (no extrapolation - actual values only)
+        # Sum spend (no extrapolation - actual values only, paid media only)
         spend = {}
-        for ch in self.channel_columns:
+        paid_channels = list(self.config.get_channel_columns())
+        for ch in paid_channels:
             if ch in df_recent.columns:
                 raw_sum = float(df_recent[ch].sum())
                 if use_original:
@@ -585,35 +587,36 @@ class OptimizationBridge:
         float
             Total channel contributions for the period in original units.
         """
-        # Get contributions in real units
-        contribs = self.wrapper.get_contributions_real_units()
+        # Get ONLY channel contributions (not baseline/controls/trend/seasonality)
+        # This uses compute_channel_contribution_original_scale which returns
+        # values already in original scale
+        contribs = self.wrapper.get_channel_contributions()
         date_col = self.config.data.date_column
         df = self.wrapper.df_scaled
 
-        # Get only channel columns (not controls/baseline)
+        # Get only channel columns that exist in contributions
         channel_cols = [c for c in self.channel_columns if c in contribs.columns]
+
+        # Revenue scale for unit conversion
+        revenue_scale = self.config.data.revenue_scale
 
         if comparison_mode == "average":
             # Average contribution per period × num_periods
             total_channel_contribs = contribs[channel_cols].sum().sum()
             avg_per_period = total_channel_contribs / len(df)
-            return avg_per_period * num_periods
+            return avg_per_period * num_periods * revenue_scale
 
         elif comparison_mode == "last_n_weeks":
             if n_weeks is None:
                 raise ValueError("n_weeks required for 'last_n_weeks' comparison mode")
             # Sum contributions from last n_weeks
-            # Sort both df and contribs by date, then take tail
-            sort_order = df[date_col].argsort()
-            contribs_sorted = contribs.iloc[sort_order]
-            return contribs_sorted.tail(n_weeks)[channel_cols].sum().sum()
+            # contribs already sorted by date (DatetimeIndex)
+            return contribs.tail(n_weeks)[channel_cols].sum().sum() * revenue_scale
 
         elif comparison_mode == "most_recent_period":
             # Sum contributions from most recent num_periods
-            # Sort both df and contribs by date, then take tail
-            sort_order = df[date_col].argsort()
-            contribs_sorted = contribs.iloc[sort_order]
-            return contribs_sorted.tail(num_periods)[channel_cols].sum().sum()
+            # contribs already sorted by date (DatetimeIndex)
+            return contribs.tail(num_periods)[channel_cols].sum().sum() * revenue_scale
 
         else:
             raise ValueError(f"Unknown comparison_mode: {comparison_mode}")

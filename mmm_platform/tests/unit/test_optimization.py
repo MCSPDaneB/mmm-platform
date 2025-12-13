@@ -643,53 +643,47 @@ class TestContributionScaleConsistency:
     """
 
     def test_get_contributions_uses_correct_method(self):
-        """Verify get_contributions() uses compute_channel_contribution_original_scale.
+        """Verify get_contributions() uses compute_mean_contributions_over_time.
 
-        Both get_contributions() and BacktestValidator must use the same
-        PyMC-Marketing method to ensure scale consistency with the optimizer.
+        get_contributions() must use compute_mean_contributions_over_time which
+        includes ALL model components (baseline, controls, trend, seasonality, channels).
+        This is required for correct R², charts, and diagnostics.
+
+        The optimizer uses get_channel_contributions() which calls
+        compute_channel_contribution_original_scale for channel-only contributions.
         """
-        # Create mock wrapper
+        from mmm_platform.model.mmm import MMMWrapper
+
         mock_wrapper = Mock()
         mock_wrapper.idata = Mock()
 
-        # Create mock xarray response
-        mock_xarray = Mock()
-        mock_mean = Mock()
-        # Include date coordinate (required since date alignment fix)
-        mock_dates = np.array(['2024-01-01', '2024-01-08', '2024-01-15'], dtype='datetime64[ns]')
-        mock_mean.coords = {
-            'channel': Mock(values=np.array(['ch1', 'ch2'])),
-            'date': Mock(values=mock_dates)
-        }
-        mock_mean.values = np.array([[100, 200], [150, 250], [120, 180]])
-        mock_xarray.mean.return_value = mock_mean
+        # compute_mean_contributions_over_time returns DataFrame directly
+        mock_dates = pd.to_datetime(['2024-01-01', '2024-01-08', '2024-01-15'])
+        mock_contribs_df = pd.DataFrame(
+            {'ch1': [100, 150, 120], 'ch2': [200, 250, 180], 'intercept': [50, 50, 50]},
+            index=mock_dates
+        )
 
-        # Set up the mmm mock
         mock_mmm = Mock()
-        mock_mmm.compute_channel_contribution_original_scale.return_value = mock_xarray
-        mock_wrapper.mmm = mock_mmm
+        mock_mmm.compute_mean_contributions_over_time.return_value = mock_contribs_df
 
-        # Import and call get_contributions
-        from mmm_platform.model.mmm import MMMWrapper
-
-        # Patch the method to use our mock
         with patch.object(MMMWrapper, '__init__', lambda x, y: None):
             wrapper = MMMWrapper(None)
             wrapper.idata = mock_wrapper.idata
             wrapper.mmm = mock_mmm
 
-            # Call get_contributions
             result = wrapper.get_contributions()
 
         # Verify the correct method was called
-        mock_mmm.compute_channel_contribution_original_scale.assert_called_once_with(prior=False)
+        mock_mmm.compute_mean_contributions_over_time.assert_called_once()
 
-        # Verify result shape
-        assert result.shape == (3, 2)
-        assert list(result.columns) == ['ch1', 'ch2']
+        # Verify result includes all components (not just channels)
+        assert 'ch1' in result.columns
+        assert 'ch2' in result.columns
+        assert 'intercept' in result.columns  # Must include baseline
 
-    def test_get_contributions_sorts_by_date(self):
-        """Verify get_contributions() sorts output by date.
+    def test_get_channel_contributions_sorts_by_date(self):
+        """Verify get_channel_contributions() sorts output by date.
 
         This prevents date alignment bugs where xarray returns dates in
         different order than df_scaled, causing wrong rows to be selected
@@ -729,7 +723,8 @@ class TestContributionScaleConsistency:
             wrapper.idata = mock_wrapper.idata
             wrapper.mmm = mock_mmm
 
-            result = wrapper.get_contributions()
+            # Use get_channel_contributions (optimizer method)
+            result = wrapper.get_channel_contributions()
 
         # After sorting by date, order should be: Jan 1, Jan 8, Jan 15
         # So values should be reordered to: [100,200], [200,400], [300,600]
@@ -741,8 +736,106 @@ class TestContributionScaleConsistency:
         assert list(result.iloc[2].values) == expected_last_row, \
             f"Last row should be Jan 15 values, got {result.iloc[2].values}"
 
-        # Verify index is reset to 0-based
-        assert list(result.index) == [0, 1, 2]
+        # Verify index is DatetimeIndex (sorted ascending)
+        assert isinstance(result.index, pd.DatetimeIndex), \
+            f"get_channel_contributions() must return DatetimeIndex, got {type(result.index)}"
+        assert result.index[0] < result.index[1] < result.index[2], \
+            "DatetimeIndex should be in ascending order"
+
+    def test_get_contributions_returns_datetime_index(self):
+        """Regression test: get_contributions() must return DatetimeIndex, not RangeIndex.
+
+        This test prevents a bug where reset_index(drop=True) was called,
+        dropping the datetime index. This broke:
+        - diagnostics.py: dates=contribs.index (crash on .dt accessor)
+        - results.py: chart x-axis showed integers instead of dates
+        - export.py: ~15 places iterating expecting dates
+        """
+        from mmm_platform.model.mmm import MMMWrapper
+
+        mock_wrapper = Mock()
+        mock_wrapper.idata = Mock()
+
+        # compute_mean_contributions_over_time returns a DataFrame directly with DatetimeIndex
+        mock_dates = pd.to_datetime(['2024-01-01', '2024-01-08', '2024-01-15'])
+        mock_contribs_df = pd.DataFrame(
+            {'ch1': [100, 200, 300]},
+            index=mock_dates
+        )
+
+        mock_mmm = Mock()
+        mock_mmm.compute_mean_contributions_over_time.return_value = mock_contribs_df
+
+        with patch.object(MMMWrapper, '__init__', lambda x, y: None):
+            wrapper = MMMWrapper(None)
+            wrapper.idata = mock_wrapper.idata
+            wrapper.mmm = mock_mmm
+
+            result = wrapper.get_contributions()
+
+        # CRITICAL: Must be DatetimeIndex, not RangeIndex
+        assert isinstance(result.index, pd.DatetimeIndex), \
+            f"get_contributions() MUST return DatetimeIndex. Got {type(result.index).__name__}. " \
+            "Do NOT use reset_index(drop=True) - it breaks diagnostics, charts, and exports."
+
+    def test_fit_statistics_alignment_no_nan(self):
+        """Regression test: get_fit_statistics() must not produce NaN from alignment issues.
+
+        This test prevents a bug where date format mismatches caused actual values to be
+        NaN, resulting in negative R² values. The fix uses compute_mean_contributions_over_time
+        which returns a properly indexed DataFrame that aligns correctly with df_scaled.
+        """
+        from mmm_platform.model.mmm import MMMWrapper
+
+        mock_wrapper = Mock()
+        mock_wrapper.idata = Mock()
+
+        # compute_mean_contributions_over_time returns a DataFrame with DatetimeIndex
+        # The dates are in chronological order
+        mock_dates = pd.to_datetime(['2024-01-01', '2024-01-08', '2024-01-15'])
+        mock_contribs_df = pd.DataFrame(
+            {
+                'ch1': [100, 150, 120],
+                'ch2': [50, 75, 60],
+                'intercept': [50, 50, 50],  # Include baseline component
+            },
+            index=mock_dates
+        )
+
+        mock_mmm = Mock()
+        mock_mmm.compute_mean_contributions_over_time.return_value = mock_contribs_df
+
+        # Create mock df_scaled with OUT-OF-ORDER dates (different order than contribs)
+        # This simulates the scenario where df_scaled wasn't sorted but contribs was
+        # With proper .reindex() using DatetimeIndex, this should still align correctly
+        mock_df_scaled = pd.DataFrame({
+            'date': pd.to_datetime(['2024-01-15', '2024-01-01', '2024-01-08']),  # OUT OF ORDER!
+            'target': [230, 200, 275],  # Target values match contributions after alignment
+            'ch1': [1200, 1000, 1500],
+            'ch2': [600, 500, 750],
+        })
+
+        mock_config = Mock()
+        mock_config.data.date_column = 'date'
+        mock_config.data.target_column = 'target'
+
+        with patch.object(MMMWrapper, '__init__', lambda x, y: None):
+            wrapper = MMMWrapper(None)
+            wrapper.idata = mock_wrapper.idata
+            wrapper.mmm = mock_mmm
+            wrapper.df_scaled = mock_df_scaled
+            wrapper.config = mock_config
+            wrapper.fit_duration_seconds = 10.0
+
+            result = wrapper.get_fit_statistics()
+
+        # R² must be a valid number, not NaN
+        assert not np.isnan(result['r2']), \
+            "R² is NaN - likely caused by date format mismatch in alignment."
+
+        # R² should be reasonable (can be negative for poor models, but not -inf or extreme)
+        assert result['r2'] > -10, \
+            f"R² is extremely negative ({result['r2']}), suggests alignment issue."
 
     def test_backtest_validator_uses_same_method(self):
         """Verify BacktestValidator uses compute_channel_contribution_original_scale.

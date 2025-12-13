@@ -429,7 +429,8 @@ def generate_actual_vs_fitted(
     target_col = config.data.target_column
     revenue_scale = config.data.revenue_scale
 
-    # Get actual values from scaled data
+    # compute_mean_contributions_over_time returns DataFrame with DatetimeIndex
+    # Align actual values using the same index
     df_indexed = wrapper.df_scaled.set_index(date_col)
     actual = df_indexed[target_col].reindex(contribs.index) * revenue_scale
 

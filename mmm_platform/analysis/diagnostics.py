@@ -369,11 +369,12 @@ class ModelDiagnostics:
         contribs = mmm_wrapper.get_contributions()
         target_col = mmm_wrapper.config.data.target_column
 
-        # Get actual values aligned with contributions
+        # compute_mean_contributions_over_time returns DataFrame with DatetimeIndex
+        # Align actual values using the same index
         df_indexed = mmm_wrapper.df_scaled.set_index(mmm_wrapper.config.data.date_column)
         actual = df_indexed[target_col].reindex(contribs.index)
 
-        # Compute fitted values
+        # Compute fitted values (sum of all components)
         component_cols = [c for c in contribs.columns if c != target_col]
         fitted = contribs[component_cols].sum(axis=1)
 

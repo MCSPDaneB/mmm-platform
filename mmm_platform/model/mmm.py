@@ -312,23 +312,51 @@ class MMMWrapper:
 
     def get_contributions(self) -> pd.DataFrame:
         """
-        Get channel contributions over time.
+        Get ALL model contributions over time (baseline, controls, trend, seasonality, channels).
 
-        Uses compute_channel_contribution_original_scale() to ensure contributions
-        are in the same scale as the optimizer's expected response calculations.
-        This matches the method used by BacktestValidator for consistency.
+        Uses compute_mean_contributions_over_time() which includes all model components.
+        This is the correct method for R², charts, exports, and diagnostics.
 
         Returns
         -------
         pd.DataFrame
-            Contributions dataframe with channels as columns and periods as rows.
-            Rows are sorted by date to align with df_scaled ordering.
+            Contributions dataframe with ALL components as columns and periods as rows.
+            Includes: intercept/baseline, control variables, trend, seasonality, and channels.
         """
         if self.idata is None:
             raise ValueError("Model not fitted. Call fit() first.")
 
-        # Use compute_channel_contribution_original_scale to match optimizer's scale
-        # This is the same method used by the BacktestValidator
+        # Use compute_mean_contributions_over_time to get ALL components
+        # This includes: intercept, controls, trend, seasonality, and channels
+        import inspect
+        sig = inspect.signature(self.mmm.compute_mean_contributions_over_time)
+        params = list(sig.parameters.keys())
+
+        if 'idata' in params:
+            contribs = self.mmm.compute_mean_contributions_over_time(idata=self.idata, original_scale=True)
+        else:
+            contribs = self.mmm.compute_mean_contributions_over_time(original_scale=True)
+
+        return contribs
+
+    def get_channel_contributions(self) -> pd.DataFrame:
+        """
+        Get ONLY channel contributions over time.
+
+        Uses compute_channel_contribution_original_scale() which returns only channel
+        contributions (no baseline, controls, trend, or seasonality). This is the
+        correct method for the optimizer's expected response calculations.
+
+        Returns
+        -------
+        pd.DataFrame
+            Contributions dataframe with ONLY channels as columns and periods as rows.
+            Does NOT include: intercept/baseline, control variables, trend, seasonality.
+        """
+        if self.idata is None:
+            raise ValueError("Model not fitted. Call fit() first.")
+
+        # Use compute_channel_contribution_original_scale for ONLY channel contributions
         contrib = self.mmm.compute_channel_contribution_original_scale(prior=False)
 
         # Average across chains/draws to get mean contribution per period
@@ -336,16 +364,14 @@ class MMMWrapper:
         mean_contrib = contrib.mean(dim=['chain', 'draw'])  # (date, channel)
 
         # Extract dates and channels from xarray coordinates
-        # CRITICAL: We must sort by date to ensure rows align with df_scaled
-        # xarray may return dates in different order than df_scaled
         dates = mean_contrib.coords['date'].values
         channels = list(mean_contrib.coords['channel'].values)
         values = mean_contrib.values  # Shape: (n_dates, n_channels)
 
-        # Create DataFrame with dates as index, sort by date, then reset to 0-based index
+        # Create DataFrame with dates as index, sort by date to match df_scaled
         df = pd.DataFrame(values, columns=channels, index=pd.to_datetime(dates))
-        df = df.sort_index()  # Ensure date order matches df_scaled
-        return df.reset_index(drop=True)
+        df = df.sort_index()
+        return df
 
     def get_contributions_real_units(self) -> pd.DataFrame:
         """
@@ -404,11 +430,12 @@ class MMMWrapper:
         contribs = self.get_contributions()
         target_col = self.config.data.target_column
 
-        # Get actual values aligned with contributions index
+        # compute_mean_contributions_over_time returns DataFrame with DatetimeIndex
+        # Align actual values using the same index
         df_indexed = self.df_scaled.set_index(self.config.data.date_column)
         actual = df_indexed[target_col].reindex(contribs.index)
 
-        # Fitted = sum of all components
+        # Fitted = sum of all components (baseline, controls, seasonality, channels)
         component_cols = [c for c in contribs.columns if c != target_col]
         fitted = contribs[component_cols].sum(axis=1)
 
