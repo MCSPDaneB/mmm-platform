@@ -2136,7 +2136,7 @@ def _show_constraint_comparison_results(results, config, wrapper):
         yaxis=dict(tickformat=",.0f" if is_count_kpi else "$,.0f"),
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig)
 
     # Explanation of how constraints work
     with st.expander("How constraints work"):
