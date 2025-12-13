@@ -1424,7 +1424,9 @@ def _show_optimize_results(wrapper, result):
     if result.success:
         st.success(f"Optimization completed in {result.iterations} iterations")
     else:
-        st.warning(f"Optimization message: {result.message}")
+        # Filter out technical SLSQP messages that don't provide user value
+        if "Positive directional derivative" not in result.message:
+            st.warning(f"Optimization message: {result.message}")
 
     if getattr(result, 'used_fallback', False):
         st.info(
@@ -1721,7 +1723,9 @@ def _show_incremental_results(wrapper, result):
     if result.success:
         st.success(f"Optimization completed in {result.iterations} iterations")
     else:
-        st.warning(f"Optimization message: {result.message}")
+        # Filter out technical SLSQP messages that don't provide user value
+        if "Positive directional derivative" not in result.message:
+            st.warning(f"Optimization message: {result.message}")
 
     # Determine KPI type for display formatting
     kpi_type = getattr(wrapper.config.data, 'kpi_type', 'revenue')
