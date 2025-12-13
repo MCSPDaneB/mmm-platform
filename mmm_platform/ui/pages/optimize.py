@@ -412,32 +412,49 @@ def _show_scenarios_mode_inputs():
 
     st.caption("Compare optimization results across multiple budget levels.")
 
-    # Budget scenarios
-    st.markdown("**Budget Scenarios**")
-    scenario_input = st.text_area(
-        "Enter budgets (one per line or comma-separated)",
-        value=st.session_state.get("scenario_input", "50000\n100000\n150000\n200000\n250000"),
-        height=150,
-        key="scenario_input",
+    # Toggle for constraint comparison mode
+    auto_constraint_analysis = st.toggle(
+        "Run Constraint Comparison",
+        value=st.session_state.get("auto_constraint_analysis", False),
+        help="Automatically compare productivity curves at different constraint levels (Unconstrained, ±50%, ±30%, ±10%)",
+        key="auto_constraint_analysis",
     )
 
-    # Parse scenarios
-    try:
-        scenarios = []
-        for line in scenario_input.strip().split("\n"):
-            for val in line.split(","):
-                val = val.strip().replace("$", "").replace(",", "")
-                if val:
-                    scenarios.append(float(val))
-        scenarios = sorted(set(scenarios))
-        st.session_state.parsed_scenarios = scenarios
-    except ValueError:
-        st.error("Invalid budget values. Enter numbers only.")
-        scenarios = []
-        st.session_state.parsed_scenarios = []
+    if auto_constraint_analysis:
+        # Auto mode - show info about what will be generated
+        st.info(
+            "Will generate 15 budget scenarios from 50% to 150% of historical spend "
+            "and compare curves at: **Unconstrained**, **±50%**, **±30%**, **±10%** bounds"
+        )
+        # Still need to set parsed_scenarios for button enablement
+        st.session_state.parsed_scenarios = [1, 2]  # Dummy values to enable button
+    else:
+        # Manual mode - show budget input
+        st.markdown("**Budget Scenarios**")
+        scenario_input = st.text_area(
+            "Enter budgets (one per line or comma-separated)",
+            value=st.session_state.get("scenario_input", "50000\n100000\n150000\n200000\n250000"),
+            height=150,
+            key="scenario_input",
+        )
 
-    if scenarios:
-        st.caption(f"Analyzing {len(scenarios)} scenarios: ${min(scenarios):,.0f} - ${max(scenarios):,.0f}")
+        # Parse scenarios
+        try:
+            scenarios = []
+            for line in scenario_input.strip().split("\n"):
+                for val in line.split(","):
+                    val = val.strip().replace("$", "").replace(",", "")
+                    if val:
+                        scenarios.append(float(val))
+            scenarios = sorted(set(scenarios))
+            st.session_state.parsed_scenarios = scenarios
+        except ValueError:
+            st.error("Invalid budget values. Enter numbers only.")
+            scenarios = []
+            st.session_state.parsed_scenarios = []
+
+        if scenarios:
+            st.caption(f"Analyzing {len(scenarios)} scenarios: ${min(scenarios):,.0f} - ${max(scenarios):,.0f}")
 
     # Number of periods
     st.slider(
@@ -1309,6 +1326,10 @@ def _run_target(wrapper):
 
 def _run_scenarios(wrapper):
     """Run the scenario analysis."""
+    # Check if constraint comparison mode is enabled
+    if st.session_state.get("auto_constraint_analysis"):
+        return _run_constraint_comparison(wrapper)
+
     from mmm_platform.optimization import BudgetAllocator
 
     scenarios = st.session_state.get("parsed_scenarios", [])
@@ -1352,9 +1373,101 @@ def _run_scenarios(wrapper):
             logger.exception("Scenario analysis error")
 
 
+def _run_constraint_comparison(wrapper):
+    """Run scenario analysis at multiple constraint levels."""
+    from mmm_platform.optimization import BudgetAllocator
+    import numpy as np
+
+    num_periods = st.session_state.get("scenario_num_periods", 8)
+
+    with st.spinner("Running constraint comparison (this may take a minute)..."):
+        try:
+            allocator = BudgetAllocator(wrapper, num_periods=num_periods)
+
+            # Get historical budget for time period
+            historical_spend, _, _ = allocator.bridge.get_last_n_weeks_spend(num_periods)
+            total_historical = sum(historical_spend.values())
+
+            # Generate 15 budget points from 50% to 150%
+            budget_scenarios = np.linspace(
+                total_historical * 0.5,
+                total_historical * 1.5,
+                15
+            ).tolist()
+
+            # Define constraint levels
+            constraint_levels = [
+                ("Unconstrained", None),
+                ("Mild (±50%)", 0.50),
+                ("Standard (±30%)", 0.30),
+                ("Tight (±10%)", 0.10),
+            ]
+
+            # Get seasonal indices if configured
+            seasonal_indices = st.session_state.get("seasonal_indices")
+
+            results = {}
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            for i, (name, delta_pct) in enumerate(constraint_levels):
+                status_text.text(f"Running {name} scenarios...")
+
+                if delta_pct is None:
+                    bounds = None
+                else:
+                    # Calculate bounds from historical as baseline
+                    # Handle zero-spend channels by allowing up to 10% of total budget
+                    bounds = {}
+                    for ch, val in historical_spend.items():
+                        if val > 0:
+                            bounds[ch] = (max(0, val * (1 - delta_pct)), val * (1 + delta_pct))
+                        else:
+                            # Zero-spend channel: allow up to 10% of historical total
+                            bounds[ch] = (0, total_historical * 0.10)
+
+                result = allocator.scenario_analysis(
+                    budget_scenarios,
+                    channel_bounds=bounds,
+                    seasonal_indices=seasonal_indices,
+                )
+                results[name] = result
+
+                progress_bar.progress((i + 1) / len(constraint_levels))
+
+            progress_bar.empty()
+            status_text.empty()
+
+            # Store results separately for constraint comparison
+            st.session_state.constraint_comparison_result = results
+            st.session_state.constraint_comparison_config = {
+                "num_periods": num_periods,
+                "historical_budget": total_historical,
+                "budget_scenarios": budget_scenarios,
+                "historical_spend": historical_spend,
+            }
+            st.session_state.result_mode = "constraint_comparison"
+
+            st.success("Constraint comparison complete! Switch to Results tab to view.")
+
+        except Exception as e:
+            st.error(f"Constraint comparison failed: {e}")
+            logger.exception("Constraint comparison error")
+
+
 def _show_results_tab(wrapper, channel_info):
     """Display the results tab with mode-specific results."""
     result_mode = st.session_state.get("result_mode")
+
+    # Handle constraint comparison mode separately (has its own result storage)
+    if result_mode == "constraint_comparison":
+        results = st.session_state.get("constraint_comparison_result")
+        config = st.session_state.get("constraint_comparison_config", {})
+        if results:
+            _show_constraint_comparison_results(results, config, wrapper)
+        else:
+            st.info("Configure optimization settings and click Run to see results.")
+        return
 
     if "optimization_result" not in st.session_state or result_mode is None:
         st.info("Configure optimization settings and click Run to see results.")
@@ -1894,6 +2007,156 @@ def _show_target_results(result):
 
     # Show message
     st.info(result.message)
+
+
+def _show_constraint_comparison_results(results, config, wrapper):
+    """Display overlaid productivity curves for constraint comparison."""
+    import plotly.graph_objects as go
+
+    st.success(f"Compared 4 constraint levels across {len(config.get('budget_scenarios', []))} budget scenarios")
+
+    # Config summary
+    with st.expander("Configuration Summary", expanded=False):
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Period", f"{config.get('num_periods', 8)} weeks")
+        c2.metric("Historical Budget", f"${config.get('historical_budget', 0):,.0f}")
+        c3.metric("Budget Range", f"50% - 150%")
+
+    # Get KPI labels
+    from mmm_platform.ui.kpi_labels import KPILabels
+    labels = KPILabels(wrapper.config) if wrapper else None
+    response_label = labels.response_column_label if labels else "Expected Response"
+    is_count_kpi = labels and not labels.is_revenue_type
+
+    # Color scheme for constraint levels
+    colors = {
+        "Unconstrained": "#2ecc71",      # Green
+        "Mild (±50%)": "#3498db",         # Blue
+        "Standard (±30%)": "#f39c12",     # Orange
+        "Tight (±10%)": "#e74c3c",        # Red
+    }
+
+    # Main productivity curve chart
+    st.markdown("### Productivity Curves by Constraint Level")
+
+    fig = go.Figure()
+
+    for name, result in results.items():
+        curve = result.efficiency_curve
+        fig.add_trace(go.Scatter(
+            x=curve["budget"],
+            y=curve["expected_response"],
+            mode="lines+markers",
+            name=name,
+            line=dict(color=colors.get(name, "#333"), width=2),
+            marker=dict(size=6),
+        ))
+
+    # Add vertical line for historical budget
+    historical_budget = config.get("historical_budget", 0)
+    fig.add_vline(
+        x=historical_budget,
+        line_dash="dash",
+        line_color="gray",
+        annotation_text="Historical",
+        annotation_position="top",
+    )
+
+    fig.update_layout(
+        xaxis_title="Budget ($)",
+        yaxis_title=response_label,
+        legend_title="Constraint Level",
+        hovermode="x unified",
+        xaxis=dict(tickformat="$,.0f"),
+        yaxis=dict(tickformat=",.0f" if is_count_kpi else "$,.0f"),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Constraint impact summary
+    st.markdown("### Constraint Impact Summary")
+    _show_constraint_summary_table(results, config, is_count_kpi)
+
+    # Detailed breakdown per constraint level
+    with st.expander("Detailed Results by Constraint Level"):
+        tabs = st.tabs(list(results.keys()))
+        for tab, (name, result) in zip(tabs, results.items()):
+            with tab:
+                curve = result.efficiency_curve
+                df = curve[["budget", "expected_response"]].copy()
+                df.columns = ["Budget", response_label]
+                df["Budget"] = df["Budget"].apply(lambda x: f"${x:,.0f}")
+                if is_count_kpi:
+                    df[response_label] = df[response_label].apply(lambda x: f"{x:,.0f}")
+                else:
+                    df[response_label] = df[response_label].apply(lambda x: f"${x:,.0f}")
+                st.dataframe(df, hide_index=True)
+
+
+def _show_constraint_summary_table(results, config, is_count_kpi=False):
+    """Show summary table comparing constraint levels at historical budget."""
+    import pandas as pd
+
+    historical_budget = config.get("historical_budget", 0)
+    budget_scenarios = config.get("budget_scenarios", [])
+
+    # Find the scenario closest to historical budget
+    if not budget_scenarios:
+        st.warning("No budget scenarios to compare")
+        return
+
+    # Find index closest to historical (should be around index 7 for 15 points at 50%-150%)
+    closest_idx = min(range(len(budget_scenarios)), key=lambda i: abs(budget_scenarios[i] - historical_budget))
+
+    summary_data = []
+    unconstrained_response = None
+
+    for name, result in results.items():
+        curve = result.efficiency_curve
+        if closest_idx < len(curve):
+            row = curve.iloc[closest_idx]
+            response = row["expected_response"]
+
+            if name == "Unconstrained":
+                unconstrained_response = response
+
+            summary_data.append({
+                "Constraint Level": name,
+                "Response at Historical": response,
+                "vs Unconstrained": None,  # Will fill in later
+            })
+
+    # Calculate % difference vs unconstrained
+    if unconstrained_response and unconstrained_response > 0:
+        for row in summary_data:
+            if row["Constraint Level"] != "Unconstrained":
+                diff_pct = (row["Response at Historical"] - unconstrained_response) / unconstrained_response * 100
+                row["vs Unconstrained"] = diff_pct
+            else:
+                row["vs Unconstrained"] = 0.0
+
+    df = pd.DataFrame(summary_data)
+
+    # Format for display
+    if is_count_kpi:
+        df["Response at Historical"] = df["Response at Historical"].apply(lambda x: f"{x:,.0f}")
+    else:
+        df["Response at Historical"] = df["Response at Historical"].apply(lambda x: f"${x:,.0f}")
+
+    df["vs Unconstrained"] = df["vs Unconstrained"].apply(
+        lambda x: f"{x:+.1f}%" if x is not None else "-"
+    )
+
+    st.caption(f"Comparison at historical budget level (${historical_budget:,.0f})")
+    st.dataframe(df, hide_index=True)
+
+    # Key insight
+    if len(summary_data) >= 2:
+        tight_row = next((r for r in summary_data if "±10%" in r["Constraint Level"]), None)
+        if tight_row and unconstrained_response:
+            loss_pct = (unconstrained_response - tight_row["Response at Historical"]) / unconstrained_response * 100
+            if loss_pct > 0:
+                st.info(f"Tight constraints (±10%) reduce potential response by {loss_pct:.1f}% compared to unconstrained optimization")
 
 
 def _show_scenarios_results(result):
