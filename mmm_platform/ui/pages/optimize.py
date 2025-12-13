@@ -423,8 +423,12 @@ def _show_scenarios_mode_inputs():
     if auto_constraint_analysis:
         # Auto mode - show info about what will be generated
         st.info(
-            "Will generate 15 budget scenarios from 50% to 150% of historical spend "
+            "Will generate 15 budget scenarios from 50% to 300% of historical spend "
             "and compare curves at: **Unconstrained**, **±50%**, **±30%**, **±10%** bounds"
+        )
+        st.caption(
+            "Constraints scale with budget: at 200% budget, ±10% means ±10% of the "
+            "proportionally scaled channel spend, not ±10% of historical."
         )
         # Still need to set parsed_scenarios for button enablement
         st.session_state.parsed_scenarios = [1, 2]  # Dummy values to enable button
@@ -1374,13 +1378,15 @@ def _run_scenarios(wrapper):
 
 
 def _run_constraint_comparison(wrapper):
-    """Run scenario analysis at multiple constraint levels."""
+    """Run scenario analysis at multiple constraint levels with properly scaled bounds."""
     from mmm_platform.optimization import BudgetAllocator
+    from mmm_platform.optimization.results import ScenarioResult
     import numpy as np
+    import pandas as pd
 
     num_periods = st.session_state.get("scenario_num_periods", 8)
 
-    with st.spinner("Running constraint comparison (this may take a minute)..."):
+    with st.spinner("Running constraint comparison (this may take a few minutes)..."):
         try:
             allocator = BudgetAllocator(wrapper, num_periods=num_periods)
 
@@ -1388,10 +1394,10 @@ def _run_constraint_comparison(wrapper):
             historical_spend, _, _ = allocator.bridge.get_last_n_weeks_spend(num_periods)
             total_historical = sum(historical_spend.values())
 
-            # Generate 15 budget points from 50% to 150%
+            # Generate 15 budget points from 50% to 300%
             budget_scenarios = np.linspace(
                 total_historical * 0.5,
-                total_historical * 1.5,
+                total_historical * 3.0,
                 15
             ).tolist()
 
@@ -1406,39 +1412,93 @@ def _run_constraint_comparison(wrapper):
             # Get seasonal indices if configured
             seasonal_indices = st.session_state.get("seasonal_indices")
 
-            results = {}
+            # Initialize results structure: {constraint_name: [results per budget]}
+            results_by_constraint = {name: [] for name, _ in constraint_levels}
+
             progress_bar = st.progress(0)
             status_text = st.empty()
 
-            for i, (name, delta_pct) in enumerate(constraint_levels):
-                status_text.text(f"Running {name} scenarios...")
+            total_runs = len(budget_scenarios) * len(constraint_levels)
+            run_count = 0
 
-                if delta_pct is None:
-                    bounds = None
-                else:
-                    # Calculate bounds from historical as baseline
-                    # Handle zero-spend channels by allowing up to 10% of total budget
-                    bounds = {}
-                    for ch, val in historical_spend.items():
-                        if val > 0:
-                            bounds[ch] = (max(0, val * (1 - delta_pct)), val * (1 + delta_pct))
-                        else:
-                            # Zero-spend channel: allow up to 10% of historical total
-                            bounds[ch] = (0, total_historical * 0.10)
+            # Run optimizations: loop through budgets, then constraints
+            # This ensures bounds are properly scaled for each budget level
+            for budget in budget_scenarios:
+                # Scale factor: how much to scale historical spend for this budget
+                budget_scale = budget / total_historical
 
-                result = allocator.scenario_analysis(
-                    budget_scenarios,
-                    channel_bounds=bounds,
-                    seasonal_indices=seasonal_indices,
-                )
-                results[name] = result
+                for name, delta_pct in constraint_levels:
+                    status_text.text(f"Budget ${budget:,.0f} - {name}...")
 
-                progress_bar.progress((i + 1) / len(constraint_levels))
+                    if delta_pct is None:
+                        bounds = None
+                    else:
+                        # Scale bounds proportionally with budget
+                        bounds = {}
+                        for ch, val in historical_spend.items():
+                            if val > 0:
+                                # Scale the baseline spend, then apply ±delta
+                                scaled_val = val * budget_scale
+                                bounds[ch] = (
+                                    max(0, scaled_val * (1 - delta_pct)),
+                                    scaled_val * (1 + delta_pct)
+                                )
+                            else:
+                                # Zero-spend channel: allow up to 10% of this budget
+                                bounds[ch] = (0, budget * 0.10)
+
+                    result = allocator.optimize(
+                        total_budget=budget,
+                        channel_bounds=bounds,
+                        seasonal_indices=seasonal_indices,
+                    )
+                    results_by_constraint[name].append(result)
+
+                    run_count += 1
+                    progress_bar.progress(run_count / total_runs)
 
             progress_bar.empty()
             status_text.empty()
 
-            # Store results separately for constraint comparison
+            # Build ScenarioResult objects for each constraint level
+            results = {}
+            for name, opt_results in results_by_constraint.items():
+                # Build efficiency curve
+                curve_data = []
+                for i, result in enumerate(opt_results):
+                    row = {
+                        "budget": result.total_budget,
+                        "expected_response": result.expected_response,
+                        "response_ci_low": result.response_ci_low,
+                        "response_ci_high": result.response_ci_high,
+                        "success": result.success,
+                    }
+
+                    # Calculate marginal response
+                    if i > 0:
+                        prev = opt_results[i - 1]
+                        budget_delta = result.total_budget - prev.total_budget
+                        response_delta = result.expected_response - prev.expected_response
+                        row["marginal_response"] = (
+                            response_delta / budget_delta if budget_delta > 0 else 0
+                        )
+                    else:
+                        row["marginal_response"] = (
+                            result.expected_response / result.total_budget
+                            if result.total_budget > 0 else 0
+                        )
+
+                    curve_data.append(row)
+
+                efficiency_curve = pd.DataFrame(curve_data)
+
+                results[name] = ScenarioResult(
+                    budget_scenarios=budget_scenarios,
+                    results=opt_results,
+                    efficiency_curve=efficiency_curve,
+                )
+
+            # Store results
             st.session_state.constraint_comparison_result = results
             st.session_state.constraint_comparison_config = {
                 "num_periods": num_periods,
@@ -2020,7 +2080,7 @@ def _show_constraint_comparison_results(results, config, wrapper):
         c1, c2, c3 = st.columns(3)
         c1.metric("Period", f"{config.get('num_periods', 8)} weeks")
         c2.metric("Historical Budget", f"${config.get('historical_budget', 0):,.0f}")
-        c3.metric("Budget Range", f"50% - 150%")
+        c3.metric("Budget Range", f"50% - 300%")
 
     # Get KPI labels
     from mmm_platform.ui.kpi_labels import KPILabels
@@ -2077,6 +2137,23 @@ def _show_constraint_comparison_results(results, config, wrapper):
     )
 
     st.plotly_chart(fig, use_container_width=True)
+
+    # Explanation of how constraints work
+    with st.expander("How constraints work"):
+        st.markdown("""
+**Constraint levels represent flexibility around a proportional baseline:**
+
+- **Unconstrained:** Optimizer can allocate freely across channels
+- **Mild (±50%):** Each channel can vary up to 50% from its proportional share
+- **Standard (±30%):** Each channel can vary up to 30% from its proportional share
+- **Tight (±10%):** Each channel stays within 10% of its proportional share
+
+*Example: At 200% of historical budget, a channel that was 30% of spend
+can range from 27% to 33% of the new budget under ±10% constraints.*
+
+**Why curves may differ:** Tighter constraints limit the optimizer's ability to
+shift budget to high-performing channels, reducing overall efficiency.
+        """)
 
     # Constraint impact summary
     st.markdown("### Constraint Impact Summary")
