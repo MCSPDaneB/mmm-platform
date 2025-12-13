@@ -617,9 +617,10 @@ def _show_channel_bounds_expander(channel_info):
                 allocator = BudgetAllocator(st.session_state.current_model)
 
                 if comparison_mode == "Last N weeks actual" and compare_enabled:
-                    baseline_spend, _, _ = allocator.bridge.get_last_n_weeks_spend(
-                        n_weeks  # No extrapolation - use raw actual values
-                    )
+                    raw_spend, _, _ = allocator.bridge.get_last_n_weeks_spend(n_weeks)
+                    # Extrapolate to optimization horizon for bounds calculation
+                    scale_factor = num_periods / n_weeks
+                    baseline_spend = {ch: val * scale_factor for ch, val in raw_spend.items()}
                 elif comparison_mode == "Most recent period" and compare_enabled:
                     baseline_spend, _, _, _ = allocator.bridge.get_most_recent_matching_period_spend(
                         num_periods

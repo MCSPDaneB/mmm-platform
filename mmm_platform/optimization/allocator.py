@@ -567,7 +567,10 @@ class BudgetAllocator:
         # For mean: use minimal samples (fast path uses means anyway)
         # For VaR/CVaR/Sharpe: use 500 samples for uncertainty quantification
         n_samples = 500 if self.utility_name != "mean" else 100
-        posterior_samples = PosteriorSamples.from_idata(mmm.idata, n_samples=n_samples)
+        random_seed = self.bridge.config.sampling.random_seed
+        posterior_samples = PosteriorSamples.from_idata(
+            mmm.idata, n_samples=n_samples, random_seed=random_seed
+        )
 
         # Convert seasonal indices dict to numpy array matching channel order
         seasonal_indices_array = None
@@ -606,10 +609,9 @@ class BudgetAllocator:
                 ch_bounds[1] / spend_scale / num_periods
             ))
 
-        # Budget constraint (in scaled units) - use inequality to allow partial allocation
-        # when bounds are tighter than the requested budget
+        # Budget constraint (in scaled units) - use equality to force exact budget allocation
         budget_per_period_scaled = total_budget / spend_scale / num_periods
-        constraints = {'type': 'ineq', 'fun': lambda x: budget_per_period_scaled - x.sum()}
+        constraints = {'type': 'eq', 'fun': lambda x: budget_per_period_scaled - x.sum()}
 
         # Initial guess: uniform allocation (in scaled units)
         x0 = np.ones(n_channels) * budget_per_period_scaled / n_channels

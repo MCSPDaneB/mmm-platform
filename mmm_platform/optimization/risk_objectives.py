@@ -36,7 +36,7 @@ class PosteriorSamples:
     n_channels: int
 
     @classmethod
-    def from_idata(cls, idata, n_samples: int = 500) -> "PosteriorSamples":
+    def from_idata(cls, idata, n_samples: int = 500, random_seed: int = 42) -> "PosteriorSamples":
         """
         Extract posterior samples from InferenceData.
 
@@ -46,6 +46,8 @@ class PosteriorSamples:
             Fitted model inference data
         n_samples : int
             Number of samples to use (subsampled if posterior has more)
+        random_seed : int
+            Random seed for reproducible subsampling
 
         Returns
         -------
@@ -65,9 +67,10 @@ class PosteriorSamples:
         total_samples = beta_all.shape[0]
         n_channels = beta_all.shape[1]
 
-        # Subsample if we have more than needed
+        # Subsample if we have more than needed (use seeded RNG for reproducibility)
         if total_samples > n_samples:
-            indices = np.random.choice(total_samples, n_samples, replace=False)
+            rng = np.random.default_rng(random_seed)
+            indices = rng.choice(total_samples, n_samples, replace=False)
             beta_samples = beta_all[indices]
             lam_samples = lam_all[indices]
         else:
