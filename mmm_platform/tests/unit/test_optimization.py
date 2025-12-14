@@ -886,3 +886,600 @@ class TestContributionScaleConsistency:
 
         # Verify the correct method was called
         mock_mmm.compute_channel_contribution_original_scale.assert_called_once_with(prior=False)
+
+
+# =============================================================================
+# Optimization Mode Consistency Tests
+# =============================================================================
+
+class TestOptimizationModeConsistency:
+    """Tests that all optimization modes produce consistent results.
+
+    Mathematical invariant:
+    - If optimize() at budget B returns response R
+    - Then scenario_analysis() at budget B must return response R
+    - And target optimization for response R must find budget ~B
+
+    These MUST be consistent - if target says we can get R for less than B,
+    then optimize(B) should return MORE than R. Anything else is a bug.
+    """
+
+    @pytest.fixture
+    def mock_wrapper(self):
+        """Create a comprehensive mock wrapper for testing optimization."""
+        from unittest.mock import Mock, PropertyMock
+
+        # Create mock wrapper
+        wrapper = Mock()
+        wrapper.idata = Mock()
+
+        # Mock config with channels
+        mock_config = Mock()
+        mock_config.data = Mock()
+        mock_config.data.date_column = 'date'
+        mock_config.data.target_column = 'revenue'
+        mock_config.data.spend_scale = 1.0  # No scaling
+        mock_config.data.revenue_scale = 1.0  # No scaling
+
+        # Mock channels
+        ch1 = Mock()
+        ch1.name = 'paid_search'
+        ch1.display_name = 'Paid Search'
+        ch1.column = 'paid_search'
+        ch2 = Mock()
+        ch2.name = 'display'
+        ch2.display_name = 'Display'
+        ch2.column = 'display'
+        ch3 = Mock()
+        ch3.name = 'social'
+        ch3.display_name = 'Social'
+        ch3.column = 'social'
+
+        mock_config.channels = [ch1, ch2, ch3]
+        mock_config.owned_media = []
+        mock_config.get_channel_columns = Mock(return_value=['paid_search', 'display', 'social'])
+
+        # Mock sampling config
+        mock_config.sampling = Mock()
+        mock_config.sampling.random_seed = 42
+
+        wrapper.config = mock_config
+
+        # Mock df_scaled - USE FIXED SEED for reproducibility
+        np.random.seed(42)
+        n_rows = 52
+        dates = pd.date_range('2024-01-01', periods=n_rows, freq='W')
+        wrapper.df_scaled = pd.DataFrame({
+            'date': dates,
+            'revenue': np.random.uniform(50000, 100000, n_rows),
+            'paid_search': np.random.uniform(5000, 15000, n_rows),
+            'display': np.random.uniform(3000, 10000, n_rows),
+            'social': np.random.uniform(2000, 8000, n_rows),
+        })
+
+        # Mock transform_engine
+        mock_transform = Mock()
+        mock_transform.get_effective_channel_columns.return_value = ['paid_search', 'display', 'social']
+        wrapper.transform_engine = mock_transform
+
+        # Create mock MMM with realistic saturation parameters
+        mock_mmm = Mock()
+        mock_mmm.channel_columns = ['paid_search', 'display', 'social']
+        mock_mmm.optimize_budget = Mock()
+
+        # Mock posterior samples with FIXED seed for reproducibility
+        np.random.seed(123)  # Different seed for posterior
+        n_chains = 2
+        n_draws = 100
+        n_channels = 3
+
+        # Create realistic beta and lambda values
+        beta_values = np.random.uniform(0.8, 1.5, (n_channels, n_chains * n_draws))
+        lam_values = np.random.uniform(1.5, 2.5, (n_channels, n_chains * n_draws))
+
+        # Mock posterior
+        posterior = Mock()
+
+        beta_mock = Mock()
+        stacked_beta = Mock()
+        stacked_beta.values = beta_values
+        beta_mock.stack = Mock(return_value=stacked_beta)
+        beta_mock.mean = Mock(return_value=Mock(values=beta_values.mean(axis=1)))
+
+        lam_mock = Mock()
+        stacked_lam = Mock()
+        stacked_lam.values = lam_values
+        lam_mock.stack = Mock(return_value=stacked_lam)
+        lam_mock.mean = Mock(return_value=Mock(values=lam_values.mean(axis=1)))
+
+        posterior.__getitem__ = Mock(side_effect=lambda k: {
+            "saturation_beta": beta_mock,
+            "saturation_lam": lam_mock,
+        }.get(k))
+
+        # Create mock idata for the MMM (optimizer uses mmm.idata)
+        mock_idata = Mock()
+        mock_idata.posterior = posterior
+
+        # Attach idata to both wrapper and mmm (optimizer uses mmm.idata)
+        wrapper.idata = mock_idata
+        mock_mmm.idata = mock_idata
+        wrapper.mmm = mock_mmm
+
+        return wrapper
+
+    def test_main_and_scenario_produce_same_response(self, mock_wrapper):
+        """Main optimize() and scenario_analysis() must return same response for same budget.
+
+        This is the fundamental consistency test. Both modes ultimately call the same
+        optimizer with the same inputs, so they MUST produce identical results.
+        """
+        from mmm_platform.optimization.allocator import BudgetAllocator
+
+        budget = 50000
+        num_periods = 52
+
+        # Create allocator
+        allocator = BudgetAllocator(mock_wrapper, num_periods=num_periods, utility="mean")
+
+        # Run main optimization
+        main_result = allocator.optimize(total_budget=budget)
+
+        # Run scenario analysis with same budget
+        scenario_result = allocator.scenario_analysis([budget])
+        scenario_budget_result = scenario_result.results[0]
+
+        # CRITICAL: These must match
+        main_response = main_result.expected_response
+        scenario_response = scenario_budget_result.expected_response
+
+        # Allow 1% tolerance for floating point
+        rel_diff = abs(main_response - scenario_response) / main_response
+        assert rel_diff < 0.01, (
+            f"Main mode response ({main_response:,.0f}) != "
+            f"Scenario mode response ({scenario_response:,.0f}). "
+            f"Relative difference: {rel_diff:.2%}. "
+            f"These MUST be consistent - they use the same optimizer."
+        )
+
+        # Also check budget allocation matches
+        main_total = sum(main_result.optimal_allocation.values())
+        scenario_total = sum(scenario_budget_result.optimal_allocation.values())
+
+        budget_diff = abs(main_total - scenario_total) / budget
+        assert budget_diff < 0.01, (
+            f"Main allocated ${main_total:,.0f}, "
+            f"Scenario allocated ${scenario_total:,.0f}. "
+            f"Budget mismatch: {budget_diff:.2%}"
+        )
+
+    def test_target_finds_correct_budget(self, mock_wrapper):
+        """Target optimization must find budget that produces the target response.
+
+        If optimize(B) returns response R, then target_optimization(R) should find
+        budget close to B (within tolerance).
+        """
+        from mmm_platform.optimization.allocator import BudgetAllocator
+        from mmm_platform.optimization.scenarios import TargetOptimizer
+
+        budget = 50000
+        num_periods = 52
+
+        # Create allocator and get baseline result
+        allocator = BudgetAllocator(mock_wrapper, num_periods=num_periods, utility="mean")
+        main_result = allocator.optimize(total_budget=budget)
+        target_response = main_result.expected_response
+
+        # Now find budget to achieve that response
+        target_opt = TargetOptimizer(allocator)
+        target_result = target_opt.find_budget_for_target(
+            target_response=target_response,
+            budget_range=(10000, 200000),
+            tolerance=0.01,  # 1% tolerance
+        )
+
+        # The required budget should be close to our original budget
+        found_budget = target_result.required_budget
+
+        # Allow 5% tolerance (target optimization uses binary search which may not be exact)
+        rel_diff = abs(found_budget - budget) / budget
+        assert rel_diff < 0.05, (
+            f"Target optimization found budget ${found_budget:,.0f} "
+            f"but original budget was ${budget:,.0f}. "
+            f"Relative difference: {rel_diff:.2%}. "
+            f"If these differ significantly, the modes are inconsistent."
+        )
+
+    def test_cannot_get_more_response_with_less_budget(self, mock_wrapper):
+        """It's mathematically impossible to get MORE response with LESS budget.
+
+        This is the ultimate consistency check:
+        - If optimize($50k) returns response R
+        - And target_optimization(R) says budget B is needed
+        - Then B must be <= $50k
+
+        If B < $50k significantly, then optimize($50k) should have returned MORE than R.
+        """
+        from mmm_platform.optimization.allocator import BudgetAllocator
+        from mmm_platform.optimization.scenarios import TargetOptimizer
+
+        budget = 50000
+        num_periods = 52
+
+        # Get response at budget
+        allocator = BudgetAllocator(mock_wrapper, num_periods=num_periods, utility="mean")
+        main_result = allocator.optimize(total_budget=budget)
+        response_at_budget = main_result.expected_response
+
+        # Find budget needed for that response
+        target_opt = TargetOptimizer(allocator)
+        target_result = target_opt.find_budget_for_target(
+            target_response=response_at_budget,
+            budget_range=(10000, 200000),
+            tolerance=0.01,
+        )
+
+        required_budget = target_result.required_budget
+
+        # The required budget cannot be LESS than what we used (with meaningful margin)
+        # Allow 5% tolerance for optimizer precision
+        assert required_budget >= budget * 0.95, (
+            f"IMPOSSIBLE: Target says we need only ${required_budget:,.0f} "
+            f"to get response {response_at_budget:,.0f}, "
+            f"but main optimization used ${budget:,.0f}. "
+            f"This means optimize() is leaving money on the table."
+        )
+
+    def test_increasing_budget_increases_response(self, mock_wrapper):
+        """Response must increase (or stay same) with more budget.
+
+        Saturation means diminishing returns, but response should never DECREASE
+        when budget increases.
+        """
+        from mmm_platform.optimization.allocator import BudgetAllocator
+
+        num_periods = 52
+        budgets = [25000, 50000, 75000, 100000]
+
+        allocator = BudgetAllocator(mock_wrapper, num_periods=num_periods, utility="mean")
+
+        prev_response = 0
+        for budget in budgets:
+            result = allocator.optimize(total_budget=budget)
+            response = result.expected_response
+
+            assert response >= prev_response, (
+                f"Response decreased from {prev_response:,.0f} to {response:,.0f} "
+                f"when budget increased to ${budget:,.0f}. "
+                f"This violates economic intuition."
+            )
+            prev_response = response
+
+    def test_scenario_analysis_returns_monotonic_responses(self, mock_wrapper):
+        """Scenario analysis responses must be monotonically increasing with budget."""
+        from mmm_platform.optimization.allocator import BudgetAllocator
+
+        num_periods = 52
+        budgets = [25000, 50000, 75000, 100000]
+
+        allocator = BudgetAllocator(mock_wrapper, num_periods=num_periods, utility="mean")
+        scenario_result = allocator.scenario_analysis(budgets)
+
+        prev_response = 0
+        for result in scenario_result.results:
+            response = result.expected_response
+            assert response >= prev_response, (
+                f"Scenario response decreased from {prev_response:,.0f} to {response:,.0f}. "
+                f"Responses must be monotonically increasing with budget."
+            )
+            prev_response = response
+
+    def test_different_seasonal_indices_cause_different_results(self, mock_wrapper):
+        """Demonstrates: Different seasonal indices WILL cause different results.
+
+        This test proves that passing different seasonal_indices to optimize()
+        produces different responses. This is the ROOT CAUSE of the UI bug -
+        if the seasonality expander computes indices for the wrong num_periods,
+        different modes will get different seasonal indices → different results.
+        """
+        from mmm_platform.optimization.allocator import BudgetAllocator
+
+        budget = 50000
+        num_periods = 52
+        channels = ['paid_search', 'display', 'social']
+
+        allocator = BudgetAllocator(mock_wrapper, num_periods=num_periods, utility="mean")
+
+        # Run with NO seasonal indices (all 1.0)
+        result_no_seasonal = allocator.optimize(
+            total_budget=budget,
+            seasonal_indices=None,
+        )
+
+        # Run with DIFFERENT seasonal indices (simulate wrong period)
+        # E.g., indices computed for 8 periods vs 52 periods would differ
+        different_seasonal = {ch: 1.3 for ch in channels}  # 30% higher effectiveness
+        result_with_seasonal = allocator.optimize(
+            total_budget=budget,
+            seasonal_indices=different_seasonal,
+        )
+
+        # Different seasonal indices MUST produce different responses
+        response_no = result_no_seasonal.expected_response
+        response_with = result_with_seasonal.expected_response
+
+        # Higher seasonal indices = higher response (same budget, more effective)
+        assert response_with > response_no, (
+            f"Seasonal indices should increase response: "
+            f"no_seasonal={response_no:,.0f}, with_seasonal={response_with:,.0f}"
+        )
+
+        # The difference should be meaningful (not just floating point noise)
+        rel_diff = (response_with - response_no) / response_no
+        assert rel_diff > 0.05, (
+            f"Seasonal indices had minimal effect ({rel_diff:.2%}). "
+            f"This suggests they're not being applied correctly."
+        )
+
+        print(f"\n=== PROOF: Seasonal indices cause different results ===")
+        print(f"Same budget: ${budget:,}")
+        print(f"No seasonal: ${response_no:,.0f} response")
+        print(f"With seasonal (1.3x): ${response_with:,.0f} response")
+        print(f"Difference: {rel_diff:.1%}")
+        print(f"This is why UI modes produce different results when they ")
+        print(f"compute seasonal indices using different num_periods!")
+
+    def test_different_num_periods_allocators_produce_different_results(self, mock_wrapper):
+        """Different num_periods in allocator = different results (even same budget).
+
+        This test proves that if the UI creates allocators with different num_periods,
+        they will produce different responses for the same budget.
+
+        Root cause: If opt_num_periods=8 but scenario_num_periods=52, and the
+        seasonal expander always uses opt_num_periods, the seasonal indices
+        will be computed for 8 periods but applied to a 52-period optimization.
+        """
+        from mmm_platform.optimization.allocator import BudgetAllocator
+
+        budget = 50000
+
+        # Create allocator with 8 periods
+        allocator_8 = BudgetAllocator(mock_wrapper, num_periods=8, utility="mean")
+        result_8 = allocator_8.optimize(total_budget=budget)
+
+        # Create allocator with 52 periods
+        allocator_52 = BudgetAllocator(mock_wrapper, num_periods=52, utility="mean")
+        result_52 = allocator_52.optimize(total_budget=budget)
+
+        # Different num_periods MUST produce different responses
+        response_8 = result_8.expected_response
+        response_52 = result_52.expected_response
+
+        # 52 periods should give MUCH higher response (more time to accumulate)
+        assert response_52 > response_8, (
+            f"52 periods should produce higher response than 8 periods: "
+            f"8_periods={response_8:,.0f}, 52_periods={response_52:,.0f}"
+        )
+
+        # The ratio depends on saturation - with heavy saturation, more periods
+        # doesn't scale linearly. The key point is just that they're DIFFERENT.
+        ratio = response_52 / response_8
+        assert ratio > 1.05, (
+            f"Response ratio ({ratio:.2f}x) is too close to 1. "
+            f"Different num_periods should produce meaningfully different results."
+        )
+
+        print(f"\n=== PROOF: num_periods affects response ===")
+        print(f"Same budget: ${budget:,}")
+        print(f"8 periods: ${response_8:,.0f} response")
+        print(f"52 periods: ${response_52:,.0f} response")
+        print(f"Ratio: {ratio:.1f}x")
+        print(f"This is why modes with different num_periods produce different results!")
+
+    def test_all_three_modes_mathematically_consistent(self, mock_wrapper):
+        """
+        CRITICAL INVARIANT: All three optimization modes must be mathematically consistent.
+
+        Given:
+        - Budget B = $50,000
+        - num_periods = 52 weeks
+
+        Then:
+        1. Main mode: optimize(B) returns response R (e.g., $200,564)
+        2. Scenario mode: scenario_analysis([B]) must return EXACTLY R
+        3. Target mode: find_budget_for_target(R) must return budget ~B
+
+        Corollary: If target mode says we can achieve R for budget < B, that's
+        MATHEMATICALLY IMPOSSIBLE because optimize(B) would have found that
+        better allocation.
+
+        This test catches bugs where the UI passes different parameters to
+        different modes (e.g., different num_periods, different seasonal indices).
+        """
+        from mmm_platform.optimization.allocator import BudgetAllocator
+        from mmm_platform.optimization.scenarios import TargetOptimizer
+
+        # Test parameters
+        budget = 50000
+        num_periods = 52
+
+        # Create single allocator - ALL modes must use the SAME allocator
+        allocator = BudgetAllocator(mock_wrapper, num_periods=num_periods, utility="mean")
+
+        # ============================================================
+        # STEP 1: Main mode - optimize at budget B
+        # ============================================================
+        main_result = allocator.optimize(total_budget=budget)
+        main_response = main_result.expected_response
+
+        print(f"\n{'='*60}")
+        print(f"MAIN MODE: optimize(${budget:,}) over {num_periods} weeks")
+        print(f"  Expected Response: ${main_response:,.0f}")
+        print(f"  Allocation: {main_result.optimal_allocation}")
+        print(f"{'='*60}")
+
+        # ============================================================
+        # STEP 2: Scenario mode - same budget, MUST get same response
+        # ============================================================
+        scenario_result = allocator.scenario_analysis([budget])
+        scenario_response = scenario_result.results[0].expected_response
+
+        print(f"\nSCENARIO MODE: scenario_analysis([${budget:,}])")
+        print(f"  Expected Response: ${scenario_response:,.0f}")
+
+        # CRITICAL: These MUST match
+        response_diff_pct = abs(main_response - scenario_response) / main_response * 100
+        print(f"  Difference from main: {response_diff_pct:.2f}%")
+
+        assert response_diff_pct < 1.0, (
+            f"INCONSISTENCY: Main mode returned ${main_response:,.0f} but "
+            f"scenario mode returned ${scenario_response:,.0f} for same ${budget:,} budget. "
+            f"Difference: {response_diff_pct:.2f}%. These MUST match."
+        )
+
+        # ============================================================
+        # STEP 3: Target mode - find budget to achieve main_response
+        # ============================================================
+        target_opt = TargetOptimizer(allocator)
+        target_result = target_opt.find_budget_for_target(
+            target_response=main_response,
+            budget_range=(10000, 200000),
+            tolerance=0.01,  # 1% tolerance
+        )
+
+        found_budget = target_result.required_budget
+        target_achieved_response = target_result.expected_response
+
+        print(f"\nTARGET MODE: find_budget_for_target(${main_response:,.0f})")
+        print(f"  Required Budget: ${found_budget:,.0f}")
+        print(f"  Achieved Response: ${target_achieved_response:,.0f}")
+
+        # ============================================================
+        # CRITICAL CHECK: Target budget must be >= original budget
+        # ============================================================
+        budget_diff_pct = (found_budget - budget) / budget * 100
+
+        print(f"\n{'='*60}")
+        print(f"CONSISTENCY CHECK:")
+        print(f"  Original budget: ${budget:,.0f}")
+        print(f"  Target found budget: ${found_budget:,.0f}")
+        print(f"  Difference: {budget_diff_pct:+.1f}%")
+
+        # Allow 5% tolerance for optimizer precision
+        if found_budget < budget * 0.95:
+            # This is the IMPOSSIBLE case
+            print(f"\n  *** MATHEMATICAL IMPOSSIBILITY DETECTED ***")
+            print(f"  Target says we need only ${found_budget:,.0f} to get ${main_response:,.0f}")
+            print(f"  But main mode used ${budget:,.0f} and only got ${main_response:,.0f}")
+            print(f"  If target is right, main mode left money on the table!")
+            print(f"{'='*60}")
+
+        assert found_budget >= budget * 0.95, (
+            f"MATHEMATICAL IMPOSSIBILITY: "
+            f"Main mode: ${budget:,} budget → ${main_response:,.0f} response. "
+            f"Target mode: ${found_budget:,} budget needed for ${main_response:,.0f}. "
+            f"If we can get the same response for {100 - budget_diff_pct:.1f}% less budget, "
+            f"then optimize() is broken. This is mathematically impossible with correct optimizer."
+        )
+
+        print(f"  PASS: All three modes are mathematically consistent!")
+        print(f"{'='*60}")
+
+    def test_all_modes_consistency_across_budget_levels(self, mock_wrapper):
+        """
+        Comprehensive test: For each budget level from $50k to $1M (in $25k increments),
+        verify that ALL THREE optimization modes are consistent.
+
+        For each budget B:
+        1. Run main optimization -> get expected response R_main
+        2. Run scenario analysis -> get expected response R_scenario
+        3. Run target optimization for R_main -> get required budget B'
+        4. R_main should equal R_scenario (same budget, same response)
+        5. B' should be approximately equal to B (within 5% tolerance)
+
+        If any mode disagrees, something is broken.
+        """
+        from mmm_platform.optimization.allocator import BudgetAllocator
+        from mmm_platform.optimization.scenarios import TargetOptimizer
+
+        num_periods = 52
+        allocator = BudgetAllocator(mock_wrapper, num_periods=num_periods, utility="mean")
+        target_opt = TargetOptimizer(allocator)
+
+        # Budget levels: $50k to $1M in $25k increments
+        budget_levels = list(range(50000, 1000001, 25000))
+
+        print(f"\n{'='*100}")
+        print(f"COMPREHENSIVE ALL-MODES CONSISTENCY TEST")
+        print(f"Testing {len(budget_levels)} budget levels from $50k to $1M")
+        print(f"num_periods = {num_periods}")
+        print(f"{'='*100}")
+        print(f"{'Budget':>12} | {'Main Resp':>12} | {'Scenario Resp':>13} | {'Scen Diff':>9} | {'Target Budget':>13} | {'Tgt Diff':>8} | Status")
+        print(f"{'-'*12}-+-{'-'*12}-+-{'-'*13}-+-{'-'*9}-+-{'-'*13}-+-{'-'*8}-+-------")
+
+        failures = []
+
+        for budget in budget_levels:
+            # Step 1: Main optimization
+            main_result = allocator.optimize(total_budget=budget)
+            main_response = main_result.expected_response
+
+            # Step 2: Scenario analysis with same budget
+            scenario_result = allocator.scenario_analysis([budget])
+            scenario_response = scenario_result.results[0].expected_response
+
+            # Step 3: Target optimization - find budget for main response
+            target_result = target_opt.find_budget_for_target(
+                target_response=main_response,
+                budget_range=(10000, 2000000),
+                tolerance=0.01,
+            )
+            found_budget = target_result.required_budget
+
+            # Calculate differences
+            scenario_diff_pct = (scenario_response - main_response) / main_response * 100 if main_response > 0 else 0
+            target_diff_pct = (found_budget - budget) / budget * 100
+
+            # Determine status - fail if scenario doesn't match OR target finds lower budget
+            status = "OK"
+            failure_reason = None
+
+            if abs(scenario_diff_pct) > 1.0:  # >1% difference in scenario
+                status = "FAIL"
+                failure_reason = f"Scenario mismatch: {scenario_diff_pct:+.1f}%"
+            elif found_budget < budget * 0.95:  # Target found >5% lower budget
+                status = "FAIL"
+                failure_reason = f"Target budget too low: {target_diff_pct:+.1f}%"
+
+            if status == "FAIL":
+                failures.append({
+                    "budget": budget,
+                    "main_response": main_response,
+                    "scenario_response": scenario_response,
+                    "scenario_diff_pct": scenario_diff_pct,
+                    "target_budget": found_budget,
+                    "target_diff_pct": target_diff_pct,
+                    "reason": failure_reason,
+                })
+
+            print(f"${budget:>11,} | ${main_response:>11,.0f} | ${scenario_response:>12,.0f} | {scenario_diff_pct:>+8.2f}% | ${found_budget:>12,.0f} | {target_diff_pct:>+7.1f}% | {status}")
+
+            # Clear target optimizer cache between iterations
+            target_opt.clear_cache()
+
+        print(f"{'='*100}")
+        print(f"SUMMARY: {len(budget_levels) - len(failures)}/{len(budget_levels)} passed")
+
+        if failures:
+            print(f"\nFAILURES ({len(failures)}):")
+            for f in failures:
+                print(f"  Budget ${f['budget']:,}: {f['reason']}")
+                print(f"    Main: ${f['main_response']:,.0f}, Scenario: ${f['scenario_response']:,.0f}, Target budget: ${f['target_budget']:,.0f}")
+
+        print(f"{'='*100}")
+
+        # Assert no failures
+        assert len(failures) == 0, (
+            f"{len(failures)} budget levels showed inconsistency. "
+            f"First failure at ${failures[0]['budget']:,}: {failures[0]['reason']}"
+        )
