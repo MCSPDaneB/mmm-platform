@@ -691,7 +691,7 @@ class BudgetAllocator:
                 jac=risk_objective.gradient,
                 bounds=Bounds(lb, ub),
                 constraints=budget_constraint,
-                options={'maxiter': 1000, 'gtol': 1e-6},
+                options={'maxiter': 1000, 'gtol': 1e-3},
             )
 
             # Use trust-constr result if it's better
@@ -706,10 +706,11 @@ class BudgetAllocator:
                 constraint_violation = budget_per_period_scaled - result.x.sum()
                 logger.info(f"Using trust-constr result (improved violation)")
 
-        # Scale back to real dollars
+        # Scale back to real dollars (clip negatives to 0 - optimizer can slightly violate bounds)
+        x_clipped = np.maximum(result.x, 0)
         allocation = {
             ch: float(val * spend_scale * num_periods)
-            for ch, val in zip(channels, result.x)
+            for ch, val in zip(channels, x_clipped)
         }
 
         # Calculate actual allocated vs requested budget
@@ -719,14 +720,14 @@ class BudgetAllocator:
         # Real constraint violations (>1%) are NOT normalized - they're flagged
         if actual_allocated > 0 and abs(actual_allocated - total_budget) / total_budget < 0.01:
             scale = total_budget / actual_allocated
-            x_scaled = result.x * scale
+            x_scaled = x_clipped * scale
             allocation = {ch: float(val * spend_scale * num_periods) for ch, val in zip(channels, x_scaled)}
             actual_allocated = total_budget
             # Recalculate response with adjusted allocation (saturation is non-linear)
             risk_metrics = risk_objective.compute_all_risk_metrics(x_scaled)
         else:
-            # Real constraint violation - compute metrics on original result
-            risk_metrics = risk_objective.compute_all_risk_metrics(result.x)
+            # Real constraint violation - compute metrics on clipped result
+            risk_metrics = risk_objective.compute_all_risk_metrics(x_clipped)
 
         unallocated_budget = total_budget - actual_allocated
 

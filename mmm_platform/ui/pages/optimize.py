@@ -663,18 +663,24 @@ def _show_channel_bounds_expander(channel_info):
                     for _, row in channel_info.iterrows()
                 }
 
-            # Get total budget for fallback calculation
+            # Get total budget for scaling
             total_budget = st.session_state.get("budget_value", 100000)
 
-            # Calculate bounds from baseline
+            # Calculate scale factor: how much bigger/smaller is budget vs historical
+            total_historical = sum(baseline_spend.values())
+            budget_scale = total_budget / total_historical if total_historical > 0 else 1.0
+
+            # Calculate bounds from scaled baseline
             bounds_config = {}
             for _, row in channel_info.iterrows():
                 ch = row["channel"]
                 historical = baseline_spend.get(ch, 0)
 
                 if historical > 0:
-                    min_val = historical * (1 - max_delta / 100)
-                    max_val = historical * (1 + max_delta / 100)
+                    # Scale baseline to match target budget, then apply ±delta
+                    scaled_val = historical * budget_scale
+                    min_val = scaled_val * (1 - max_delta / 100)
+                    max_val = scaled_val * (1 + max_delta / 100)
                 else:
                     # Channel has no historical spend
                     min_val = 0
@@ -685,7 +691,8 @@ def _show_channel_bounds_expander(channel_info):
             st.session_state.bounds_config = bounds_config
 
             # Show preview table
-            st.caption(f"Bounds based on last {num_periods} weeks (±{max_delta}%):")
+            scale_note = f", scaled {budget_scale:.0%}" if abs(budget_scale - 1.0) > 0.01 else ""
+            st.caption(f"Bounds based on last {num_periods} weeks{scale_note} (±{max_delta}%):")
 
             import pandas as pd
             preview_data = []
@@ -694,10 +701,12 @@ def _show_channel_bounds_expander(channel_info):
                 display = row["display_name"]
                 min_b, max_b = bounds_config[ch]
                 historical = baseline_spend.get(ch, 0)
+                scaled = historical * budget_scale
                 note = "" if historical > 0 else "(no history, 10% cap)"
                 preview_data.append({
                     "Channel": display,
-                    "Baseline": f"${historical:,.0f}",
+                    "Historical": f"${historical:,.0f}",
+                    "Scaled": f"${scaled:,.0f}",
                     "Min": f"${min_b:,.0f}",
                     "Max": f"${max_b:,.0f}",
                     "Note": note,
@@ -1376,9 +1385,14 @@ def _run_constraint_comparison(wrapper):
         try:
             allocator = BudgetAllocator(wrapper, num_periods=num_periods)
 
-            # Get historical budget for time period
+            # Get historical budget and response for time period
             historical_spend, _, _ = allocator.bridge.get_last_n_weeks_spend(num_periods)
             total_historical = sum(historical_spend.values())
+
+            # Get historical response (actual contributions from this period)
+            historical_response = allocator.bridge.get_contributions_for_period(
+                num_periods, comparison_mode="last_n_weeks", n_weeks=num_periods
+            )
 
             # Generate 15 budget points from 50% to 300%
             budget_scenarios = np.linspace(
@@ -1489,6 +1503,7 @@ def _run_constraint_comparison(wrapper):
             st.session_state.constraint_comparison_config = {
                 "num_periods": num_periods,
                 "historical_budget": total_historical,
+                "historical_response": historical_response,
                 "budget_scenarios": budget_scenarios,
                 "historical_spend": historical_spend,
             }
@@ -1583,8 +1598,12 @@ def _show_optimize_results(wrapper, result):
     if result.success:
         st.success(f"Optimization completed in {result.iterations} iterations")
     else:
-        # Filter out technical SLSQP messages that don't provide user value
-        if "Positive directional derivative" not in result.message:
+        # Filter out technical optimizer messages that don't provide user value
+        skip_messages = [
+            "Positive directional derivative",
+            "Constraint violation exceeds",
+        ]
+        if not any(msg in result.message for msg in skip_messages):
             st.warning(f"Optimization message: {result.message}")
 
     if getattr(result, 'used_fallback', False):
@@ -1907,8 +1926,12 @@ def _show_incremental_results(wrapper, result):
     if result.success:
         st.success(f"Optimization completed in {result.iterations} iterations")
     else:
-        # Filter out technical SLSQP messages that don't provide user value
-        if "Positive directional derivative" not in result.message:
+        # Filter out technical optimizer messages that don't provide user value
+        skip_messages = [
+            "Positive directional derivative",
+            "Constraint violation exceeds",
+        ]
+        if not any(msg in result.message for msg in skip_messages):
             st.warning(f"Optimization message: {result.message}")
 
     # Determine KPI type for display formatting
@@ -2203,6 +2226,7 @@ def _show_constraint_summary_table(results, config, is_count_kpi=False):
 
     summary_data = []
     unconstrained_response = None
+    historical_response = config.get("historical_response", 0)
 
     for name, result in results.items():
         curve = result.efficiency_curve
@@ -2216,12 +2240,19 @@ def _show_constraint_summary_table(results, config, is_count_kpi=False):
             summary_data.append({
                 "Constraint Level": name,
                 "Response at Historical": response,
+                "vs Actual": None,  # Will fill in later
                 "vs Unconstrained": None,  # Will fill in later
             })
 
-    # Calculate % difference vs unconstrained
-    if unconstrained_response and unconstrained_response > 0:
-        for row in summary_data:
+    # Calculate % difference vs actual and vs unconstrained
+    for row in summary_data:
+        # vs Actual
+        if historical_response and historical_response > 0:
+            diff_pct = (row["Response at Historical"] - historical_response) / historical_response * 100
+            row["vs Actual"] = diff_pct
+
+        # vs Unconstrained
+        if unconstrained_response and unconstrained_response > 0:
             if row["Constraint Level"] != "Unconstrained":
                 diff_pct = (row["Response at Historical"] - unconstrained_response) / unconstrained_response * 100
                 row["vs Unconstrained"] = diff_pct
@@ -2236,11 +2267,18 @@ def _show_constraint_summary_table(results, config, is_count_kpi=False):
     else:
         df["Response at Historical"] = df["Response at Historical"].apply(lambda x: f"${x:,.0f}")
 
+    df["vs Actual"] = df["vs Actual"].apply(
+        lambda x: f"{x:+.1f}%" if x is not None else "-"
+    )
     df["vs Unconstrained"] = df["vs Unconstrained"].apply(
         lambda x: f"{x:+.1f}%" if x is not None else "-"
     )
 
-    st.caption(f"Comparison at historical budget level (${historical_budget:,.0f})")
+    # Show historical context
+    if is_count_kpi:
+        st.caption(f"Historical: ${historical_budget:,.0f} spend → {historical_response:,.0f} {kpi_label}")
+    else:
+        st.caption(f"Historical: ${historical_budget:,.0f} spend → ${historical_response:,.0f} response")
     st.dataframe(df, hide_index=True)
 
     # Key insight
