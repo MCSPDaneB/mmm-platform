@@ -548,9 +548,14 @@ class BudgetAllocator:
         import time
 
         mmm = self.bridge.mmm
-        channels = list(mmm.channel_columns)
+        # Use only paid media channels (not owned media like dm_volume, email)
+        channels = self.bridge.get_optimizable_channels()
         n_channels = len(channels)
         num_periods = self.num_periods
+
+        # Get indices of optimization channels within the model's full channel list
+        all_model_channels = list(mmm.channel_columns)
+        channel_indices = [all_model_channels.index(ch) for ch in channels]
 
         # Get scales
         df_scaled = self.bridge.wrapper.df_scaled
@@ -563,13 +568,21 @@ class BudgetAllocator:
         # Get x_max for each channel (in scaled units)
         x_maxes = np.array([float(df_scaled[ch].max()) for ch in channels])
 
-        # Extract posterior samples
+        # Extract posterior samples for ALL channels first
         # For mean: use minimal samples (fast path uses means anyway)
         # For VaR/CVaR/Sharpe: use 500 samples for uncertainty quantification
         n_samples = 500 if self.utility_name != "mean" else 100
         random_seed = self.bridge.config.sampling.random_seed
-        posterior_samples = PosteriorSamples.from_idata(
+        all_posterior_samples = PosteriorSamples.from_idata(
             mmm.idata, n_samples=n_samples, random_seed=random_seed
+        )
+
+        # Filter posterior samples to only optimization channels
+        posterior_samples = PosteriorSamples(
+            beta_samples=all_posterior_samples.beta_samples[:, channel_indices],
+            lam_samples=all_posterior_samples.lam_samples[:, channel_indices],
+            n_samples=all_posterior_samples.n_samples,
+            n_channels=n_channels,
         )
 
         # Convert seasonal indices dict to numpy array matching channel order
@@ -611,7 +624,11 @@ class BudgetAllocator:
 
         # Budget constraint (in scaled units) - use equality to force exact budget allocation
         budget_per_period_scaled = total_budget / spend_scale / num_periods
-        constraints = {'type': 'eq', 'fun': lambda x: budget_per_period_scaled - x.sum()}
+        constraints = {
+            'type': 'eq',
+            'fun': lambda x: budget_per_period_scaled - x.sum(),
+            'jac': lambda x: -np.ones(n_channels)  # Analytical Jacobian for numerical stability
+        }
 
         # Initial guess: uniform allocation (in scaled units)
         x0 = np.ones(n_channels) * budget_per_period_scaled / n_channels
@@ -636,6 +653,58 @@ class BudgetAllocator:
             constraints=constraints,
             options={'maxiter': 200, 'ftol': 1e-6},
         )
+
+        # Log optimizer result details
+        constraint_violation = budget_per_period_scaled - result.x.sum()
+        logger.info(
+            f"Optimizer result: success={result.success}, "
+            f"budget_scaled={budget_per_period_scaled:.6f}, "
+            f"allocated_scaled={result.x.sum():.6f}, "
+            f"constraint_violation={constraint_violation:.6f}, "
+            f"message={result.message}"
+        )
+
+        # If SLSQP fails with significant constraint violation, try trust-constr
+        abs_violation = abs(constraint_violation)
+        if not result.success or abs_violation > budget_per_period_scaled * 0.01:
+            logger.info(
+                f"SLSQP failed (violation={abs_violation:.6f}, "
+                f"threshold={budget_per_period_scaled * 0.01:.6f}), trying trust-constr"
+            )
+
+            # trust-constr uses different constraint format
+            from scipy.optimize import LinearConstraint, Bounds
+            budget_constraint = LinearConstraint(
+                np.ones(n_channels),
+                budget_per_period_scaled,
+                budget_per_period_scaled
+            )
+
+            # Convert bounds to Bounds object for trust-constr
+            lb = np.array([b[0] for b in bounds_list])
+            ub = np.array([b[1] for b in bounds_list])
+
+            result_tc = minimize(
+                risk_objective.objective,
+                x0,
+                method='trust-constr',
+                jac=risk_objective.gradient,
+                bounds=Bounds(lb, ub),
+                constraints=budget_constraint,
+                options={'maxiter': 200, 'gtol': 1e-6},
+            )
+
+            # Use trust-constr result if it's better
+            tc_violation = abs(budget_per_period_scaled - result_tc.x.sum())
+            logger.info(
+                f"trust-constr result: success={result_tc.success}, "
+                f"violation={tc_violation:.6f}, message={result_tc.message}"
+            )
+
+            if tc_violation < abs_violation:
+                result = result_tc
+                constraint_violation = budget_per_period_scaled - result.x.sum()
+                logger.info(f"Using trust-constr result (improved violation)")
 
         # Scale back to real dollars
         allocation = {
