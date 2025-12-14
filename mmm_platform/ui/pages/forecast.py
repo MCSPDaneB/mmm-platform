@@ -27,6 +27,7 @@ from mmm_platform.forecasting import (
     OverlapAnalysis,
 )
 from mmm_platform.model.persistence import ForecastPersistence
+from mmm_platform.ui.kpi_labels import KPILabels
 
 logger = logging.getLogger(__name__)
 
@@ -976,6 +977,9 @@ def _show_results_tab(engine, wrapper):
         st.info("Upload spend data and run a forecast to see results here.")
         return
 
+    # Get KPI labels for proper ROI vs Cost Per display
+    kpi_labels = KPILabels(wrapper.config)
+
     # Main metrics
     st.subheader("Forecast Results")
 
@@ -983,10 +987,10 @@ def _show_results_tab(engine, wrapper):
     with col1:
         st.metric(
             "Forecast Incremental Response",
-            f"${result.total_response:,.0f}",
+            f"{result.total_response:,.0f}",
             help="95% CI shown below"
         )
-        st.caption(f"95% CI: ${result.total_ci_low:,.0f} - ${result.total_ci_high:,.0f}")
+        st.caption(f"95% CI: {result.total_ci_low:,.0f} - {result.total_ci_high:,.0f}")
 
     with col2:
         st.metric(
@@ -997,12 +1001,23 @@ def _show_results_tab(engine, wrapper):
         st.caption(f"Over {result.num_weeks} weeks")
 
     with col3:
-        st.metric(
-            "Blended Incremental ROI",
-            f"{result.blended_roi:.2f}x",
-            help="Response / Spend"
-        )
-        st.caption("Response per dollar spent")
+        # Use KPI-appropriate efficiency label
+        if kpi_labels.is_revenue_type:
+            st.metric(
+                "Blended Incremental ROI",
+                f"{result.blended_roi:.2f}x",
+                help="Response / Spend"
+            )
+            st.caption("Revenue per dollar spent")
+        else:
+            # For count KPIs, show Cost Per X
+            cost_per = 1 / result.blended_roi if result.blended_roi > 0 else float('inf')
+            st.metric(
+                f"Blended {kpi_labels.efficiency_label}",
+                f"${cost_per:.2f}",
+                help="Spend / Response"
+            )
+            st.caption(f"Cost per {kpi_labels.target_label.lower()}")
 
     # Seasonality annotation
     if result.seasonal_applied:
@@ -1015,7 +1030,7 @@ def _show_results_tab(engine, wrapper):
 
     # Sanity check
     st.markdown("---")
-    _show_sanity_check(result)
+    _show_sanity_check(result, wrapper)
 
     # Charts
     st.markdown("---")
@@ -1028,20 +1043,21 @@ def _show_results_tab(engine, wrapper):
     ])
 
     with chart_tab1:
-        _show_weekly_chart(result)
+        _show_weekly_chart(result, wrapper)
 
     with chart_tab2:
-        _show_channel_chart(result, engine)
+        _show_channel_chart(result, engine, wrapper)
 
     with chart_tab3:
         _show_download_options(result, engine)
 
 
-def _show_sanity_check(result):
+def _show_sanity_check(result, wrapper):
     """Display sanity check comparison."""
     st.subheader("Sanity Check")
 
     sc = result.sanity_check
+    kpi_labels = KPILabels(wrapper.config)
 
     if not sc:
         st.warning("No sanity check data available.")
@@ -1053,19 +1069,32 @@ def _show_sanity_check(result):
     recent_spend = sc.get("recent_spend")
     recent_contribution = sc.get("recent_contribution")
 
+    # Format efficiency based on KPI type
+    if kpi_labels.is_revenue_type:
+        forecast_eff_str = f"ROI: {forecast_roi:.2f}x"
+        recent_eff_str = f"ROI: {recent_roi:.2f}x" if recent_roi else ""
+    else:
+        forecast_cost_per = 1 / forecast_roi if forecast_roi > 0 else float('inf')
+        forecast_eff_str = f"{kpi_labels.efficiency_label}: ${forecast_cost_per:.2f}"
+        if recent_roi:
+            recent_cost_per = 1 / recent_roi if recent_roi > 0 else float('inf')
+            recent_eff_str = f"{kpi_labels.efficiency_label}: ${recent_cost_per:.2f}"
+        else:
+            recent_eff_str = ""
+
     st.markdown(f"""
-    **Your forecast:** ${result.total_response:,.0f} from ${result.total_spend:,.0f} spend (ROI: {forecast_roi:.2f}x)
+    **Your forecast:** {result.total_response:,.0f} {kpi_labels.target_label.lower()} from ${result.total_spend:,.0f} spend ({forecast_eff_str})
     """)
 
     if recent_roi is not None:
         st.markdown(f"""
         **Historical comparison:**
-        - Recent ({result.num_weeks} weeks): ${recent_spend:,.0f} → ${recent_contribution:,.0f} (ROI: {recent_roi:.2f}x)
+        - Recent ({result.num_weeks} weeks): ${recent_spend:,.0f} → {recent_contribution:,.0f} ({recent_eff_str})
         """)
 
         # Show check result
         if sc.get("is_reasonable", True):
-            st.success("Forecast appears reasonable (within expected range of historical ROI)")
+            st.success(f"Forecast appears reasonable (within expected range of historical {kpi_labels.efficiency_label})")
         else:
             st.warning("**Warnings:**")
             for warning in sc.get("warnings", []):
@@ -1074,54 +1103,136 @@ def _show_sanity_check(result):
         st.info("Insufficient historical data for comparison.")
 
 
-def _show_weekly_chart(result):
-    """Show weekly response breakdown chart."""
-    df = result.weekly_df.copy()
-    df["date"] = pd.to_datetime(df["date"])
+def _show_weekly_chart(result, wrapper):
+    """Show weekly response breakdown chart with historical context."""
+    forecast_df = result.weekly_df.copy()
+    forecast_df["date"] = pd.to_datetime(forecast_df["date"])
+    forecast_df["period"] = "Forecast"
+
+    # Get historical data (last 6 weeks)
+    try:
+        contribs = wrapper.get_contributions()
+        channel_cols = wrapper.transform_engine.get_effective_channel_columns()
+        spend_cols = [c for c in channel_cols if c in wrapper.df_scaled.columns]
+
+        # Sum channel contributions per week for total response
+        if len(contribs) > 0 and any(c in contribs.columns for c in channel_cols):
+            available_channel_cols = [c for c in channel_cols if c in contribs.columns]
+            historical_response = contribs[available_channel_cols].sum(axis=1)
+
+            # Get spend from df_scaled
+            historical_spend = wrapper.df_scaled[spend_cols].sum(axis=1) if spend_cols else pd.Series(0, index=contribs.index)
+
+            # Take last 6 weeks
+            n_weeks = min(6, len(historical_response))
+            hist_dates = contribs.index[-n_weeks:]
+            hist_response = historical_response.iloc[-n_weeks:].values
+            hist_spend = historical_spend.iloc[-n_weeks:].values
+
+            historical_df = pd.DataFrame({
+                "date": pd.to_datetime(hist_dates),
+                "response": hist_response,
+                "spend": hist_spend,
+                "ci_low": hist_response,  # No CI for historical
+                "ci_high": hist_response,
+                "period": "Historical"
+            })
+        else:
+            historical_df = pd.DataFrame()
+    except Exception as e:
+        logger.warning(f"Could not get historical data: {e}")
+        historical_df = pd.DataFrame()
+
+    # Combine historical and forecast data
+    if len(historical_df) > 0:
+        combined_df = pd.concat([historical_df, forecast_df], ignore_index=True)
+    else:
+        combined_df = forecast_df
 
     fig = go.Figure()
 
-    # Add CI band
+    # Plot historical data (if available)
+    if len(historical_df) > 0:
+        fig.add_trace(go.Scatter(
+            x=historical_df["date"],
+            y=historical_df["response"],
+            mode="lines+markers",
+            name="Historical Response",
+            line=dict(color="rgb(100, 100, 100)", width=2),
+            marker=dict(size=6)
+        ))
+        fig.add_trace(go.Bar(
+            x=historical_df["date"],
+            y=historical_df["spend"],
+            name="Historical Spend",
+            opacity=0.2,
+            marker_color="gray",
+            yaxis="y2"
+        ))
+
+    # Add forecast CI band
     fig.add_trace(go.Scatter(
-        x=df["date"],
-        y=df["ci_high"],
+        x=forecast_df["date"],
+        y=forecast_df["ci_high"],
         mode="lines",
         line=dict(width=0),
         showlegend=False,
         hoverinfo="skip"
     ))
     fig.add_trace(go.Scatter(
-        x=df["date"],
-        y=df["ci_low"],
+        x=forecast_df["date"],
+        y=forecast_df["ci_low"],
         mode="lines",
         line=dict(width=0),
         fill="tonexty",
         fillcolor="rgba(0, 100, 200, 0.2)",
-        name="95% CI"
+        name="Forecast 95% CI"
     ))
 
-    # Add response line
+    # Add forecast response line
     fig.add_trace(go.Scatter(
-        x=df["date"],
-        y=df["response"],
+        x=forecast_df["date"],
+        y=forecast_df["response"],
         mode="lines+markers",
-        name="Response",
-        line=dict(color="rgb(0, 100, 200)", width=2)
+        name="Forecast Response",
+        line=dict(color="rgb(0, 100, 200)", width=2),
+        marker=dict(size=6)
     ))
 
-    # Add spend on secondary axis
+    # Add forecast spend on secondary axis
     fig.add_trace(go.Bar(
-        x=df["date"],
-        y=df["spend"],
-        name="Spend",
+        x=forecast_df["date"],
+        y=forecast_df["spend"],
+        name="Forecast Spend",
         opacity=0.3,
+        marker_color="rgb(0, 100, 200)",
         yaxis="y2"
     ))
 
+    # Add vertical line to separate historical from forecast
+    if len(historical_df) > 0:
+        boundary_date = forecast_df["date"].min()
+        # Use add_shape instead of add_vline for date axis compatibility
+        fig.add_shape(
+            type="line",
+            x0=boundary_date, x1=boundary_date,
+            y0=0, y1=1,
+            yref="paper",
+            line=dict(color="red", width=2, dash="dash")
+        )
+        fig.add_annotation(
+            x=boundary_date,
+            y=1.05,
+            yref="paper",
+            text="Forecast Start",
+            showarrow=False,
+            font=dict(color="red", size=10)
+        )
+
     fig.update_layout(
-        title="Weekly Forecast Response",
+        title="Weekly Response: Historical vs Forecast",
         xaxis_title="Week",
-        yaxis_title="Response ($)",
+        yaxis_title="Response",
         yaxis2=dict(
             title="Spend ($)",
             overlaying="y",
@@ -1136,31 +1247,90 @@ def _show_weekly_chart(result):
 
     # Show data table
     with st.expander("View Weekly Data"):
-        display_df = df.copy()
+        display_df = combined_df.copy()
         display_df["date"] = display_df["date"].dt.strftime("%Y-%m-%d")
         for col in ["response", "ci_low", "ci_high", "spend"]:
-            display_df[col] = display_df[col].apply(lambda x: f"${x:,.0f}")
+            if col in display_df.columns:
+                display_df[col] = display_df[col].apply(lambda x: f"{x:,.0f}")
         st.dataframe(display_df, width="stretch")
 
 
-def _show_channel_chart(result, engine):
-    """Show channel contribution breakdown chart."""
-    df = result.channel_contributions.copy()
-    df["date"] = pd.to_datetime(df["date"])
+def _show_channel_chart(result, engine, wrapper):
+    """Show channel contribution breakdown chart with historical context."""
+    forecast_df = result.channel_contributions.copy()
+    forecast_df["date"] = pd.to_datetime(forecast_df["date"])
+    forecast_df["period"] = "Forecast"
 
     # Get display names
     channel_names = engine.get_channel_display_names()
-    df["channel_name"] = df["channel"].map(channel_names)
+    forecast_df["channel_name"] = forecast_df["channel"].map(channel_names)
+
+    # Get historical data (last 6 weeks)
+    try:
+        contribs = wrapper.get_contributions()
+        channel_cols = wrapper.transform_engine.get_effective_channel_columns()
+
+        if len(contribs) > 0 and any(c in contribs.columns for c in channel_cols):
+            available_channel_cols = [c for c in channel_cols if c in contribs.columns]
+
+            # Take last 6 weeks
+            n_weeks = min(6, len(contribs))
+            hist_contribs = contribs.iloc[-n_weeks:]
+
+            # Melt to long format for plotting
+            hist_records = []
+            for date_val in hist_contribs.index:
+                for channel in available_channel_cols:
+                    if channel in hist_contribs.columns:
+                        hist_records.append({
+                            "date": pd.to_datetime(date_val),
+                            "channel": channel,
+                            "contribution": hist_contribs.loc[date_val, channel],
+                            "period": "Historical",
+                            "channel_name": channel_names.get(channel, channel)
+                        })
+            historical_df = pd.DataFrame(hist_records) if hist_records else pd.DataFrame()
+        else:
+            historical_df = pd.DataFrame()
+    except Exception as e:
+        logger.warning(f"Could not get historical channel data: {e}")
+        historical_df = pd.DataFrame()
+
+    # Combine historical and forecast data
+    if len(historical_df) > 0:
+        combined_df = pd.concat([historical_df, forecast_df], ignore_index=True)
+    else:
+        combined_df = forecast_df
 
     # Stacked area chart
     fig = px.area(
-        df,
+        combined_df,
         x="date",
         y="contribution",
         color="channel_name",
-        title="Channel Contributions Over Time",
-        labels={"contribution": "Contribution ($)", "date": "Week", "channel_name": "Channel"}
+        title="Channel Contributions: Historical vs Forecast",
+        labels={"contribution": "Contribution", "date": "Week", "channel_name": "Channel"}
     )
+
+    # Add vertical line to separate historical from forecast
+    if len(historical_df) > 0:
+        boundary_date = forecast_df["date"].min()
+        # Use add_shape instead of add_vline for date axis compatibility
+        fig.add_shape(
+            type="line",
+            x0=boundary_date, x1=boundary_date,
+            y0=0, y1=1,
+            yref="paper",
+            line=dict(color="red", width=2, dash="dash")
+        )
+        fig.add_annotation(
+            x=boundary_date,
+            y=1.05,
+            yref="paper",
+            text="Forecast Start",
+            showarrow=False,
+            font=dict(color="red", size=10)
+        )
 
     fig.update_layout(
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
@@ -1169,11 +1339,11 @@ def _show_channel_chart(result, engine):
 
     st.plotly_chart(fig, width="stretch")
 
-    # Channel totals table
-    st.markdown("**Channel Totals:**")
-    totals = df.groupby("channel_name")["contribution"].sum().reset_index()
+    # Channel totals table (forecast only)
+    st.markdown("**Forecast Channel Totals:**")
+    totals = forecast_df.groupby("channel_name")["contribution"].sum().reset_index()
     totals = totals.sort_values("contribution", ascending=False)
-    totals["contribution"] = totals["contribution"].apply(lambda x: f"${x:,.0f}")
+    totals["contribution"] = totals["contribution"].apply(lambda x: f"{x:,.0f}")
     totals.columns = ["Channel", "Total Contribution"]
     st.dataframe(totals, width="stretch", hide_index=True)
 

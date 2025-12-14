@@ -15,6 +15,7 @@ from datetime import datetime
 from mmm_platform.optimization.seasonality import SeasonalIndexCalculator
 from mmm_platform.optimization.bridge import OptimizationBridge
 from mmm_platform.optimization.risk_objectives import PosteriorSamples
+from mmm_platform.config.schema import KPIType
 
 logger = logging.getLogger(__name__)
 
@@ -504,10 +505,22 @@ class SpendForecastEngine:
         if recent_roi is not None and recent_roi > 0:
             roi_diff = abs(forecast_roi - recent_roi) / recent_roi
             if roi_diff > 0.20:
-                warnings.append(
-                    f"Forecast ROI ({forecast_roi:.2f}x) differs >20% from "
-                    f"recent ({recent_roi:.2f}x)"
-                )
+                # Use KPI-appropriate terminology
+                kpi_type = getattr(self.wrapper.config.data, 'kpi_type', KPIType.REVENUE)
+                if kpi_type == KPIType.REVENUE:
+                    warnings.append(
+                        f"Forecast ROI ({forecast_roi:.2f}x) differs >20% from "
+                        f"recent ({recent_roi:.2f}x)"
+                    )
+                else:
+                    # For count KPIs, show as Cost Per X
+                    forecast_cost = 1 / forecast_roi if forecast_roi > 0 else float('inf')
+                    recent_cost = 1 / recent_roi if recent_roi > 0 else float('inf')
+                    target_name = self.wrapper.config.data.kpi_display_name or self.wrapper.config.data.target_column
+                    warnings.append(
+                        f"Forecast Cost Per {target_name} (${forecast_cost:.2f}) differs >20% from "
+                        f"recent (${recent_cost:.2f})"
+                    )
 
         # 3. YoY comparison would require more data
         # For now, just use channel effectiveness indices as a proxy
