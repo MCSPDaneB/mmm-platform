@@ -48,6 +48,9 @@ def show():
 
     wrapper = st.session_state.current_model
 
+    # Get KPI labels for proper display
+    kpi_labels = KPILabels(wrapper.config)
+
     try:
         from mmm_platform.forecasting import SpendForecastEngine
     except ImportError as e:
@@ -76,7 +79,7 @@ def show():
         _show_results_tab(engine, wrapper)
 
     with history_tab:
-        _show_history_tab(wrapper)
+        _show_history_tab(wrapper, kpi_labels)
 
 
 def _show_upload_tab(engine, wrapper):
@@ -1085,16 +1088,16 @@ def _show_results_tab(engine, wrapper):
     ])
 
     with chart_tab1:
-        _show_weekly_chart(result, wrapper)
+        _show_weekly_chart(result, wrapper, kpi_labels)
 
     with chart_tab2:
-        _show_channel_chart(result, engine, wrapper)
+        _show_channel_chart(result, engine, wrapper, kpi_labels)
 
     with chart_tab3:
         _show_download_options(result, engine)
 
 
-def _show_weekly_chart(result, wrapper):
+def _show_weekly_chart(result, wrapper, kpi_labels):
     """Show weekly response breakdown chart with historical context."""
     forecast_df = result.weekly_df.copy()
     forecast_df["date"] = pd.to_datetime(forecast_df["date"])
@@ -1142,16 +1145,8 @@ def _show_weekly_chart(result, wrapper):
 
     fig = go.Figure()
 
-    # Plot historical data (if available)
+    # Plot historical spend bars (if available)
     if len(historical_df) > 0:
-        fig.add_trace(go.Scatter(
-            x=historical_df["date"],
-            y=historical_df["response"],
-            mode="lines+markers",
-            name="Historical Response",
-            line=dict(color="rgb(100, 100, 100)", width=2),
-            marker=dict(size=6)
-        ))
         fig.add_trace(go.Bar(
             x=historical_df["date"],
             y=historical_df["spend"],
@@ -1160,35 +1155,6 @@ def _show_weekly_chart(result, wrapper):
             marker_color="gray",
             yaxis="y2"
         ))
-
-    # Add forecast CI band
-    fig.add_trace(go.Scatter(
-        x=forecast_df["date"],
-        y=forecast_df["ci_high"],
-        mode="lines",
-        line=dict(width=0),
-        showlegend=False,
-        hoverinfo="skip"
-    ))
-    fig.add_trace(go.Scatter(
-        x=forecast_df["date"],
-        y=forecast_df["ci_low"],
-        mode="lines",
-        line=dict(width=0),
-        fill="tonexty",
-        fillcolor="rgba(0, 100, 200, 0.2)",
-        name="Forecast 95% CI"
-    ))
-
-    # Add forecast response line
-    fig.add_trace(go.Scatter(
-        x=forecast_df["date"],
-        y=forecast_df["response"],
-        mode="lines+markers",
-        name="Forecast Response",
-        line=dict(color="rgb(0, 100, 200)", width=2),
-        marker=dict(size=6)
-    ))
 
     # Add forecast spend on secondary axis
     fig.add_trace(go.Bar(
@@ -1199,6 +1165,36 @@ def _show_weekly_chart(result, wrapper):
         marker_color="rgb(0, 100, 200)",
         yaxis="y2"
     ))
+
+    # Plot combined response line (historical + forecast connected)
+    if len(historical_df) > 0:
+        # Combine dates and responses for one continuous line
+        all_dates = list(historical_df["date"]) + list(forecast_df["date"])
+        all_responses = list(historical_df["response"]) + list(forecast_df["response"])
+        n_hist = len(historical_df)
+
+        # Plot as one continuous line with different marker colors
+        fig.add_trace(go.Scatter(
+            x=all_dates,
+            y=all_responses,
+            mode="lines+markers",
+            name="Media Response",
+            line=dict(color="rgb(100, 100, 100)", width=2),
+            marker=dict(
+                size=6,
+                color=["rgb(100, 100, 100)"] * n_hist + ["rgb(0, 100, 200)"] * len(forecast_df)
+            )
+        ))
+    else:
+        # No historical data - just plot forecast
+        fig.add_trace(go.Scatter(
+            x=forecast_df["date"],
+            y=forecast_df["response"],
+            mode="lines+markers",
+            name="Forecast Response",
+            line=dict(color="rgb(0, 100, 200)", width=2),
+            marker=dict(size=6)
+        ))
 
     # Add vertical line to separate historical from forecast
     if len(historical_df) > 0:
@@ -1220,10 +1216,13 @@ def _show_weekly_chart(result, wrapper):
             font=dict(color="red", size=10)
         )
 
+    # Build y-axis label using KPI
+    y_axis_label = f"Incremental Media Driven {kpi_labels.target_label}"
+
     fig.update_layout(
         title="Weekly Response: Historical vs Forecast",
         xaxis_title="Week",
-        yaxis_title="Response",
+        yaxis_title=y_axis_label,
         yaxis2=dict(
             title="Spend ($)",
             overlaying="y",
@@ -1246,7 +1245,7 @@ def _show_weekly_chart(result, wrapper):
         st.dataframe(display_df, width="stretch")
 
 
-def _show_channel_chart(result, engine, wrapper):
+def _show_channel_chart(result, engine, wrapper, kpi_labels):
     """Show channel contribution breakdown chart with historical context."""
     forecast_df = result.channel_contributions.copy()
     forecast_df["date"] = pd.to_datetime(forecast_df["date"])
@@ -1293,14 +1292,18 @@ def _show_channel_chart(result, engine, wrapper):
     else:
         combined_df = forecast_df
 
-    # Stacked area chart
-    fig = px.area(
+    # Build y-axis label using KPI
+    y_axis_label = f"Incremental Media Driven {kpi_labels.target_label}"
+
+    # Stacked bar chart
+    fig = px.bar(
         combined_df,
         x="date",
         y="contribution",
         color="channel_name",
         title="Channel Contributions: Historical vs Forecast",
-        labels={"contribution": "Contribution", "date": "Week", "channel_name": "Channel"}
+        labels={"contribution": y_axis_label, "date": "Week", "channel_name": "Channel"},
+        barmode="stack"
     )
 
     # Add vertical line to separate historical from forecast
@@ -1412,23 +1415,6 @@ def _generate_summary_report(result, engine) -> str:
             "",
         ])
 
-    sc = result.sanity_check
-    if sc:
-        lines.extend([
-            "-" * 60,
-            "SANITY CHECK",
-            "-" * 60,
-            f"Forecast ROI: {sc.get('forecast_roi', 0):.2f}x",
-        ])
-        if sc.get("recent_roi"):
-            lines.append(f"Recent Historical ROI: {sc['recent_roi']:.2f}x")
-        if sc.get("is_reasonable"):
-            lines.append("Status: Forecast appears reasonable")
-        else:
-            lines.append("Status: WARNINGS")
-            for w in sc.get("warnings", []):
-                lines.append(f"  - {w}")
-
     lines.extend([
         "",
         "=" * 60,
@@ -1439,7 +1425,7 @@ def _generate_summary_report(result, engine) -> str:
     return "\n".join(lines)
 
 
-def _show_history_tab(wrapper):
+def _show_history_tab(wrapper, kpi_labels):
     """Display the forecast history tab."""
     st.subheader("Forecast History")
 
@@ -1462,16 +1448,25 @@ def _show_history_tab(wrapper):
 
     st.caption(f"Found {len(forecasts)} saved forecasts")
 
-    # Show forecasts as a table
+    # Show forecasts as a table with KPI-appropriate labels
     forecast_data = []
     for f in forecasts:
+        # Format response based on KPI type
+        if kpi_labels.is_revenue_type:
+            response_str = f"${f.total_response:,.0f}"
+            efficiency_str = f"{f.blended_roi:.2f}x"
+        else:
+            response_str = f"{f.total_response:,.0f}"
+            cost_per = f.total_spend / f.total_response if f.total_response > 0 else float('inf')
+            efficiency_str = f"${cost_per:.2f}"
+
         forecast_data.append({
             "ID": f.id,
             "Period": f.forecast_period,
             "Weeks": f.num_weeks,
             "Spend": f"${f.total_spend:,.0f}",
-            "Response": f"${f.total_response:,.0f}",
-            "ROI": f"{f.blended_roi:.2f}x",
+            kpi_labels.target_label: response_str,
+            kpi_labels.efficiency_label: efficiency_str,
             "Seasonal": "Yes" if f.seasonal_applied else "No",
             "Created": f.created_at[:16].replace("T", " "),
             "Notes": f.notes or "",
@@ -1496,9 +1491,13 @@ def _show_history_tab(wrapper):
     )
 
     if selected_id:
-        col1, col2 = st.columns([3, 1])
+        # Action buttons
+        btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 2])
 
-        with col2:
+        with btn_col1:
+            load_clicked = st.button("Load to Results", type="primary", key="load_forecast_btn")
+
+        with btn_col2:
             if st.button("Delete Forecast", type="secondary", key="delete_forecast_btn"):
                 if ForecastPersistence.delete_forecast(wrapper._saved_model_path, selected_id):
                     st.success(f"Deleted {selected_id}")
@@ -1506,41 +1505,53 @@ def _show_history_tab(wrapper):
                 else:
                     st.error("Failed to delete forecast")
 
-        with col1:
-            try:
-                result, input_spend, metadata = ForecastPersistence.load_forecast(
-                    wrapper._saved_model_path, selected_id
-                )
+        try:
+            result, input_spend, metadata = ForecastPersistence.load_forecast(
+                wrapper._saved_model_path, selected_id
+            )
 
-                # Show summary
-                st.markdown(f"**Period:** {metadata.forecast_period}")
-                st.markdown(f"**Dates:** {metadata.start_date} to {metadata.end_date}")
-                if metadata.notes:
-                    st.markdown(f"**Notes:** {metadata.notes}")
+            # Handle load to results
+            if load_clicked:
+                st.session_state["forecast_result"] = result
+                st.session_state["forecast_input_spend"] = input_spend
+                st.success("Forecast loaded! Switch to the Results tab to view it.")
 
-                # Metrics
-                c1, c2, c3, c4 = st.columns(4)
-                with c1:
-                    st.metric("Total Spend", f"${metadata.total_spend:,.0f}")
-                with c2:
-                    st.metric("Total Response", f"${metadata.total_response:,.0f}")
-                with c3:
-                    st.metric("Blended ROI", f"{metadata.blended_roi:.2f}x")
-                with c4:
-                    st.metric("Weeks", metadata.num_weeks)
+            # Show summary
+            st.markdown(f"**Period:** {metadata.forecast_period}")
+            st.markdown(f"**Dates:** {metadata.start_date} to {metadata.end_date}")
+            if metadata.notes:
+                st.markdown(f"**Notes:** {metadata.notes}")
 
-                # Weekly data
-                with st.expander("Weekly Data"):
-                    st.dataframe(result.weekly_df, width="stretch")
+            # Metrics with KPI-appropriate labels
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.metric("Total Spend", f"${metadata.total_spend:,.0f}")
+            with c2:
+                if kpi_labels.is_revenue_type:
+                    st.metric(f"Total {kpi_labels.target_label}", f"${metadata.total_response:,.0f}")
+                else:
+                    st.metric(f"Total {kpi_labels.target_label}", f"{metadata.total_response:,.0f}")
+            with c3:
+                if kpi_labels.is_revenue_type:
+                    st.metric(f"Blended {kpi_labels.efficiency_label}", f"{metadata.blended_roi:.2f}x")
+                else:
+                    cost_per = metadata.total_spend / metadata.total_response if metadata.total_response > 0 else float('inf')
+                    st.metric(f"Blended {kpi_labels.efficiency_label}", f"${cost_per:.2f}")
+            with c4:
+                st.metric("Weeks", metadata.num_weeks)
 
-                # Channel contributions
-                with st.expander("Channel Contributions"):
-                    st.dataframe(result.channel_contributions, width="stretch")
+            # Weekly data
+            with st.expander("Weekly Data"):
+                st.dataframe(result.weekly_df, width="stretch")
 
-                # Input spend
-                with st.expander("Input Spend Data"):
-                    st.dataframe(input_spend, width="stretch")
+            # Channel contributions
+            with st.expander("Channel Contributions"):
+                st.dataframe(result.channel_contributions, width="stretch")
 
-            except Exception as e:
-                st.error(f"Error loading forecast details: {e}")
-                logger.exception(f"Failed to load forecast {selected_id}")
+            # Input spend
+            with st.expander("Input Spend Data"):
+                st.dataframe(input_spend, width="stretch")
+
+        except Exception as e:
+            st.error(f"Error loading forecast details: {e}")
+            logger.exception(f"Failed to load forecast {selected_id}")
