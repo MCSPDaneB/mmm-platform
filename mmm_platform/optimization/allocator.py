@@ -651,7 +651,7 @@ class BudgetAllocator:
             jac=risk_objective.gradient,
             bounds=bounds_list,
             constraints=constraints,
-            options={'maxiter': 200, 'ftol': 1e-6},
+            options={'maxiter': 1000, 'ftol': 1e-6},
         )
 
         # Log optimizer result details
@@ -691,7 +691,7 @@ class BudgetAllocator:
                 jac=risk_objective.gradient,
                 bounds=Bounds(lb, ub),
                 constraints=budget_constraint,
-                options={'maxiter': 200, 'gtol': 1e-6},
+                options={'maxiter': 1000, 'gtol': 1e-6},
             )
 
             # Use trust-constr result if it's better
