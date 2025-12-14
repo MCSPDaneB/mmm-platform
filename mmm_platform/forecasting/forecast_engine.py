@@ -15,7 +15,6 @@ from datetime import datetime
 from mmm_platform.optimization.seasonality import SeasonalIndexCalculator
 from mmm_platform.optimization.bridge import OptimizationBridge
 from mmm_platform.optimization.risk_objectives import PosteriorSamples
-from mmm_platform.config.schema import KPIType
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +45,6 @@ class ForecastResult:
     demand_index: float
     forecast_period: str  # e.g., "Jan-Mar 2025"
 
-    # Sanity check
-    sanity_check: dict = field(default_factory=dict)
 
     @property
     def blended_roi(self) -> float:
@@ -355,14 +352,6 @@ class SpendForecastEngine:
         total_ci_low = weekly_df["ci_low"].sum()
         total_ci_high = weekly_df["ci_high"].sum()
 
-        # Compute sanity check
-        sanity_check = self._compute_sanity_check(
-            forecast_spend=float(total_spend_array.sum()),
-            forecast_response=total_response,
-            num_periods=num_weeks,
-            start_month=start_month,
-        )
-
         return ForecastResult(
             total_response=total_response,
             total_ci_low=total_ci_low,
@@ -375,7 +364,6 @@ class SpendForecastEngine:
             seasonal_indices=seasonal_indices,
             demand_index=demand_index,
             forecast_period=forecast_period,
-            sanity_check=sanity_check,
         )
 
     def _compute_week_response(
@@ -439,104 +427,6 @@ class SpendForecastEngine:
         mean_channel_contrib = np.mean(channel_response, axis=0)
 
         return response_per_sample, mean_channel_contrib
-
-    def _compute_sanity_check(
-        self,
-        forecast_spend: float,
-        forecast_response: float,
-        num_periods: int,
-        start_month: int,
-    ) -> dict:
-        """
-        Compare forecast to historical actuals.
-
-        Parameters
-        ----------
-        forecast_spend : float
-            Total forecasted spend.
-        forecast_response : float
-            Total forecasted response.
-        num_periods : int
-            Number of weeks in forecast.
-        start_month : int
-            Starting month of forecast.
-
-        Returns
-        -------
-        dict
-            Sanity check results with comparisons and warnings.
-        """
-        if forecast_spend <= 0:
-            return {
-                "forecast_roi": 0.0,
-                "recent_roi": None,
-                "yoy_roi": None,
-                "is_reasonable": True,
-                "warnings": [],
-            }
-
-        forecast_roi = forecast_response / forecast_spend
-
-        warnings = []
-
-        # 1. Get recent history (same number of periods)
-        try:
-            recent_contribution = self.bridge.get_contributions_for_period(
-                num_periods=num_periods,
-                comparison_mode="most_recent_period"
-            )
-            recent_spend_dict = self.bridge.get_current_allocation(
-                num_periods=num_periods,
-                comparison_mode="most_recent_period"
-            )
-            recent_spend = sum(recent_spend_dict.values())
-
-            if recent_spend > 0:
-                recent_roi = recent_contribution / recent_spend
-            else:
-                recent_roi = None
-        except Exception as e:
-            logger.warning(f"Could not compute recent ROI: {e}")
-            recent_roi = None
-            recent_contribution = None
-            recent_spend = None
-
-        # 2. Compare to recent
-        if recent_roi is not None and recent_roi > 0:
-            roi_diff = abs(forecast_roi - recent_roi) / recent_roi
-            if roi_diff > 0.20:
-                # Use KPI-appropriate terminology
-                kpi_type = getattr(self.wrapper.config.data, 'kpi_type', KPIType.REVENUE)
-                if kpi_type == KPIType.REVENUE:
-                    warnings.append(
-                        f"Forecast ROI ({forecast_roi:.2f}x) differs >20% from "
-                        f"recent ({recent_roi:.2f}x)"
-                    )
-                else:
-                    # For count KPIs, show as Cost Per X
-                    forecast_cost = 1 / forecast_roi if forecast_roi > 0 else float('inf')
-                    recent_cost = 1 / recent_roi if recent_roi > 0 else float('inf')
-                    target_name = self.wrapper.config.data.kpi_display_name or self.wrapper.config.data.target_column
-                    warnings.append(
-                        f"Forecast Cost Per {target_name} (${forecast_cost:.2f}) differs >20% from "
-                        f"recent (${recent_cost:.2f})"
-                    )
-
-        # 3. YoY comparison would require more data
-        # For now, just use channel effectiveness indices as a proxy
-        yoy_roi = None  # Placeholder for future enhancement
-
-        return {
-            "forecast_spend": forecast_spend,
-            "forecast_response": forecast_response,
-            "forecast_roi": forecast_roi,
-            "recent_spend": recent_spend,
-            "recent_contribution": recent_contribution,
-            "recent_roi": recent_roi,
-            "yoy_roi": yoy_roi,
-            "is_reasonable": len(warnings) == 0,
-            "warnings": warnings,
-        }
 
     def _format_period_string(
         self,

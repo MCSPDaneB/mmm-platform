@@ -1498,7 +1498,6 @@ class ForecastPersistence:
         config = {
             "seasonal_indices": result.seasonal_indices,
             "demand_index": result.demand_index,
-            "sanity_check": result.sanity_check,
         }
         with open(forecast_dir / cls.CONFIG_FILE, "w") as f:
             json.dump(config, f, indent=2)
@@ -1613,7 +1612,6 @@ class ForecastPersistence:
             seasonal_indices=config.get("seasonal_indices", {}),
             demand_index=config.get("demand_index", 1.0),
             forecast_period=metadata.forecast_period,
-            sanity_check=config.get("sanity_check", {}),
         )
 
         return result, input_spend, metadata

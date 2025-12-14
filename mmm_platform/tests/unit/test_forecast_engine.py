@@ -285,48 +285,6 @@ class TestCoreFunctionality:
 
 
 # =============================================================================
-# Sanity Check Tests
-# =============================================================================
-
-class TestSanityCheck:
-    """Tests for sanity check feature."""
-
-    def test_sanity_check_reasonable_forecast(self, forecast_engine, sample_spend_csv):
-        """No warnings when forecast aligns with history."""
-        result = forecast_engine.forecast(sample_spend_csv)
-
-        # Mock is set up to return reasonable values
-        assert result.sanity_check is not None
-        assert "forecast_roi" in result.sanity_check
-
-    def test_sanity_check_flags_outliers(self, forecast_engine, sample_spend_csv):
-        """Warnings triggered when forecast ROI deviates >20%."""
-        # Modify the mock to return very different historical ROI
-        forecast_engine.bridge.get_contributions_for_period.return_value = 10000.0  # Low contribution
-        forecast_engine.bridge.get_current_allocation.return_value = {
-            "tv_spend": 100000,
-            "search_spend": 100000
-        }  # High spend = low ROI
-
-        result = forecast_engine.forecast(sample_spend_csv)
-
-        # Should have warnings about ROI deviation
-        # (depends on actual computed forecast ROI)
-        assert result.sanity_check is not None
-        # The sanity check should exist even if warnings are empty
-        assert "is_reasonable" in result.sanity_check
-
-    def test_sanity_check_insufficient_history(self, forecast_engine, sample_spend_csv):
-        """Graceful handling when historical data unavailable."""
-        forecast_engine.bridge.get_contributions_for_period.side_effect = Exception("Not enough data")
-
-        # Should not raise, just return None for comparison
-        result = forecast_engine.forecast(sample_spend_csv)
-        assert result.sanity_check is not None
-        assert result.sanity_check.get("recent_roi") is None
-
-
-# =============================================================================
 # Edge Cases Tests
 # =============================================================================
 
@@ -1008,7 +966,6 @@ def sample_forecast_result():
         seasonal_indices={"tv_spend": 1.1, "search_spend": 0.95},
         demand_index=1.05,
         forecast_period="Jan 2025",
-        sanity_check={"forecast_roi": 0.2, "is_reasonable": True},
     )
 
 
@@ -1178,7 +1135,6 @@ class TestForecastPersistence:
             seasonal_indices={"tv_spend": 1.1, "search_spend": 0.95},
             demand_index=1.05,
             forecast_period="Feb 2025",
-            sanity_check={},
         )
         ForecastPersistence.save_forecast(
             temp_model_dir, sample_forecast_result_2, sample_input_spend_2

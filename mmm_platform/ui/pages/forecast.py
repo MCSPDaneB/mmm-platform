@@ -1028,10 +1028,6 @@ def _show_results_tab(engine, wrapper):
     else:
         st.info("No seasonal adjustment applied.")
 
-    # Sanity check
-    st.markdown("---")
-    _show_sanity_check(result, wrapper)
-
     # Charts
     st.markdown("---")
     st.subheader("Detailed Breakdown")
@@ -1050,57 +1046,6 @@ def _show_results_tab(engine, wrapper):
 
     with chart_tab3:
         _show_download_options(result, engine)
-
-
-def _show_sanity_check(result, wrapper):
-    """Display sanity check comparison."""
-    st.subheader("Sanity Check")
-
-    sc = result.sanity_check
-    kpi_labels = KPILabels(wrapper.config)
-
-    if not sc:
-        st.warning("No sanity check data available.")
-        return
-
-    # Format comparison
-    forecast_roi = sc.get("forecast_roi", 0)
-    recent_roi = sc.get("recent_roi")
-    recent_spend = sc.get("recent_spend")
-    recent_contribution = sc.get("recent_contribution")
-
-    # Format efficiency based on KPI type
-    if kpi_labels.is_revenue_type:
-        forecast_eff_str = f"ROI: {forecast_roi:.2f}x"
-        recent_eff_str = f"ROI: {recent_roi:.2f}x" if recent_roi else ""
-    else:
-        forecast_cost_per = 1 / forecast_roi if forecast_roi > 0 else float('inf')
-        forecast_eff_str = f"{kpi_labels.efficiency_label}: ${forecast_cost_per:.2f}"
-        if recent_roi:
-            recent_cost_per = 1 / recent_roi if recent_roi > 0 else float('inf')
-            recent_eff_str = f"{kpi_labels.efficiency_label}: ${recent_cost_per:.2f}"
-        else:
-            recent_eff_str = ""
-
-    st.markdown(f"""
-    **Your forecast:** {result.total_response:,.0f} {kpi_labels.target_label.lower()} from ${result.total_spend:,.0f} spend ({forecast_eff_str})
-    """)
-
-    if recent_roi is not None:
-        st.markdown(f"""
-        **Historical comparison:**
-        - Recent ({result.num_weeks} weeks): ${recent_spend:,.0f} → {recent_contribution:,.0f} ({recent_eff_str})
-        """)
-
-        # Show check result
-        if sc.get("is_reasonable", True):
-            st.success(f"Forecast appears reasonable (within expected range of historical {kpi_labels.efficiency_label})")
-        else:
-            st.warning("**Warnings:**")
-            for warning in sc.get("warnings", []):
-                st.warning(f"- {warning}")
-    else:
-        st.info("Insufficient historical data for comparison.")
 
 
 def _show_weekly_chart(result, wrapper):
