@@ -1399,3 +1399,303 @@ def save_model_schema_override(model_path: Union[str, Path], schema: dict) -> No
         json.dump(session_state, f, indent=2)
 
     logger.info(f"Saved model schema override to {model_path}")
+
+
+# =============================================================================
+# Forecast Persistence
+# =============================================================================
+
+
+class ForecastPersistence:
+    """
+    Persistence layer for saved forecasts.
+
+    Stores forecasts as subdirectories within the model's folder:
+    saved_models/{client}/{model_name}/forecasts/{forecast_id}/
+        - metadata.json - SavedForecastMetadata
+        - weekly_df.parquet - Weekly response data
+        - channel_contributions.parquet - Channel breakdown
+        - input_spend.parquet - Original uploaded spend data
+        - config.json - Settings used (seasonal_indices, etc.)
+    """
+
+    FORECASTS_DIR = "forecasts"
+    METADATA_FILE = "metadata.json"
+    WEEKLY_FILE = "weekly_df.parquet"
+    CONTRIBUTIONS_FILE = "channel_contributions.parquet"
+    INPUT_SPEND_FILE = "input_spend.parquet"
+    CONFIG_FILE = "config.json"
+
+    @classmethod
+    def save_forecast(
+        cls,
+        model_path: Union[str, Path],
+        result: "ForecastResult",
+        input_spend: pd.DataFrame,
+        notes: Optional[str] = None,
+    ) -> str:
+        """
+        Save a forecast to the model's forecast history.
+
+        Parameters
+        ----------
+        model_path : Union[str, Path]
+            Path to the saved model directory.
+        result : ForecastResult
+            The forecast result to save.
+        input_spend : pd.DataFrame
+            The original spend CSV uploaded by the user.
+        notes : str, optional
+            User notes about this forecast.
+
+        Returns
+        -------
+        str
+            The forecast ID (UUID).
+        """
+        import uuid
+        from mmm_platform.config.schema import SavedForecastMetadata
+
+        model_path = Path(model_path)
+        forecasts_dir = model_path / cls.FORECASTS_DIR
+        forecasts_dir.mkdir(exist_ok=True)
+
+        # Generate forecast ID
+        forecast_id = f"forecast_{uuid.uuid4().hex[:8]}"
+        forecast_dir = forecasts_dir / forecast_id
+        forecast_dir.mkdir()
+
+        # Extract dates from weekly_df
+        dates = pd.to_datetime(result.weekly_df["date"])
+        start_date = dates.min().strftime("%Y-%m-%d")
+        end_date = dates.max().strftime("%Y-%m-%d")
+
+        # Create metadata
+        metadata = SavedForecastMetadata(
+            id=forecast_id,
+            created_at=datetime.now().isoformat(),
+            forecast_period=result.forecast_period,
+            start_date=start_date,
+            end_date=end_date,
+            num_weeks=result.num_weeks,
+            total_spend=result.total_spend,
+            total_response=result.total_response,
+            blended_roi=result.blended_roi,
+            seasonal_applied=result.seasonal_applied,
+            notes=notes,
+        )
+
+        # Save metadata
+        with open(forecast_dir / cls.METADATA_FILE, "w") as f:
+            json.dump(metadata.model_dump(), f, indent=2)
+
+        # Save dataframes
+        result.weekly_df.to_parquet(forecast_dir / cls.WEEKLY_FILE)
+        result.channel_contributions.to_parquet(forecast_dir / cls.CONTRIBUTIONS_FILE)
+        input_spend.to_parquet(forecast_dir / cls.INPUT_SPEND_FILE)
+
+        # Save config (seasonal indices, etc.)
+        config = {
+            "seasonal_indices": result.seasonal_indices,
+            "demand_index": result.demand_index,
+            "sanity_check": result.sanity_check,
+        }
+        with open(forecast_dir / cls.CONFIG_FILE, "w") as f:
+            json.dump(config, f, indent=2)
+
+        logger.info(f"Saved forecast {forecast_id} to {forecast_dir}")
+        return forecast_id
+
+    @classmethod
+    def list_forecasts(
+        cls,
+        model_path: Union[str, Path],
+    ) -> list["SavedForecastMetadata"]:
+        """
+        List all saved forecasts for a model.
+
+        Parameters
+        ----------
+        model_path : Union[str, Path]
+            Path to the saved model directory.
+
+        Returns
+        -------
+        list[SavedForecastMetadata]
+            List of forecast metadata, sorted by created_at (newest first).
+        """
+        from mmm_platform.config.schema import SavedForecastMetadata
+
+        model_path = Path(model_path)
+        forecasts_dir = model_path / cls.FORECASTS_DIR
+
+        if not forecasts_dir.exists():
+            return []
+
+        forecasts = []
+        for forecast_dir in forecasts_dir.iterdir():
+            if not forecast_dir.is_dir():
+                continue
+
+            metadata_file = forecast_dir / cls.METADATA_FILE
+            if not metadata_file.exists():
+                continue
+
+            try:
+                with open(metadata_file, "r") as f:
+                    data = json.load(f)
+                forecasts.append(SavedForecastMetadata(**data))
+            except Exception as e:
+                logger.warning(f"Could not load forecast metadata from {forecast_dir}: {e}")
+
+        # Sort by created_at (newest first)
+        forecasts.sort(key=lambda x: x.created_at, reverse=True)
+        return forecasts
+
+    @classmethod
+    def load_forecast(
+        cls,
+        model_path: Union[str, Path],
+        forecast_id: str,
+    ) -> tuple["ForecastResult", pd.DataFrame, "SavedForecastMetadata"]:
+        """
+        Load a specific forecast.
+
+        Parameters
+        ----------
+        model_path : Union[str, Path]
+            Path to the saved model directory.
+        forecast_id : str
+            The forecast ID to load.
+
+        Returns
+        -------
+        tuple[ForecastResult, pd.DataFrame, SavedForecastMetadata]
+            The forecast result, input spend DataFrame, and metadata.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the forecast does not exist.
+        """
+        from mmm_platform.config.schema import SavedForecastMetadata
+        from mmm_platform.forecasting.forecast_engine import ForecastResult
+
+        model_path = Path(model_path)
+        forecast_dir = model_path / cls.FORECASTS_DIR / forecast_id
+
+        if not forecast_dir.exists():
+            raise FileNotFoundError(f"Forecast not found: {forecast_id}")
+
+        # Load metadata
+        with open(forecast_dir / cls.METADATA_FILE, "r") as f:
+            metadata = SavedForecastMetadata(**json.load(f))
+
+        # Load dataframes
+        weekly_df = pd.read_parquet(forecast_dir / cls.WEEKLY_FILE)
+        channel_contributions = pd.read_parquet(forecast_dir / cls.CONTRIBUTIONS_FILE)
+        input_spend = pd.read_parquet(forecast_dir / cls.INPUT_SPEND_FILE)
+
+        # Load config
+        with open(forecast_dir / cls.CONFIG_FILE, "r") as f:
+            config = json.load(f)
+
+        # Reconstruct ForecastResult
+        result = ForecastResult(
+            total_response=metadata.total_response,
+            total_ci_low=weekly_df["ci_low"].sum(),
+            total_ci_high=weekly_df["ci_high"].sum(),
+            weekly_df=weekly_df,
+            channel_contributions=channel_contributions,
+            total_spend=metadata.total_spend,
+            num_weeks=metadata.num_weeks,
+            seasonal_applied=metadata.seasonal_applied,
+            seasonal_indices=config.get("seasonal_indices", {}),
+            demand_index=config.get("demand_index", 1.0),
+            forecast_period=metadata.forecast_period,
+            sanity_check=config.get("sanity_check", {}),
+        )
+
+        return result, input_spend, metadata
+
+    @classmethod
+    def delete_forecast(
+        cls,
+        model_path: Union[str, Path],
+        forecast_id: str,
+    ) -> bool:
+        """
+        Delete a forecast.
+
+        Parameters
+        ----------
+        model_path : Union[str, Path]
+            Path to the saved model directory.
+        forecast_id : str
+            The forecast ID to delete.
+
+        Returns
+        -------
+        bool
+            True if deleted, False if not found.
+        """
+        import shutil
+
+        model_path = Path(model_path)
+        forecast_dir = model_path / cls.FORECASTS_DIR / forecast_id
+
+        if not forecast_dir.exists():
+            return False
+
+        shutil.rmtree(forecast_dir)
+        logger.info(f"Deleted forecast {forecast_id}")
+        return True
+
+    @classmethod
+    def get_historical_spend(
+        cls,
+        model_path: Union[str, Path],
+    ) -> pd.DataFrame:
+        """
+        Get combined spend data from all historical forecasts.
+
+        Used for overlap detection when uploading new forecast data.
+
+        Parameters
+        ----------
+        model_path : Union[str, Path]
+            Path to the saved model directory.
+
+        Returns
+        -------
+        pd.DataFrame
+            Combined input_spend data from all forecasts with forecast_id column.
+            Returns empty DataFrame if no forecasts exist.
+        """
+        model_path = Path(model_path)
+        forecasts_dir = model_path / cls.FORECASTS_DIR
+
+        if not forecasts_dir.exists():
+            return pd.DataFrame()
+
+        all_spend = []
+        for forecast_dir in forecasts_dir.iterdir():
+            if not forecast_dir.is_dir():
+                continue
+
+            input_file = forecast_dir / cls.INPUT_SPEND_FILE
+            if not input_file.exists():
+                continue
+
+            try:
+                df = pd.read_parquet(input_file)
+                df["_forecast_id"] = forecast_dir.name
+                all_spend.append(df)
+            except Exception as e:
+                logger.warning(f"Could not load spend from {forecast_dir}: {e}")
+
+        if not all_spend:
+            return pd.DataFrame()
+
+        combined = pd.concat(all_spend, ignore_index=True)
+        return combined

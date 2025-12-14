@@ -202,3 +202,32 @@ When building multi-mode UIs (e.g., optimize/target/scenario modes):
 2. **Don't override user settings in callbacks** - Fill/autopopulate callbacks should not change user-configured parameters like forecast periods
 3. **Centralize shared settings** - Put parameters used by multiple modes in a dedicated Settings tab, not duplicated per mode
 4. **Test mode consistency** - If mode A and mode B use the same inputs, they must produce the same outputs
+
+### Plan Mode Discussion Flow
+
+When in plan mode, stay in discussion/refinement mode until the user explicitly signals readiness:
+
+1. **Continue discussion if** - User asks questions, raises concerns, or says "what about X"
+2. **Exit plan mode if** - User says "looks good", "let's do it", "ready to implement"
+3. **When uncertain** - Ask: "Does this address your concerns, or is there more to discuss?"
+
+Don't prematurely attempt to exit plan mode while the user is still exploring the design space.
+
+### Designing Features That Extend Existing Functionality
+
+When building features that should align with existing code (like making a new feature match optimizer behavior):
+
+1. **Trace the existing code path first** - Find exactly which functions/parameters are used
+2. **Document what IS and ISN'T applied** - Don't assume; verify with code search (e.g., "demand_index is computed and displayed but NOT applied to response calculation")
+3. **Explain current behavior to user** - Before proposing changes, confirm understanding of existing implementation
+4. **Design for consistency** - New feature should use same functions/logic, not recreate them
+
+### Before Implementing New Features
+
+Before writing new code, proactively verify:
+
+1. **Reusable components** - Search for existing functions that do similar work (use Grep/Glob to find candidates)
+2. **Test coverage** - Check if areas being modified have existing tests; note gaps
+3. **Consistency** - New code should use same patterns as existing codebase
+4. **No breaking changes** - Plan to wrap/extend existing tested functions, not modify them
+5. **Sanity checks** - Consider adding validation that compares new outputs to historical/expected values

@@ -102,6 +102,52 @@ class CategoryColumnConfig(BaseModel):
     options: list[str] = Field(default_factory=list, description="Available options for this column")
 
 
+class ForecastSpendMapping(BaseModel):
+    """Mapping from granular spend data to model variables.
+
+    Stores the mapping from granular entity tuples (e.g., Google|Search|Brand)
+    to model variable names (e.g., google_search_spend). This enables:
+    - First upload: User maps entities to model variables
+    - Subsequent uploads: Auto-apply saved mapping
+    - Validation: Flag new/missing entities
+    """
+    level_columns: list[str] = Field(
+        ...,
+        description="Level columns forming the entity key (e.g., ['media_channel_lvl1', 'lvl2', 'lvl3'])"
+    )
+    date_column: str = Field("date", description="Date column name in the granular file")
+    spend_column: str = Field("spend", description="Spend column name in the granular file")
+    entity_mappings: dict[str, str] = Field(
+        default_factory=dict,
+        description="Maps entity keys (pipe-separated) to model variable names"
+    )
+    skipped_entities: list[str] = Field(
+        default_factory=list,
+        description="Entity keys that user explicitly chose to skip (not map to any channel)"
+    )
+
+
+class SavedForecastMetadata(BaseModel):
+    """Metadata for a saved forecast.
+
+    Stored with each persisted forecast to enable:
+    - Listing and browsing forecast history
+    - Overlap detection with previous forecasts
+    - Tracking forecast changes over time
+    """
+    id: str = Field(..., description="Unique forecast identifier (UUID)")
+    created_at: str = Field(..., description="ISO timestamp when forecast was created")
+    forecast_period: str = Field(..., description="Human-readable period (e.g., 'Jan-Mar 2025')")
+    start_date: str = Field(..., description="First date in forecast (YYYY-MM-DD)")
+    end_date: str = Field(..., description="Last date in forecast (YYYY-MM-DD)")
+    num_weeks: int = Field(..., description="Number of weeks in forecast")
+    total_spend: float = Field(..., description="Total spend across all channels")
+    total_response: float = Field(..., description="Total forecasted response")
+    blended_roi: float = Field(..., description="Total response / total spend")
+    seasonal_applied: bool = Field(..., description="Whether seasonal adjustment was applied")
+    notes: Optional[str] = Field(None, description="Optional user notes about this forecast")
+
+
 class DisaggregationMappingConfig(BaseModel):
     """Configuration for disaggregating model results to granular level.
 
@@ -610,6 +656,12 @@ class ModelConfig(BaseModel):
     # Control prior configuration
     control_prior: PriorConfig = Field(
         default_factory=lambda: PriorConfig(distribution="HalfNormal", sigma=1.0)
+    )
+
+    # Forecast mapping configuration (for granular spend data)
+    forecast_spend_mapping: Optional[ForecastSpendMapping] = Field(
+        None,
+        description="Mapping from granular spend data to model variables for forecasting"
     )
 
     def get_channel_columns(self) -> list[str]:
