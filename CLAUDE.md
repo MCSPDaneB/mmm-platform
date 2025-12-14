@@ -62,6 +62,24 @@ python cli.py ui --port 8501
 - Supports utility functions: mean, VaR, CVaR, Sharpe
 - `ScenarioManager` (`scenarios.py`) - Save/compare optimization scenarios
 
+#### SLSQP Optimizer Constraint Handling
+
+The optimizer uses scipy's SLSQP with an equality constraint to enforce exact budget allocation. Two key implementation details prevent constraint violations:
+
+1. **Analytical Constraint Jacobian**: The budget constraint must include an explicit Jacobian for numerical stability:
+   ```python
+   constraints = {
+       'type': 'eq',
+       'fun': lambda x: budget - x.sum(),
+       'jac': lambda x: -np.ones(n_channels)  # Critical for convergence
+   }
+   ```
+   Without the Jacobian, SLSQP uses numerical differentiation which can fail at "corners" where channel bounds intersect with the budget constraint.
+
+2. **trust-constr Fallback**: When SLSQP fails to satisfy the constraint (>1% violation), the optimizer automatically falls back to scipy's `trust-constr` method which handles constrained optimization more robustly.
+
+**Why this matters**: The logistic saturation curves create a non-convex optimization landscape. When the budget falls between a single channel's upper bound and the sum of multiple channels' optimal allocations, SLSQP can get stuck. The combination of analytical Jacobian + fallback optimizer ensures the budget constraint is always satisfied.
+
 ### Analysis (`analysis/`)
 
 - `ContributionAnalyzer` (`contributions.py`) - ROI and decomposition analysis
@@ -142,3 +160,26 @@ When investigating UI-related issues in the Streamlit app:
 2. **Identify related state variables** - Check `st.session_state` keys that should update together
 3. **Look for sync issues** - Common bug pattern: one state variable updates but related variables don't
 4. **Check callbacks** - Streamlit callbacks (like `_fill_budget_callback`) may not update all dependent state
+
+### Debugging Different Behavior in Similar Code Paths
+
+When investigating why two code paths that should behave identically produce different results:
+
+1. **FIRST**: Trace and compare the EXACT function calls with ALL parameters for both paths
+2. **SECOND**: Identify which parameters differ (don't hypothesize - verify with debug output)
+3. **THIRD**: Only after finding the actual difference, propose a fix
+4. Do NOT propose fixes before understanding the root cause
+5. Do NOT add incremental debug statements in circles - add comprehensive comparison logging once
+
+### Root Cause Before Fix
+
+Never propose fix options (Option A, B, C) until you have identified the ACTUAL difference causing the problem. "The inputs look the same but outputs differ" means you haven't found the real input difference yet - keep looking, don't start proposing workarounds.
+
+### When to Skip Plan Mode for Debugging
+
+Skip plan mode when:
+- Adding debug/print statements to understand behavior
+- Comparing two code paths to find differences
+- Running quick experiments to isolate issues
+
+Just make the debug changes directly and iterate quickly.
