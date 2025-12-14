@@ -309,16 +309,16 @@ def _show_optimize_mode_inputs(channel_info):
     kpi_type = getattr(wrapper.config.data, 'kpi_type', 'revenue') if wrapper else 'revenue'
 
     if kpi_type == "count":
-        objective_options = ["Maximize Response", "CPA Floor"]
+        objective_options = ["Maximize Response", "Max CPA"]
         help_text = (
             "**Maximize Response**: Allocate budget to maximize expected conversions.\n\n"
-            "**CPA Floor**: Maximize conversions while keeping cost-per-acquisition below a threshold."
+            "**Max CPA**: Maximize conversions while keeping cost-per-acquisition below a threshold."
         )
     else:
-        objective_options = ["Maximize Response", "ROI Floor"]
+        objective_options = ["Maximize Response", "Min ROI"]
         help_text = (
             "**Maximize Response**: Allocate budget to maximize expected revenue.\n\n"
-            "**ROI Floor**: Maximize revenue while maintaining a minimum ROI. "
+            "**Min ROI**: Maximize revenue while maintaining a minimum ROI. "
             "May return unallocated budget if the target can't be met at full spend."
         )
 
@@ -329,8 +329,8 @@ def _show_optimize_mode_inputs(channel_info):
         key="opt_objective",
     )
 
-    # Efficiency target inputs (only show for ROI/CPA floor)
-    if optimization_objective == "ROI Floor":
+    # Efficiency target inputs (only show for Min ROI / Max CPA)
+    if optimization_objective == "Min ROI":
         st.number_input(
             "Minimum ROI",
             min_value=0.1,
@@ -339,7 +339,7 @@ def _show_optimize_mode_inputs(channel_info):
             help="Minimum return on investment required (e.g., 2.0 = 2x return)",
             key="opt_efficiency_target",
         )
-    elif optimization_objective == "CPA Floor":
+    elif optimization_objective == "Max CPA":
         st.number_input(
             "Maximum CPA ($)",
             min_value=0.01,
@@ -1189,10 +1189,10 @@ def _run_optimize(wrapper):
             efficiency_metric = None
             efficiency_target = None
 
-            if optimization_objective == "ROI Floor":
+            if optimization_objective == "Min ROI":
                 efficiency_metric = "roi"
                 efficiency_target = st.session_state.get("opt_efficiency_target", 2.0)
-            elif optimization_objective == "CPA Floor":
+            elif optimization_objective == "Max CPA":
                 efficiency_metric = "cpa"
                 efficiency_target = st.session_state.get("opt_efficiency_target", 10.0)
 
