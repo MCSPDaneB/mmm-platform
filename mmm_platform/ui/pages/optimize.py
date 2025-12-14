@@ -43,19 +43,11 @@ def _fill_budget_callback():
             st.session_state.opt_comparison_mode = "Last N weeks actual"
             st.session_state.opt_comparison_n_weeks = fill_weeks
 
-            # Sync forecast period with fill period for consistent comparison
-            st.session_state.opt_num_periods = fill_weeks
-
-            # Update start month to match the period for correct seasonality
-            st.session_state.opt_start_month = start_date.month
-
-            # Clear cached seasonal indices so they recalculate with new start month
-            if "seasonal_indices" in st.session_state:
-                del st.session_state.seasonal_indices
+            # NOTE: Do NOT override opt_num_periods or opt_start_month here
+            # User sets these in the Settings tab, fill should not change them
 
             st.session_state.budget_fill_info = (
-                f"Filled with ${total:,.0f} from {start_date:%Y-%m-%d} to {end_date:%Y-%m-%d}. "
-                f"Forecast period, comparison and seasonality updated to match."
+                f"Filled with ${total:,.0f} from {start_date:%Y-%m-%d} to {end_date:%Y-%m-%d}."
             )
         else:
             st.session_state.budget_fill_error = "No spend found for selected period"
@@ -96,14 +88,87 @@ def show():
         st.error(f"Error initializing optimizer: {e}")
         return
 
-    # Create unified 2-tab layout
-    config_tab, results_tab = st.tabs(["⚙️ Configuration", "📊 Results"])
+    # Create unified 3-tab layout with Settings first
+    settings_tab, config_tab, results_tab = st.tabs(["🔧 Settings", "⚙️ Configuration", "📊 Results"])
+
+    with settings_tab:
+        _show_settings_tab(wrapper, allocator, channel_info)
 
     with config_tab:
         _show_configuration_tab(wrapper, allocator, channel_info)
 
     with results_tab:
         _show_results_tab(wrapper, channel_info)
+
+
+def _show_settings_tab(wrapper, allocator, channel_info):
+    """Display the settings tab with all optimization parameters."""
+    st.markdown("### Optimization Period")
+    st.caption("These settings apply to ALL optimization modes.")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.slider(
+            "Forecast Periods (weeks)",
+            min_value=1,
+            max_value=52,
+            value=st.session_state.get("opt_num_periods", 8),
+            key="opt_num_periods",
+            help="Number of weeks to optimize for.",
+        )
+
+    with col2:
+        month_names = [
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December"
+        ]
+        current_month = st.session_state.get("opt_start_month", 1)
+        st.selectbox(
+            "Starting Month",
+            options=list(range(1, 13)),
+            format_func=lambda x: month_names[x - 1],
+            index=current_month - 1,
+            help="Which month does your optimization period start?",
+            key="opt_start_month",
+        )
+
+    # Show current settings summary
+    num_periods = st.session_state.get("opt_num_periods", 8)
+    start_month = st.session_state.get("opt_start_month", 1)
+    end_month_idx = (start_month - 1 + (num_periods // 4)) % 12
+    month_names_list = [
+        "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"
+    ]
+    period_info = f"{month_names_list[start_month - 1]}"
+    if num_periods > 4:
+        period_info += f" → {month_names_list[end_month_idx]}"
+
+    st.info(f"📅 **Current:** {num_periods} weeks ({period_info})")
+
+    st.markdown("---")
+
+    # Channel bounds configuration
+    _show_channel_bounds_expander(channel_info)
+
+    st.markdown("---")
+
+    # Seasonal adjustments
+    _show_seasonality_expander(wrapper, channel_info)
+
+    st.markdown("---")
+
+    # Optimizer validation
+    _show_validation_expander(wrapper)
+
+    st.markdown("---")
+
+    # Debug info
+    with st.expander("Debug: Session State Values", expanded=False):
+        st.write(f"opt_num_periods: {st.session_state.get('opt_num_periods', 'NOT SET')}")
+        st.write(f"opt_start_month: {st.session_state.get('opt_start_month', 'NOT SET')}")
+        st.write(f"bounds_config: {'SET' if st.session_state.get('bounds_config') else 'NOT SET'}")
 
 
 def _show_configuration_tab(wrapper, allocator, channel_info):
@@ -153,20 +218,6 @@ def _show_configuration_tab(wrapper, allocator, channel_info):
         _show_target_mode_inputs()
     elif mode == "scenarios":
         _show_scenarios_mode_inputs()
-
-    st.markdown("---")
-
-    # Common settings (for all modes except target and scenarios which have simpler needs)
-    if mode in ["optimize", "incremental"]:
-        _show_common_settings(allocator)
-        st.markdown("---")
-
-    # Bounds and seasonality available for all optimization modes
-    _show_channel_bounds_expander(channel_info)
-    _show_seasonality_expander(wrapper, channel_info)
-    # Validation only for optimize/incremental modes
-    if mode in ["optimize", "incremental"]:
-        _show_validation_expander(wrapper)
 
     # Bottom run button
     _show_run_button(wrapper, allocator, channel_info, mode, position="bottom")
@@ -401,14 +452,9 @@ def _show_target_mode_inputs():
             key="target_max_budget",
         )
 
-    # Number of periods
-    st.slider(
-        "Forecast Periods (weeks)",
-        min_value=1,
-        max_value=52,
-        value=st.session_state.get("target_num_periods", 8),
-        key="target_num_periods",
-    )
+    # Show current settings from Settings tab
+    num_periods = st.session_state.get("opt_num_periods", 8)
+    st.info(f"📅 Using **{num_periods} weeks** forecast period (configure in Settings tab)")
 
 
 def _show_scenarios_mode_inputs():
@@ -465,14 +511,9 @@ def _show_scenarios_mode_inputs():
         if scenarios:
             st.caption(f"Analyzing {len(scenarios)} scenarios: ${min(scenarios):,.0f} - ${max(scenarios):,.0f}")
 
-    # Number of periods
-    st.slider(
-        "Forecast Periods (weeks)",
-        min_value=1,
-        max_value=52,
-        value=st.session_state.get("scenario_num_periods", 8),
-        key="scenario_num_periods",
-    )
+    # Show current settings from Settings tab
+    num_periods = st.session_state.get("opt_num_periods", 8)
+    st.info(f"📅 Using **{num_periods} weeks** forecast period (configure in Settings tab)")
 
 
 def _show_comparison_options():
@@ -1295,10 +1336,10 @@ def _run_target(wrapper):
 
     with st.spinner("Searching for optimal budget..."):
         try:
-            num_periods = st.session_state.get("target_num_periods", 8)
+            num_periods = st.session_state.get("opt_num_periods", 8)
             target_response = st.session_state.get("target_response", 500000)
 
-            allocator = BudgetAllocator(wrapper, num_periods=num_periods)
+            allocator = BudgetAllocator(wrapper, num_periods=num_periods, utility="mean")
             target_opt = TargetOptimizer(allocator)
 
             # Get bounds and seasonal settings
@@ -1348,9 +1389,9 @@ def _run_scenarios(wrapper):
 
     with st.spinner(f"Analyzing {len(scenarios)} scenarios..."):
         try:
-            num_periods = st.session_state.get("scenario_num_periods", 8)
+            num_periods = st.session_state.get("opt_num_periods", 8)
 
-            allocator = BudgetAllocator(wrapper, num_periods=num_periods)
+            allocator = BudgetAllocator(wrapper, num_periods=num_periods, utility="mean")
 
             # Get bounds and seasonal settings
             channel_bounds = st.session_state.get("bounds_config")
@@ -1389,7 +1430,7 @@ def _run_constraint_comparison(wrapper):
     import numpy as np
     import pandas as pd
 
-    num_periods = st.session_state.get("scenario_num_periods", 8)
+    num_periods = st.session_state.get("opt_num_periods", 8)
 
     with st.spinner("Running constraint comparison (this may take a few minutes)..."):
         try:
