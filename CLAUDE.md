@@ -183,3 +183,22 @@ Skip plan mode when:
 - Running quick experiments to isolate issues
 
 Just make the debug changes directly and iterate quickly.
+
+### Debugging Scipy Optimization Issues
+
+When scipy optimizers (SLSQP, trust-constr, etc.) fail or return incorrect results:
+
+1. **Always provide analytical Jacobians** - Missing Jacobians cause numerical instability at constraint boundaries
+2. **Check constraint satisfaction** - Verify `result.x` actually satisfies constraints, don't trust `result.success`
+3. **Use fallback optimizers** - If SLSQP fails, try trust-constr; different methods handle non-convex landscapes differently
+4. **Watch for "corner" cases** - When bounds intersect with equality constraints, optimizers can get stuck
+5. **Non-convex objectives** - Saturation/logistic functions create non-convex landscapes that local optimizers struggle with
+
+### Streamlit Session State Consistency
+
+When building multi-mode UIs (e.g., optimize/target/scenario modes):
+
+1. **Share session state keys** - All modes using the same parameter must use the same key (e.g., `opt_num_periods`, not `target_num_periods` + `scenario_num_periods`)
+2. **Don't override user settings in callbacks** - Fill/autopopulate callbacks should not change user-configured parameters like forecast periods
+3. **Centralize shared settings** - Put parameters used by multiple modes in a dedicated Settings tab, not duplicated per mode
+4. **Test mode consistency** - If mode A and mode B use the same inputs, they must produce the same outputs
