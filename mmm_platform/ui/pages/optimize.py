@@ -195,6 +195,11 @@ def _show_settings_tab(wrapper, allocator, channel_info):
 
     st.markdown("---")
 
+    # Consistency tests
+    _show_consistency_tests_expander(wrapper)
+
+    st.markdown("---")
+
     # Debug info
     with st.expander("Debug: Session State Values", expanded=False):
         st.write(f"opt_num_periods: {st.session_state.get('opt_num_periods', 'NOT SET')}")
@@ -1120,6 +1125,72 @@ def _show_validation_expander(wrapper):
             ))
             fig_scatter.update_layout(height=300)
             st.plotly_chart(fig_scatter, width="stretch")
+
+
+def _show_consistency_tests_expander(wrapper):
+    """Show the optimizer consistency tests expander."""
+    with st.expander("🧪 Consistency Tests", expanded=False):
+        st.caption(
+            "Run comprehensive tests to validate optimizer behavior across all modes and settings. "
+            "Tests check determinism, cross-page consistency, bounds, budget conservation, "
+            "different time horizons, seasonality, efficiency floors, and incremental budgets."
+        )
+
+        num_periods = st.session_state.get("opt_num_periods", 8)
+
+        if st.button("Run All Tests", key="run_consistency_tests"):
+            with st.spinner("Running 14 consistency tests..."):
+                try:
+                    from mmm_platform.optimization.consistency_tests import OptimizerConsistencyTests
+
+                    tester = OptimizerConsistencyTests(wrapper)
+                    results = tester.run_all(num_periods=num_periods)
+
+                    # Store results in session state
+                    st.session_state.consistency_test_results = results
+
+                except Exception as e:
+                    st.error(f"Test suite failed: {e}")
+                    logger.exception("Consistency test error")
+
+        # Display results if available
+        if "consistency_test_results" in st.session_state:
+            results = st.session_state.consistency_test_results
+
+            passed = sum(1 for r in results if r.passed)
+            total = len(results)
+
+            if passed == total:
+                st.success(f"✅ All {total} tests passed!")
+            else:
+                st.error(f"❌ {total - passed} of {total} tests failed")
+
+            # Group tests by category
+            categories = {
+                "Core Tests": ["Determinism", "Cross-Page Consistency", "Bounds Respected",
+                              "Budget Conservation", "Response Consistency"],
+                "Time Horizon": ["Short Horizon (4 weeks)", "Long Horizon (26 weeks)"],
+                "Seasonality": ["Seasonal Index Application"],
+                "Efficiency Floor": ["Min ROI Floor", "Max CPA Floor"],
+                "Incremental Budget": ["Incremental Respects Base", "Incremental Adds Correctly"],
+                "Edge Cases": ["Tight Bounds (±10%)", "Budget Exceeds Bounds"],
+            }
+
+            for category, test_names in categories.items():
+                category_results = [r for r in results if r.name in test_names]
+                if not category_results:
+                    continue
+
+                category_passed = sum(1 for r in category_results if r.passed)
+                category_icon = "✅" if category_passed == len(category_results) else "⚠️"
+
+                with st.expander(f"{category_icon} {category} ({category_passed}/{len(category_results)})"):
+                    for result in category_results:
+                        icon = "✅" if result.passed else "❌"
+                        st.markdown(f"**{icon} {result.name}**")
+                        st.caption(result.message)
+                        if result.details and not result.passed:
+                            st.json(result.details)
 
 
 def _show_run_button(wrapper, allocator, channel_info, mode, position="bottom"):
