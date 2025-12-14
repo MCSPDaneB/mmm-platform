@@ -24,13 +24,11 @@ def _fill_budget_callback():
 
     try:
         wrapper = st.session_state.current_model
-        fill_weeks = st.session_state.get("fill_weeks", 8)
         num_periods = st.session_state.get("opt_num_periods", 8)
 
         allocator = BudgetAllocator(wrapper, num_periods=num_periods)
         spend_dict, start_date, end_date = allocator.bridge.get_last_n_weeks_spend(
-            n_weeks=fill_weeks,
-            # Don't pass num_periods - we want actual spend, not extrapolated
+            n_weeks=num_periods,
         )
         total = sum(spend_dict.values())
 
@@ -40,11 +38,6 @@ def _fill_budget_callback():
 
             # Also auto-configure comparison to match the filled period
             st.session_state.opt_compare_historical = True
-            st.session_state.opt_comparison_mode = "Last N weeks actual"
-            st.session_state.opt_comparison_n_weeks = fill_weeks
-
-            # NOTE: Do NOT override opt_num_periods or opt_start_month here
-            # User sets these in the Settings tab, fill should not change them
 
             st.session_state.budget_fill_info = (
                 f"Filled with ${total:,.0f} from {start_date:%Y-%m-%d} to {end_date:%Y-%m-%d}."
@@ -53,6 +46,55 @@ def _fill_budget_callback():
             st.session_state.budget_fill_error = "No spend found for selected period"
     except Exception as e:
         st.session_state.budget_fill_error = str(e)
+
+
+def _render_settings_status_bar():
+    """Render a dark status bar showing current optimization settings."""
+    num_periods = st.session_state.get("opt_num_periods", 8)
+    start_month = st.session_state.get("opt_start_month", 1)
+
+    month_names = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+    ]
+    month_name = month_names[start_month - 1]
+
+    # Check if custom seasonality is applied
+    seasonal_indices = st.session_state.get("seasonal_indices")
+    has_custom_seasonality = seasonal_indices is not None and len(seasonal_indices) > 0
+
+    # Check if custom bounds are set
+    bounds_config = st.session_state.get("bounds_config")
+    has_custom_bounds = bounds_config is not None and len(bounds_config) > 0
+
+    # Build status items
+    items = [
+        f"📅 {num_periods} weeks",
+        f"🗓️ Start: {month_name}",
+        f"🌊 Seasonality: {'Custom' if has_custom_seasonality else 'None'}",
+        f"📊 Bounds: {'Custom' if has_custom_bounds else 'Default'}",
+    ]
+
+    # Render dark banner with HTML/CSS
+    st.markdown(
+        f"""
+        <div style="
+            background-color: #3D3D3D;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 14px;
+            display: flex;
+            justify-content: flex-start;
+            gap: 24px;
+            flex-wrap: wrap;
+        ">
+            {''.join(f'<span>{item}</span>' for item in items)}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 
 def show():
@@ -92,12 +134,15 @@ def show():
     settings_tab, config_tab, results_tab = st.tabs(["🔧 Settings", "⚙️ Configuration", "📊 Results"])
 
     with settings_tab:
+        _render_settings_status_bar()
         _show_settings_tab(wrapper, allocator, channel_info)
 
     with config_tab:
+        _render_settings_status_bar()
         _show_configuration_tab(wrapper, allocator, channel_info)
 
     with results_tab:
+        _render_settings_status_bar()
         _show_results_tab(wrapper, channel_info)
 
 
@@ -132,20 +177,6 @@ def _show_settings_tab(wrapper, allocator, channel_info):
             help="Which month does your optimization period start?",
             key="opt_start_month",
         )
-
-    # Show current settings summary
-    num_periods = st.session_state.get("opt_num_periods", 8)
-    start_month = st.session_state.get("opt_start_month", 1)
-    end_month_idx = (start_month - 1 + (num_periods // 4)) % 12
-    month_names_list = [
-        "January", "February", "March", "April", "May", "June",
-        "July", "August", "September", "October", "November", "December"
-    ]
-    period_info = f"{month_names_list[start_month - 1]}"
-    if num_periods > 4:
-        period_info += f" → {month_names_list[end_month_idx]}"
-
-    st.info(f"📅 **Current:** {num_periods} weeks ({period_info})")
 
     st.markdown("---")
 
@@ -258,24 +289,12 @@ def _show_optimize_mode_inputs(channel_info):
         st.session_state.budget_value = total_budget
 
     with col_fill:
-        st.markdown("**Quick Fill**")
-
-        fill_weeks = st.number_input(
-            "Last N weeks",
-            min_value=1,
-            max_value=total_periods,
-            value=min(8, total_periods),
-            step=1,
-            key="fill_weeks",
-            help="Fill budget with actual spend from the last N weeks",
-        )
-
-        # Use on_click callback - runs BEFORE widgets render on next run
+        num_periods = st.session_state.get("opt_num_periods", 8)
         st.button(
-            "📥 Fill",
+            f"📥 Fill from last {num_periods} weeks",
             key="fill_budget_btn",
             on_click=_fill_budget_callback,
-            help="Fill budget from historical spend",
+            help=f"Fill budget with actual spend from the last {num_periods} weeks (set in Settings)",
         )
 
     # Show fill info/error messages
@@ -452,10 +471,6 @@ def _show_target_mode_inputs():
             key="target_max_budget",
         )
 
-    # Show current settings from Settings tab
-    num_periods = st.session_state.get("opt_num_periods", 8)
-    st.info(f"📅 Using **{num_periods} weeks** forecast period (configure in Settings tab)")
-
 
 def _show_scenarios_mode_inputs():
     """Show inputs specific to scenarios mode."""
@@ -511,10 +526,6 @@ def _show_scenarios_mode_inputs():
         if scenarios:
             st.caption(f"Analyzing {len(scenarios)} scenarios: ${min(scenarios):,.0f} - ${max(scenarios):,.0f}")
 
-    # Show current settings from Settings tab
-    num_periods = st.session_state.get("opt_num_periods", 8)
-    st.info(f"📅 Using **{num_periods} weeks** forecast period (configure in Settings tab)")
-
 
 def _show_comparison_options():
     """Show comparison baseline options for historical spend comparison."""
@@ -529,45 +540,12 @@ def _show_comparison_options():
             f"({total_periods} periods)"
         )
     except Exception:
-        total_periods = 52
+        pass
 
     num_periods = st.session_state.get("opt_num_periods", 8)
 
-    comparison_options = {
-        "Average (all data)": "average",
-        "Last N weeks actual": "last_n_weeks",
-        f"Most recent {num_periods} weeks": "most_recent_period",
-    }
-
-    comparison_label = st.selectbox(
-        "Comparison baseline",
-        options=list(comparison_options.keys()),
-        help=(
-            "How to calculate the 'historical' spend for comparison:\n\n"
-            "- **Average (all data)**: Average weekly spend across all historical data, "
-            "multiplied by the forecast periods.\n\n"
-            "- **Last N weeks actual**: Actual spend from the last N weeks of data, "
-            "extrapolated to match the forecast horizon.\n\n"
-            "- **Most recent N weeks**: Actual spend from the most recent weeks "
-            "matching your optimization period (no extrapolation)."
-        ),
-        key="opt_comparison_mode",
-    )
-    comparison_mode = comparison_options[comparison_label]
-
-    # Show N weeks input if "Last N weeks" is selected
-    if comparison_mode == "last_n_weeks":
-        # Use session state value if set (e.g., from Quick Fill), otherwise default
-        default_n_weeks = st.session_state.get("opt_comparison_n_weeks", min(52, total_periods))
-        st.number_input(
-            "Number of weeks to use",
-            min_value=1,
-            max_value=total_periods,
-            value=default_n_weeks,
-            step=1,
-            help=f"Look back this many weeks from the most recent date. Max available: {total_periods} weeks.",
-            key="opt_comparison_n_weeks",
-        )
+    # Always use actual spend from last N weeks (matches historical response calculation)
+    st.caption(f"Comparing against actual spend from the last {num_periods} weeks.")
 
 
 def _show_common_settings(allocator):
@@ -673,30 +651,11 @@ def _show_channel_bounds_expander(channel_info):
             else:
                 zero_spend_max_pct = 0
 
-            # Get comparison settings to use same baseline
-            compare_enabled = st.session_state.get("opt_compare_historical", True)
-            comparison_mode = st.session_state.get("opt_comparison_mode", "Average (all data)")
-            n_weeks = st.session_state.get("opt_comparison_n_weeks", num_periods)
-
-            # Calculate baseline from same source as comparison
+            # Always use actual spend from last N weeks (matches historical response calculation)
             from mmm_platform.optimization import BudgetAllocator
             try:
                 allocator = BudgetAllocator(st.session_state.current_model)
-
-                if comparison_mode == "Last N weeks actual" and compare_enabled:
-                    raw_spend, _, _ = allocator.bridge.get_last_n_weeks_spend(n_weeks)
-                    # Extrapolate to optimization horizon for bounds calculation
-                    scale_factor = num_periods / n_weeks
-                    baseline_spend = {ch: val * scale_factor for ch, val in raw_spend.items()}
-                elif comparison_mode == "Most recent period" and compare_enabled:
-                    baseline_spend, _, _, _ = allocator.bridge.get_most_recent_matching_period_spend(
-                        num_periods
-                    )
-                else:  # Average (all data) or comparison disabled
-                    baseline_spend = {
-                        row["channel"]: row["avg_period_spend"] * num_periods
-                        for _, row in channel_info.iterrows()
-                    }
+                baseline_spend, _, _ = allocator.bridge.get_last_n_weeks_spend(num_periods)
             except Exception:
                 # Fallback to average if bridge fails
                 baseline_spend = {
@@ -725,15 +684,8 @@ def _show_channel_bounds_expander(channel_info):
 
             st.session_state.bounds_config = bounds_config
 
-            # Show preview table with note about baseline source
-            baseline_source = (
-                f"last {n_weeks} weeks"
-                if comparison_mode == "Last N weeks actual" and compare_enabled
-                else "most recent period"
-                if comparison_mode == "Most recent period" and compare_enabled
-                else "all-time average"
-            )
-            st.caption(f"Bounds based on {baseline_source} (±{max_delta}%):")
+            # Show preview table
+            st.caption(f"Bounds based on last {num_periods} weeks (±{max_delta}%):")
 
             import pandas as pd
             preview_data = []
@@ -1208,20 +1160,8 @@ def _run_optimize(wrapper):
             seasonal_indices = st.session_state.get("seasonal_indices")
             compare_to_current = st.session_state.get("opt_compare_historical", False)
 
-            # Get comparison settings
-            comparison_mode = "average"
-            comparison_n_weeks = None
-            if compare_to_current:
-                comparison_options = {
-                    "Average (all data)": "average",
-                    "Last N weeks actual": "last_n_weeks",
-                }
-                comparison_label = st.session_state.get("opt_comparison_mode", "Average (all data)")
-                if "Most recent" in comparison_label:
-                    comparison_mode = "most_recent_period"
-                elif comparison_label in comparison_options:
-                    comparison_mode = comparison_options[comparison_label]
-                comparison_n_weeks = st.session_state.get("opt_comparison_n_weeks")
+            # Always use actual spend from last N weeks (matches historical response calculation)
+            comparison_mode = "last_n_weeks"
 
             # Get efficiency settings
             optimization_objective = st.session_state.get("opt_objective", "Maximize Response")
@@ -1235,7 +1175,7 @@ def _run_optimize(wrapper):
                 efficiency_metric = "cpa"
                 efficiency_target = st.session_state.get("opt_efficiency_target", 10.0)
 
-            # Run optimization
+            # Run optimization (comparison_n_weeks uses num_periods for consistency)
             if efficiency_metric is not None and efficiency_target is not None:
                 result = allocator.optimize_with_efficiency_floor(
                     total_budget=total_budget,
@@ -1245,7 +1185,7 @@ def _run_optimize(wrapper):
                     seasonal_indices=seasonal_indices,
                     compare_to_current=compare_to_current,
                     comparison_mode=comparison_mode,
-                    comparison_n_weeks=comparison_n_weeks,
+                    comparison_n_weeks=num_periods,
                 )
             else:
                 result = allocator.optimize(
@@ -1253,7 +1193,7 @@ def _run_optimize(wrapper):
                     channel_bounds=channel_bounds,
                     compare_to_current=compare_to_current,
                     comparison_mode=comparison_mode,
-                    comparison_n_weeks=comparison_n_weeks,
+                    comparison_n_weeks=num_periods,
                     seasonal_indices=seasonal_indices,
                 )
 
@@ -1674,8 +1614,33 @@ def _show_optimize_results(wrapper, result):
         # Calculate historical budget from current allocation
         historical_budget = sum(result.current_allocation.values())
 
-        # Row 1: Budget metric
-        st.metric("Total Budget", f"${result.total_budget:,.0f}")
+        # Row 1: Budget - show comparison only if budgets differ significantly (>1%)
+        budgets_differ = abs(result.total_budget - historical_budget) / historical_budget > 0.01 if historical_budget > 0 else False
+
+        if budgets_differ:
+            # Show comparison row
+            budget_col1, budget_col2, budget_col3 = st.columns([2, 2, 1])
+            with budget_col1:
+                st.metric("Historical Spend", f"${historical_budget:,.0f}")
+            with budget_col2:
+                st.metric("Optimized Budget", f"${result.total_budget:,.0f}")
+            with budget_col3:
+                budget_delta_pct = ((result.total_budget - historical_budget) / historical_budget) * 100
+                # Green if spending less, red if spending more
+                color = "#28a745" if budget_delta_pct <= 0 else "#dc3545"
+                sign = "+" if budget_delta_pct >= 0 else ""
+                st.markdown(f"""
+                    <div style="text-align: center; padding-top: 8px;">
+                        <p style="margin: 0 0 4px 0; font-size: 14px; color: #666;">Budget Change</p>
+                        <span style="background-color: {color}; color: white; padding: 6px 16px;
+                                     border-radius: 16px; font-weight: bold; font-size: 16px;">
+                            {sign}{budget_delta_pct:.1f}%
+                        </span>
+                    </div>
+                """, unsafe_allow_html=True)
+        else:
+            # Same budget - show single metric
+            st.metric("Total Budget", f"${result.total_budget:,.0f}")
 
         # Row 2: Response comparison (Historical | Expected | Uplift %)
         resp_col1, resp_col2, resp_col3 = st.columns([2, 2, 1])

@@ -96,7 +96,7 @@ class TestFillBudgetCallback:
     def test_fill_budget_auto_configures_comparison(
         self, mock_session_state, mock_allocator
     ):
-        """Callback auto-configures comparison to match filled period."""
+        """Callback auto-enables comparison toggle."""
         mock_session_state.current_model = Mock()
 
         with patch(
@@ -110,14 +110,8 @@ class TestFillBudgetCallback:
 
                 _fill_budget_callback()
 
-                # Should enable comparison
+                # Should enable comparison (mode is always last_n_weeks now)
                 assert mock_session_state["opt_compare_historical"] is True
-
-                # Should set mode to "Last N weeks actual"
-                assert mock_session_state["opt_comparison_mode"] == "Last N weeks actual"
-
-                # Should set N weeks to match fill_weeks (8 from fixture)
-                assert mock_session_state["opt_comparison_n_weeks"] == 8
 
     def test_fill_budget_shows_info_message(
         self, mock_session_state, mock_allocator

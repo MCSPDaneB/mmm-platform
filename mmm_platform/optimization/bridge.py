@@ -150,7 +150,8 @@ class OptimizationBridge:
         spend = {}
         spend_scale = self.config.data.spend_scale
 
-        for ch in self.channel_columns:
+        # Use paid media channels only (not owned media)
+        for ch in self.config.get_channel_columns():
             if ch in self.wrapper.df_scaled.columns:
                 # Sum of scaled spend, converted to original units
                 spend[ch] = float(self.wrapper.df_scaled[ch].sum() * spend_scale)
@@ -170,7 +171,8 @@ class OptimizationBridge:
         spend_scale = self.config.data.spend_scale
         n_periods = len(self.wrapper.df_scaled)
 
-        for ch in self.channel_columns:
+        # Use paid media channels only (not owned media)
+        for ch in self.config.get_channel_columns():
             if ch in self.wrapper.df_scaled.columns:
                 spend[ch] = float(
                     self.wrapper.df_scaled[ch].sum() * spend_scale / n_periods
