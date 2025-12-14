@@ -304,16 +304,28 @@ def _show_optimize_mode_inputs(channel_info):
         st.error(f"Could not fill budget: {st.session_state.budget_fill_error}")
         del st.session_state.budget_fill_error
 
-    # Optimization objective
+    # Optimization objective - filter by KPI type
+    wrapper = st.session_state.current_model
+    kpi_type = getattr(wrapper.config.data, 'kpi_type', 'revenue') if wrapper else 'revenue'
+
+    if kpi_type == "count":
+        objective_options = ["Maximize Response", "CPA Floor"]
+        help_text = (
+            "**Maximize Response**: Allocate budget to maximize expected conversions.\n\n"
+            "**CPA Floor**: Maximize conversions while keeping cost-per-acquisition below a threshold."
+        )
+    else:
+        objective_options = ["Maximize Response", "ROI Floor"]
+        help_text = (
+            "**Maximize Response**: Allocate budget to maximize expected revenue.\n\n"
+            "**ROI Floor**: Maximize revenue while maintaining a minimum ROI. "
+            "May return unallocated budget if the target can't be met at full spend."
+        )
+
     optimization_objective = st.selectbox(
         "Optimization Objective",
-        options=["Maximize Response", "ROI Floor", "CPA Floor"],
-        help=(
-            "**Maximize Response**: Allocate budget to maximize expected response.\n\n"
-            "**ROI Floor**: Maximize response while maintaining a minimum ROI. "
-            "May return unallocated budget if the target can't be met at full spend.\n\n"
-            "**CPA Floor**: Maximize response while keeping cost-per-acquisition below a threshold."
-        ),
+        options=objective_options,
+        help=help_text,
         key="opt_objective",
     )
 
