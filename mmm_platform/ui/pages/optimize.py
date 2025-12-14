@@ -1139,7 +1139,7 @@ def _show_consistency_tests_expander(wrapper):
         num_periods = st.session_state.get("opt_num_periods", 8)
 
         if st.button("Run All Tests", key="run_consistency_tests"):
-            with st.spinner("Running 14 consistency tests..."):
+            with st.spinner("Running consistency tests..."):
                 try:
                     from mmm_platform.optimization.consistency_tests import OptimizerConsistencyTests
 

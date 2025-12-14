@@ -47,7 +47,7 @@ class OptimizerConsistencyTests:
         self.results: list[ConsistencyTestResult] = []
 
     def run_all(self, num_periods: int = 8) -> list[ConsistencyTestResult]:
-        """Run all 16 consistency tests and return results."""
+        """Run all consistency tests and return results."""
         self.results = []
 
         # Core tests
