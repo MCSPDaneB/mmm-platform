@@ -230,8 +230,8 @@ class OptimizerConsistencyTests:
 
             result = allocator.optimize(total_budget=budget)
 
-            # Independent calculation
-            independent_response = allocator.bridge.estimate_response_at_allocation(
+            # Independent calculation (returns tuple: response, ci_low, ci_high)
+            independent_response, _, _ = allocator.bridge.estimate_response_at_allocation(
                 result.optimal_allocation, num_periods
             )
 
@@ -514,9 +514,17 @@ class OptimizerConsistencyTests:
             allocator = BudgetAllocator(self.wrapper, num_periods=num_periods)
             historical, _, _ = allocator.bridge.get_last_n_weeks_spend(num_periods)
 
-            # Set budget 50% higher than max bounds can accommodate
-            total_historical = sum(historical.values())
-            bounds = {ch: (v * 0.9, v * 1.1) for ch, v in historical.items() if v > 0}  # ±10%
+            # Create bounds for ALL channels (not just those with historical spend)
+            # This ensures the optimizer can't use default bounds for missing channels
+            channels = allocator.bridge.get_optimizable_channels()
+            bounds = {}
+            for ch in channels:
+                v = historical.get(ch, 0)
+                if v > 0:
+                    bounds[ch] = (v * 0.9, v * 1.1)  # ±10%
+                else:
+                    bounds[ch] = (0, 0)  # Zero-spend channels: no allocation allowed
+
             max_allocatable = sum(b[1] for b in bounds.values())
 
             # Budget significantly exceeds what bounds allow
