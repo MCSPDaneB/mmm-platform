@@ -135,69 +135,105 @@ def _show_upload_tab(engine, wrapper):
     with col2:
         st.warning(f"**Model is {freq_label}. Next forecast date:** {next_date_str}")
 
+    # Check for cached data from previous upload
+    cached_spend = st.session_state.get("forecast_df_spend")
+    cached_file_info = st.session_state.get("forecast_processed_file")
+
     # File upload
     uploaded_file = st.file_uploader(
         "Upload spend CSV",
         type=["csv"],
-        key="forecast_csv_upload"
+        key="forecast_csv_upload",
+        help="Upload a new file or use previously uploaded data below"
     )
+
+    # Show option to use cached data if available and no new file uploaded
+    if uploaded_file is None and cached_spend is not None and cached_file_info:
+        st.info(f"Previously uploaded: **{cached_file_info.get('name', 'unknown')}** ({len(cached_spend)} rows)")
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            use_cached = st.button("Use Previous Data", type="secondary")
+        with col2:
+            clear_cached = st.button("Clear & Upload New")
+
+        if clear_cached:
+            st.session_state.forecast_df_spend = None
+            st.session_state.forecast_processed_file = None
+            st.session_state.forecast_result = None
+            st.rerun()
+
+        if use_cached:
+            uploaded_file = "USE_CACHED"  # Flag to use cached data
 
     if uploaded_file is not None:
         try:
-            df_raw = pd.read_csv(uploaded_file)
-            st.success(f"Loaded {len(df_raw)} rows")
+            # Handle cached data vs new upload
+            if uploaded_file == "USE_CACHED":
+                # Use previously processed data - skip all parsing
+                df_spend = cached_spend
+                st.success(f"Using previously processed data ({len(df_spend)} rows)")
 
-            # Parse date column with dayfirst=True for DD/MM/YYYY format
-            date_col_candidates = [c for c in df_raw.columns if 'date' in c.lower()]
-            for date_col in date_col_candidates:
-                if df_raw[date_col].dtype == 'object':  # String column
-                    try:
-                        df_raw[date_col] = pd.to_datetime(df_raw[date_col], dayfirst=True)
-                        logger.info(f"Parsed '{date_col}' with dayfirst=True")
-                    except Exception:
-                        pass  # Leave as-is if parsing fails
-
-            # Show preview
-            st.markdown("**Data Preview:**")
-            st.dataframe(df_raw.head(10), width="stretch")
-
-            # Detect format
-            data_format = detect_spend_format(df_raw, channel_cols)
-
-            if data_format == "granular":
-                # Check if we already have processed data for THIS file
-                current_file_id = {"name": uploaded_file.name, "size": uploaded_file.size}
-                stored_file_id = st.session_state.get("forecast_processed_file")
-                cached_spend = st.session_state.get("forecast_df_spend")
-
-                if current_file_id == stored_file_id and cached_spend is not None:
-                    # Same file, use cached processed data
-                    df_spend = cached_spend
-                    st.success(f"Using processed data ({len(df_spend)} rows)")
-                else:
-                    # New file or no cached data, process from scratch
-                    df_spend = _handle_granular_format(df_raw, channel_cols, wrapper)
-                    if df_spend is not None:
-                        # Store file identity with processed data
-                        st.session_state.forecast_processed_file = current_file_id
-
-                if df_spend is None:
-                    return  # User needs to complete mapping
-            elif data_format == "aggregated":
-                st.success("Detected **aggregated format** (direct channel columns)")
-                df_spend = df_raw
+                # Show preview of cached data
+                st.markdown("**Data Preview:**")
+                st.dataframe(df_spend.head(10), width="stretch")
             else:
-                # Unknown format - show helpful error
-                st.error("**Format not recognized**")
-                st.warning(
-                    f"Expected either:\n"
-                    f"- Aggregated: columns matching model channels ({', '.join(channel_cols[:3])}...)\n"
-                    f"- Granular: columns containing 'lvl' or 'level' (e.g., media_channel_lvl1)"
-                )
-                return
+                # New file upload - process it
+                df_raw = pd.read_csv(uploaded_file)
+                st.success(f"Loaded {len(df_raw)} rows")
 
-            # Store the processed spend data
-            st.session_state.forecast_df_spend = df_spend
+                # Parse date column with dayfirst=True for DD/MM/YYYY format
+                date_col_candidates = [c for c in df_raw.columns if 'date' in c.lower()]
+                for date_col in date_col_candidates:
+                    if df_raw[date_col].dtype == 'object':  # String column
+                        try:
+                            df_raw[date_col] = pd.to_datetime(df_raw[date_col], dayfirst=True)
+                            logger.info(f"Parsed '{date_col}' with dayfirst=True")
+                        except Exception:
+                            pass  # Leave as-is if parsing fails
+
+                # Show preview
+                st.markdown("**Data Preview:**")
+                st.dataframe(df_raw.head(10), width="stretch")
+
+                # Detect format
+                data_format = detect_spend_format(df_raw, channel_cols)
+
+                if data_format == "granular":
+                    # Check if we already have processed data for THIS file
+                    current_file_id = {"name": uploaded_file.name, "size": uploaded_file.size}
+                    stored_file_id = st.session_state.get("forecast_processed_file")
+                    prev_cached_spend = st.session_state.get("forecast_df_spend")
+
+                    if current_file_id == stored_file_id and prev_cached_spend is not None:
+                        # Same file, use cached processed data
+                        df_spend = prev_cached_spend
+                        st.success(f"Using processed data ({len(df_spend)} rows)")
+                    else:
+                        # New file or no cached data, process from scratch
+                        df_spend = _handle_granular_format(df_raw, channel_cols, wrapper)
+                        if df_spend is not None:
+                            # Store file identity with processed data
+                            st.session_state.forecast_processed_file = current_file_id
+
+                    if df_spend is None:
+                        return  # User needs to complete mapping
+                elif data_format == "aggregated":
+                    st.success("Detected **aggregated format** (direct channel columns)")
+                    df_spend = df_raw
+                    # Store file identity for aggregated format too
+                    st.session_state.forecast_processed_file = {"name": uploaded_file.name, "size": uploaded_file.size}
+                else:
+                    # Unknown format - show helpful error
+                    st.error("**Format not recognized**")
+                    st.warning(
+                        f"Expected either:\n"
+                        f"- Aggregated: columns matching model channels ({', '.join(channel_cols[:3])}...)\n"
+                        f"- Granular: columns containing 'lvl' or 'level' (e.g., media_channel_lvl1)"
+                    )
+                    return
+
+                # Store the processed spend data
+                st.session_state.forecast_df_spend = df_spend
 
             # Validate
             errors = engine.validate_spend_csv(df_spend)
@@ -256,19 +292,28 @@ def _show_upload_tab(engine, wrapper):
 
             # Save options
             st.markdown("---")
-            save_forecast = st.checkbox(
-                "Save forecast to history",
-                value=True,
-                key="forecast_save_to_history",
-                help="Save this forecast for future reference and overlap detection"
-            )
-            forecast_notes = ""
-            if save_forecast:
-                forecast_notes = st.text_input(
-                    "Notes (optional)",
-                    key="forecast_notes",
-                    placeholder="e.g., Q1 2025 plan v1"
+
+            # Check if model is saved (required for forecast persistence)
+            model_is_saved = hasattr(wrapper, '_saved_model_path') and wrapper._saved_model_path
+
+            if not model_is_saved:
+                st.warning("Model not saved to disk. Save your model first to enable forecast history.")
+                save_forecast = False
+                forecast_notes = ""
+            else:
+                save_forecast = st.checkbox(
+                    "Save forecast to history",
+                    value=True,
+                    key="forecast_save_to_history",
+                    help="Save this forecast for future reference and overlap detection"
                 )
+                forecast_notes = ""
+                if save_forecast:
+                    forecast_notes = st.text_input(
+                        "Notes (optional)",
+                        key="forecast_notes",
+                        placeholder="e.g., Q1 2025 plan v1"
+                    )
 
             # Run forecast button
             st.markdown("---")
@@ -283,8 +328,8 @@ def _show_upload_tab(engine, wrapper):
                         st.session_state.forecast_result = result
                         st.session_state.forecast_input_spend = df_spend
 
-                        # Save to history if requested
-                        if save_forecast and hasattr(wrapper, '_saved_model_path') and wrapper._saved_model_path:
+                        # Save to history if requested (model_is_saved already validated above)
+                        if save_forecast:
                             try:
                                 forecast_id = ForecastPersistence.save_forecast(
                                     wrapper._saved_model_path,
@@ -292,12 +337,13 @@ def _show_upload_tab(engine, wrapper):
                                     df_spend,
                                     notes=forecast_notes if forecast_notes else None
                                 )
-                                st.success(f"Forecast saved! ID: {forecast_id}")
+                                st.success(f"Forecast complete and saved to history (ID: {forecast_id})")
                             except Exception as e:
                                 st.warning(f"Forecast completed but save failed: {e}")
                                 logger.exception("Forecast save failed")
-
-                        st.success("Forecast complete! View results in the Results tab.")
+                                st.success("Forecast complete! View results in the Results tab.")
+                        else:
+                            st.success("Forecast complete! View results in the Results tab.")
                     except Exception as e:
                         st.error(f"Forecast failed: {e}")
                         logger.exception("Forecast failed")

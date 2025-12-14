@@ -204,6 +204,9 @@ class ModelPersistence:
             if getattr(mmm_wrapper, "df_original", None) is not None:
                 mmm_wrapper.df_original.to_parquet(path / "data_original.parquet")
 
+        # Store the path on the wrapper for forecast persistence
+        mmm_wrapper._saved_model_path = path
+
         logger.info(f"Model saved to {path}")
 
         return path
@@ -303,6 +306,9 @@ class ModelPersistence:
         if metadata.get("fitted_at"):
             wrapper.fitted_at = datetime.fromisoformat(metadata["fitted_at"])
         wrapper.fit_duration_seconds = metadata.get("fit_duration_seconds")
+
+        # Store the path for forecast persistence and other features
+        wrapper._saved_model_path = path
 
         logger.info("Model loaded successfully")
 
