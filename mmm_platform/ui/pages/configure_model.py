@@ -725,35 +725,6 @@ def show():
             # Store the full DataFrame for sync function to access
             st.session_state["channels_df_current"] = edited_channels
 
-            # Save button to apply changes
-            if st.button("💾 Save Channel Settings", key="save_channels_btn"):
-                # Convert edited table to channels config
-                channels_config = []
-                for _, row in edited_channels.iterrows():
-                    # Build categories dict from dynamic columns
-                    categories = {}
-                    for cat_col in category_cols:
-                        if cat_col["name"] in row and row[cat_col["name"]]:
-                            categories[cat_col["name"]] = row[cat_col["name"]]
-
-                    # Handle curve shape override (convert label to stored value)
-                    curve_shape = row.get("Curve Shape", "Default")
-                    curve_override = None if curve_shape == "Default" else curve_shape.lower()
-
-                    channels_config.append({
-                        "name": row["Channel"],
-                        "display_name": row["Display Name"],
-                        "categories": categories,
-                        "adstock_type": row["Adstock"],
-                        "roi_prior_low": row["ROI Low"],
-                        "roi_prior_mid": row["ROI Mid"],
-                        "roi_prior_high": row["ROI High"],
-                        "curve_sharpness_override": curve_override,
-                    })
-
-                st.session_state.config_state["channels"] = channels_config
-                st.success("Channel settings saved!")
-
             # Show summary stats
             st.markdown("---")
             col1, col2, col3 = st.columns(3)
@@ -967,41 +938,6 @@ def show():
             )
             # Store the full DataFrame for sync function to access
             st.session_state["owned_media_df_current"] = edited_owned_media
-
-            if st.button("💾 Save Owned Media Settings", key="save_owned_media_btn"):
-                owned_media_config = []
-                for _, row in edited_owned_media.iterrows():
-                    # Build categories dict from dynamic columns
-                    categories = {}
-                    for cat_col in category_cols:
-                        if cat_col["name"] in row and pd.notna(row[cat_col["name"]]) and row[cat_col["name"]]:
-                            categories[cat_col["name"]] = str(row[cat_col["name"]])
-
-                    # Handle curve shape override
-                    curve_shape = row.get("Curve Shape", "Default")
-                    curve_override = None if curve_shape == "Default" else curve_shape.lower()
-
-                    # Get include_roi checkbox value
-                    include_roi = bool(row.get("Include ROI Priors", False))
-
-                    # Handle ROI priors (convert empty string/"" to None)
-                    roi_low = row["ROI Low"] if pd.notna(row["ROI Low"]) and row["ROI Low"] != "" else None
-                    roi_mid = row["ROI Mid"] if pd.notna(row["ROI Mid"]) and row["ROI Mid"] != "" else None
-                    roi_high = row["ROI High"] if pd.notna(row["ROI High"]) and row["ROI High"] != "" else None
-
-                    owned_media_config.append({
-                        "name": row["Variable"],
-                        "display_name": row["Display Name"],
-                        "categories": categories,
-                        "adstock_type": row["Adstock"],
-                        "curve_sharpness_override": curve_override,
-                        "include_roi": include_roi,
-                        "roi_prior_low": roi_low,
-                        "roi_prior_mid": roi_mid,
-                        "roi_prior_high": roi_high,
-                    })
-                st.session_state.config_state["owned_media"] = owned_media_config
-                st.success("Owned media settings saved!")
 
             # Summary
             st.markdown("---")

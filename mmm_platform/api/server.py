@@ -41,9 +41,9 @@ class JobStatus(str, Enum):
 
 class ChannelConfig(BaseModel):
     name: str
-    roi_prior_low: float = 0.5
-    roi_prior_mid: float = 1.5
-    roi_prior_high: float = 3.0
+    roi_prior_low: float  # Required - no default (fail explicitly if missing)
+    roi_prior_mid: float  # Required - no default (fail explicitly if missing)
+    roi_prior_high: float  # Required - no default (fail explicitly if missing)
     adstock_type: str = "medium"
     adstock_max_lag: Optional[int] = 8
     saturation_type: Optional[str] = "logistic"
