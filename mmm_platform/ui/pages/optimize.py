@@ -64,8 +64,8 @@ def _render_settings_status_bar():
     has_custom_seasonality = seasonal_indices is not None and len(seasonal_indices) > 0
 
     # Check if custom bounds are set
-    bounds_config = st.session_state.get("bounds_config")
-    has_custom_bounds = bounds_config is not None and len(bounds_config) > 0
+    bounds_mode = st.session_state.get("bounds_mode", "Max % change")
+    has_custom_bounds = bounds_mode == "Custom bounds"
 
     # Build status items
     items = [
@@ -2295,6 +2295,12 @@ shift budget to high-performing channels, reducing overall efficiency.
 def _show_constraint_summary_table(results, config, is_count_kpi=False):
     """Show summary table comparing constraint levels at historical budget."""
     import pandas as pd
+
+    # Get KPI label for display
+    from mmm_platform.ui.kpi_labels import KPILabels
+    wrapper = st.session_state.get("current_model")
+    labels = KPILabels(wrapper.config) if wrapper else None
+    kpi_label = labels.target_name if labels else "response"
 
     historical_budget = config.get("historical_budget", 0)
     budget_scenarios = config.get("budget_scenarios", [])

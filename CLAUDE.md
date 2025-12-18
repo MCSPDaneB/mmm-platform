@@ -231,3 +231,9 @@ Before writing new code, proactively verify:
 3. **Consistency** - New code should use same patterns as existing codebase
 4. **No breaking changes** - Plan to wrap/extend existing tested functions, not modify them
 5. **Sanity checks** - Consider adding validation that compares new outputs to historical/expected values
+
+### Before Fixing Bugs or Adding Code
+
+1. **Check existing patterns in the same file first** - Before writing new code, search the same file for similar functionality. If other functions solve the same problem (e.g., getting a KPI label), use that exact pattern.
+2. **Verify attributes exist** - Never assume attribute names. Check the schema/class definition (e.g., `config/schema.py`) before accessing attributes like `config.data.some_field`.
+3. **Grep before guessing** - If you think an attribute is named `target_kpi_name`, grep for it first to confirm it exists. Don't cause a second error by guessing.
