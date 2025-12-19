@@ -63,16 +63,22 @@ def _render_settings_status_bar():
     seasonal_indices = st.session_state.get("seasonal_indices")
     has_custom_seasonality = seasonal_indices is not None and len(seasonal_indices) > 0
 
-    # Check if custom bounds are set
+    # Build bounds label based on mode
     bounds_mode = st.session_state.get("bounds_mode", "Max % change")
-    has_custom_bounds = bounds_mode == "Custom bounds"
+    if bounds_mode == "No bounds":
+        bounds_label = "None"
+    elif bounds_mode == "Custom bounds":
+        bounds_label = "Custom"
+    else:  # Max % change
+        max_delta = st.session_state.get("max_delta_pct", 30)
+        bounds_label = f"±{max_delta}%"
 
     # Build status items
     items = [
         f"📅 {num_periods} weeks",
         f"🗓️ Start: {month_name}",
         f"🌊 Seasonality: {'Custom' if has_custom_seasonality else 'None'}",
-        f"📊 Bounds: {'Custom' if has_custom_bounds else 'Default'}",
+        f"📊 Bounds: {bounds_label}",
     ]
 
     # Render dark banner with HTML/CSS
@@ -747,6 +753,7 @@ def _show_channel_bounds_expander(channel_info):
                 "Use **Max** to cap investment."
             )
 
+            import pandas as pd
             # Build DataFrame for editing
             bounds_data = []
             for _, row in channel_info.iterrows():
@@ -1036,9 +1043,9 @@ def _show_validation_expander(wrapper):
     """Show the optimizer calibration check expander."""
     with st.expander("Optimizer Calibration Check", expanded=False):
         st.caption(
-            "Validates that the optimizer's saturation formula matches the model's "
-            "channel contribution calculations. This checks internal consistency, "
-            "not future prediction accuracy."
+            "Checks that the optimizer's saturation formula can reproduce the model's "
+            "fitted media contribution values. A good match means the optimizer "
+            "accurately represents what the model learned from the data."
         )
 
         validation_periods = st.slider(
@@ -1076,13 +1083,21 @@ def _show_validation_expander(wrapper):
             m3.metric("Correlation", f"{metrics['correlation']:.3f}")
 
             if metrics['r2'] > 0.7 and metrics['mape'] < 15:
-                st.success("Excellent fit - optimizer formula accurately matches model")
+                st.success("Excellent fit - optimizer formula accurately reproduces fitted values")
             elif metrics['r2'] > 0.5 and metrics['mape'] < 25:
-                st.info("Good fit - optimizer formula reasonably matches model")
+                st.info("Good fit - optimizer formula reasonably reproduces fitted values")
             elif metrics['r2'] > 0.3:
-                st.warning("Moderate fit - some discrepancy between optimizer and model")
+                st.warning("Moderate fit - some discrepancy between optimizer and fitted values")
             else:
-                st.error("Poor fit - optimizer formula may diverge from model")
+                st.error("Poor fit - optimizer formula may diverge from fitted values")
+
+            # Show what data was used
+            spend_cols = [c for c in backtest_df.columns if '_spend' in c]
+            total_spend = backtest_df[spend_cols].sum().sum() if spend_cols else 0
+            st.info(
+                f"**Data used:** Last {len(backtest_df)} weeks of historical spend "
+                f"(${total_spend:,.0f} total across all channels)"
+            )
 
             # Time series chart
             fig_ts = go.Figure()
@@ -1090,18 +1105,18 @@ def _show_validation_expander(wrapper):
                 x=backtest_df['date'],
                 y=backtest_df['actual'],
                 mode='lines+markers',
-                name='Model Contribution',
+                name='Fitted Media Contribution',
                 line=dict(color='blue'),
             ))
             fig_ts.add_trace(go.Scatter(
                 x=backtest_df['date'],
                 y=backtest_df['predicted'],
                 mode='lines+markers',
-                name='Optimizer Prediction',
+                name='Optimizer Formula Output',
                 line=dict(color='orange'),
             ))
             fig_ts.update_layout(
-                title="Calibration: Model vs Optimizer Formula",
+                title="Calibration: Fitted Values vs Optimizer Formula",
                 xaxis_title="Date",
                 yaxis_title="Media Contribution",
                 height=300,
@@ -1113,7 +1128,8 @@ def _show_validation_expander(wrapper):
                 backtest_df,
                 x='actual',
                 y='predicted',
-                title="Optimizer vs Model Media Contribution (ideal = diagonal)",
+                title="Optimizer Formula vs Fitted Media Contribution (ideal = diagonal)",
+                labels={'actual': 'Fitted Media Contribution', 'predicted': 'Optimizer Formula Output'},
             )
             max_val = max(backtest_df['actual'].max(), backtest_df['predicted'].max())
             fig_scatter.add_trace(go.Scatter(
