@@ -357,14 +357,6 @@ def _show_settings_tab(wrapper, allocator, channel_info):
     # Optimizer validation
     _show_validation_expander(wrapper)
 
-    st.markdown("---")
-
-    # Debug info
-    with st.expander("Debug: Session State Values", expanded=False):
-        st.write(f"opt_num_periods: {st.session_state.get('opt_num_periods', 'NOT SET')}")
-        st.write(f"opt_start_month: {st.session_state.get('opt_start_month', 'NOT SET')}")
-        st.write(f"bounds_config: {'SET' if st.session_state.get('bounds_config') else 'NOT SET'}")
-
 
 def _show_configuration_tab(wrapper, allocator, channel_info):
     """Display the unified configuration tab with mode selector."""
