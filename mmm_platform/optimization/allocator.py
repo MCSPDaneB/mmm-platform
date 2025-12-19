@@ -90,6 +90,7 @@ class BudgetAllocator:
         comparison_mode: str = "average",
         comparison_n_weeks: int | None = None,
         seasonal_indices: dict[str, float] | None = None,
+        x0_init: dict[str, float] | None = None,
         **kwargs,
     ) -> OptimizationResult:
         """
@@ -117,6 +118,11 @@ class BudgetAllocator:
             Per-channel seasonal effectiveness multipliers.
             {channel_name: index} where index > 1 = more effective during period.
             If None, no seasonal adjustment is applied.
+        x0_init : dict[str, float], optional
+            Initial allocation to start optimization from (warm-start).
+            {channel_name: spend} in original units (e.g., dollars).
+            If None, uses historical proportions scaled to target budget.
+            Useful for ensuring monotonicity across budget levels.
         **kwargs
             Additional arguments passed to optimize_budget().
 
@@ -147,7 +153,8 @@ class BudgetAllocator:
         try:
             # Use our custom optimizer directly (more reliable, supports all risk profiles)
             allocation_dict, scipy_result = self._optimize_with_working_gradients(
-                total_budget, channel_bounds, seasonal_indices=seasonal_indices
+                total_budget, channel_bounds, seasonal_indices=seasonal_indices,
+                x0_init=x0_init,
             )
 
             # Get response estimates and risk metrics from our optimizer
@@ -281,6 +288,7 @@ class BudgetAllocator:
         efficiency_target: float,
         channel_bounds: dict[str, tuple[float, float]] | None = None,
         seasonal_indices: dict[str, float] | None = None,
+        x0_init: dict[str, float] | None = None,
         **kwargs,
     ) -> OptimizationResult:
         """
@@ -338,6 +346,7 @@ class BudgetAllocator:
             total_budget=total_budget,
             channel_bounds=channel_bounds,
             seasonal_indices=seasonal_indices,
+            x0_init=x0_init,
             **kwargs,
         )
 
@@ -378,6 +387,7 @@ class BudgetAllocator:
                 total_budget=mid,
                 channel_bounds=channel_bounds,
                 seasonal_indices=seasonal_indices,
+                x0_init=x0_init,
                 **kwargs,
             )
 
@@ -455,24 +465,44 @@ class BudgetAllocator:
         logger.info(f"Running scenario analysis for {len(budget_scenarios)} budgets")
 
         results = []
+        prev_allocation = None  # For warm-starting and monotonicity enforcement
+
         for budget in sorted(budget_scenarios):
-            # Adjust bounds proportionally for different budget levels
-            adjusted_bounds = None
-            if channel_bounds:
-                # Scale max bounds proportionally
-                base_budget = budget_scenarios[0]
-                scale_factor = budget / base_budget if base_budget > 0 else 1.0
-                adjusted_bounds = {
-                    ch: (bounds[0], bounds[1] * scale_factor)
-                    for ch, bounds in channel_bounds.items()
-                }
+            # Build bounds with monotonicity enforcement
+            enforced_bounds = {}
+            for ch in self.channels:
+                # Start with configured bounds or defaults
+                if channel_bounds and ch in channel_bounds:
+                    orig_min, orig_max = channel_bounds[ch]
+                else:
+                    orig_min, orig_max = 0, budget
+
+                # Enforce monotonicity: each channel >= previous allocation
+                if prev_allocation:
+                    prev_val = prev_allocation.get(ch, 0)
+                    new_min = max(orig_min, prev_val)  # Can't go below previous
+                    # Check for conflict (channel already at max)
+                    if new_min > orig_max:
+                        logger.debug(
+                            f"Monotonicity bound conflict for {ch}: prev={prev_val:.0f} > max={orig_max:.0f}, using original"
+                        )
+                        new_min = orig_min  # Fall back to original
+                else:
+                    new_min = orig_min
+
+                enforced_bounds[ch] = (new_min, orig_max)
 
             result = self.optimize(
                 total_budget=budget,
-                channel_bounds=adjusted_bounds,
+                channel_bounds=enforced_bounds,
+                x0_init=prev_allocation,  # Warm-start from previous result
                 **kwargs,
             )
             results.append(result)
+
+            # Save allocation for next iteration (warm-start + monotonicity)
+            if result.success:
+                prev_allocation = result.optimal_allocation
 
         # Build efficiency curve
         curve_data = []
@@ -515,6 +545,7 @@ class BudgetAllocator:
         total_budget: float,
         channel_bounds: dict[str, tuple[float, float]],
         seasonal_indices: dict[str, float] | None = None,
+        x0_init: dict[str, float] | None = None,
     ) -> tuple[dict[str, float], Any]:
         """
         Custom optimization with risk-aware objectives.
@@ -534,6 +565,9 @@ class BudgetAllocator:
         seasonal_indices : dict, optional
             Per-channel seasonal effectiveness multipliers.
             {channel_name: index} where index > 1 = more effective.
+        x0_init : dict, optional
+            Initial allocation to start from (warm-start).
+            If None, uses historical proportions scaled to target budget.
 
         Returns
         -------
@@ -630,8 +664,34 @@ class BudgetAllocator:
             'jac': lambda x: -np.ones(n_channels)  # Analytical Jacobian for numerical stability
         }
 
-        # Initial guess: uniform allocation (in scaled units)
-        x0 = np.ones(n_channels) * budget_per_period_scaled / n_channels
+        # Initial guess: use x0_init if provided, else historical proportions, else uniform
+        if x0_init is not None:
+            # Warm-start: scale previous allocation to new budget
+            prev_total = sum(x0_init.get(ch, 0) for ch in channels)
+            if prev_total > 0:
+                scale_factor = budget_per_period_scaled / (prev_total / spend_scale / num_periods)
+                x0 = np.array([
+                    x0_init.get(ch, 0) / spend_scale / num_periods * scale_factor
+                    for ch in channels
+                ])
+                logger.debug(f"Using warm-start x0 from previous allocation (scaled by {scale_factor:.2f})")
+            else:
+                x0 = np.ones(n_channels) * budget_per_period_scaled / n_channels
+        else:
+            # Default: use historical proportions scaled to target budget
+            historical = self.bridge.get_current_allocation(num_periods=num_periods)
+            hist_total = sum(historical.get(ch, 0) for ch in channels)
+            if hist_total > 0:
+                # Scale historical proportions to target budget
+                x0 = np.array([
+                    historical.get(ch, 0) / hist_total * budget_per_period_scaled
+                    for ch in channels
+                ])
+                logger.debug(f"Using historical proportions as x0 (hist_total=${hist_total:,.0f})")
+            else:
+                # Fallback: uniform allocation if no historical data
+                x0 = np.ones(n_channels) * budget_per_period_scaled / n_channels
+                logger.debug("Using uniform x0 (no historical data)")
 
         # Pre-check: can bounds accommodate budget?
         total_max_bounds = sum(b[1] for b in bounds_list) * spend_scale * num_periods

@@ -267,79 +267,228 @@ class TestBoundsLabelLogic:
 
 
 class TestBoundsScalingLogic:
-    """Tests for the bounds calculation scaling logic."""
+    """Tests for the bounds calculation logic (NO scaling - literal ±X% from historical)."""
 
-    def test_bounds_scaling_maintains_proportions(self):
+    def test_bounds_no_scaling_regardless_of_budget(self):
         """
-        When budget is 2x historical, bounds should scale proportionally.
+        Bounds should be literal ±X% from historical, NOT scaled with budget.
 
-        This ensures each channel stays within ±X% of its PROPORTIONAL
-        share of the new budget, not its absolute historical spend.
+        This is the NEW behavior - bounds are based on actual historical spend,
+        regardless of what budget the user wants to optimize for.
         """
         # Historical spend
         baseline_spend = {"channel_a": 30000, "channel_b": 70000}
-        total_historical = 100000
-
-        # Target budget is 2x
-        total_budget = 200000
-        budget_scale = total_budget / total_historical
         max_delta = 30  # ±30%
 
-        # Calculate bounds
+        # Calculate bounds (NO scaling - use actual historical)
         bounds_config = {}
         for ch, historical in baseline_spend.items():
-            scaled_val = historical * budget_scale
-            min_val = scaled_val * (1 - max_delta / 100)
-            max_val = scaled_val * (1 + max_delta / 100)
+            min_val = historical * (1 - max_delta / 100)
+            max_val = historical * (1 + max_delta / 100)
             bounds_config[ch] = (max(0.0, min_val), max_val)
 
-        # Channel A: $30k historical → $60k scaled → $42k to $78k bounds
-        assert bounds_config["channel_a"] == (42000.0, 78000.0)
-
-        # Channel B: $70k historical → $140k scaled → $98k to $182k bounds
-        assert bounds_config["channel_b"] == (98000.0, 182000.0)
-
-        # Total max capacity should exceed target budget
-        total_max = sum(b[1] for b in bounds_config.values())
-        assert total_max >= total_budget
-
-    def test_bounds_no_scaling_when_budget_equals_historical(self):
-        """When budget equals historical, bounds are based on actual spend."""
-        baseline_spend = {"channel_a": 30000, "channel_b": 70000}
-        total_historical = 100000
-        total_budget = 100000  # Same as historical
-
-        budget_scale = total_budget / total_historical
-        max_delta = 30
-
-        bounds_config = {}
-        for ch, historical in baseline_spend.items():
-            scaled_val = historical * budget_scale
-            min_val = scaled_val * (1 - max_delta / 100)
-            max_val = scaled_val * (1 + max_delta / 100)
-            bounds_config[ch] = (max(0.0, min_val), max_val)
-
-        # Channel A: $30k → ±30% = $21k to $39k
+        # Channel A: $30k → ±30% = $21k to $39k (actual historical bounds)
         assert bounds_config["channel_a"] == (21000.0, 39000.0)
 
-        # Channel B: $70k → ±30% = $49k to $91k
+        # Channel B: $70k → ±30% = $49k to $91k (actual historical bounds)
         assert bounds_config["channel_b"] == (49000.0, 91000.0)
+
+        # Max capacity is fixed at $130k regardless of budget
+        total_max = sum(b[1] for b in bounds_config.values())
+        assert total_max == 130000.0
+
+    def test_bounds_max_capacity_limits_budget(self):
+        """
+        Budget exceeding max capacity should trigger blocking.
+
+        With no scaling, bounds define a fixed max capacity.
+        Budget above this cannot be fully allocated.
+        """
+        baseline_spend = {"channel_a": 30000, "channel_b": 70000}
+        max_delta = 30
+
+        # Calculate max capacity
+        bounds_config = {}
+        for ch, historical in baseline_spend.items():
+            max_val = historical * (1 + max_delta / 100)
+            bounds_config[ch] = (0, max_val)
+
+        total_max_capacity = sum(b[1] for b in bounds_config.values())
+
+        # Max capacity = $39k + $91k = $130k
+        assert total_max_capacity == 130000.0
+
+        # Budget of $150k exceeds capacity - should be blocked
+        budget_150k = 150000
+        assert budget_150k > total_max_capacity
+
+        # Budget of $120k is within capacity - should be allowed
+        budget_120k = 120000
+        assert budget_120k <= total_max_capacity
 
     def test_zero_spend_channel_gets_capped_bounds(self):
         """Channels with no historical spend get capped at X% of budget."""
         baseline_spend = {"channel_a": 50000, "channel_b": 0}  # B has no spend
         total_budget = 100000
         zero_spend_max_pct = 10  # 10% cap for zero-spend channels
+        max_delta = 30
 
         bounds_config = {}
         for ch, historical in baseline_spend.items():
             if historical > 0:
-                min_val = historical * 0.7
-                max_val = historical * 1.3
+                min_val = historical * (1 - max_delta / 100)
+                max_val = historical * (1 + max_delta / 100)
             else:
                 min_val = 0
                 max_val = total_budget * (zero_spend_max_pct / 100)
             bounds_config[ch] = (max(0.0, min_val), max_val)
 
+        # Channel A: $50k → ±30% = $35k to $65k
+        assert bounds_config["channel_a"] == (35000.0, 65000.0)
+
         # Channel B: $0 historical → $0 min, $10k max (10% of budget)
         assert bounds_config["channel_b"] == (0.0, 10000.0)
+
+
+class TestCapacityBlocking:
+    """Tests for capacity-based optimization blocking."""
+
+    def test_budget_within_capacity_allowed(self):
+        """Budget within max capacity should be allowed."""
+        bounds_config = {
+            "channel_a": (21000, 39000),
+            "channel_b": (49000, 91000),
+        }
+        max_capacity = sum(b[1] for b in bounds_config.values())  # $130k
+
+        budget = 120000
+        budget_exceeds_capacity = budget > max_capacity
+
+        assert not budget_exceeds_capacity
+
+    def test_budget_exceeds_capacity_blocked(self):
+        """Budget exceeding max capacity should be blocked."""
+        bounds_config = {
+            "channel_a": (21000, 39000),
+            "channel_b": (49000, 91000),
+        }
+        max_capacity = sum(b[1] for b in bounds_config.values())  # $130k
+
+        budget = 150000
+        budget_exceeds_capacity = budget > max_capacity
+
+        assert budget_exceeds_capacity
+
+    def test_capacity_varies_by_constraint_level(self):
+        """Different constraint levels have different max capacities."""
+        baseline_spend = {"channel_a": 30000, "channel_b": 70000}
+
+        constraint_capacities = {}
+        for delta_pct in [0.10, 0.30, 0.50]:  # ±10%, ±30%, ±50%
+            max_capacity = sum(
+                val * (1 + delta_pct) for val in baseline_spend.values()
+            )
+            constraint_capacities[delta_pct] = max_capacity
+
+        # Tighter constraints = lower capacity
+        assert constraint_capacities[0.10] == 110000.0  # $33k + $77k
+        assert constraint_capacities[0.30] == 130000.0  # $39k + $91k
+        assert constraint_capacities[0.50] == 150000.0  # $45k + $105k
+
+
+class TestConstraintComparisonFiltering:
+    """Tests for filtering budget scenarios by constraint capacity."""
+
+    def test_filter_budgets_by_capacity(self):
+        """Budgets exceeding constraint capacity should be skipped."""
+        baseline_spend = {"channel_a": 30000, "channel_b": 70000}
+        budget_scenarios = [50000, 100000, 130000, 150000, 200000]
+
+        # ±30% constraint: max capacity = $130k
+        delta_pct = 0.30
+        max_capacity = sum(val * (1 + delta_pct) for val in baseline_spend.values())
+
+        achievable_budgets = [b for b in budget_scenarios if b <= max_capacity]
+
+        # Only budgets up to $130k should be achievable
+        assert achievable_budgets == [50000, 100000, 130000]
+        assert 150000 not in achievable_budgets
+        assert 200000 not in achievable_budgets
+
+    def test_tighter_constraints_fewer_achievable_budgets(self):
+        """Tighter constraints should have fewer achievable budgets."""
+        baseline_spend = {"channel_a": 30000, "channel_b": 70000}
+        budget_scenarios = [50000, 100000, 130000, 150000, 200000]
+
+        def get_achievable_count(delta_pct):
+            max_capacity = sum(val * (1 + delta_pct) for val in baseline_spend.values())
+            return len([b for b in budget_scenarios if b <= max_capacity])
+
+        # Tighter constraints = fewer achievable budgets
+        assert get_achievable_count(0.10) == 2  # Up to $110k
+        assert get_achievable_count(0.30) == 3  # Up to $130k
+        assert get_achievable_count(0.50) == 4  # Up to $150k
+
+
+class TestMonotonicityCheck:
+    """Tests for monotonicity violation detection."""
+
+    def test_no_violation_when_monotonic(self):
+        """No violation when higher budget gives higher response."""
+        from mmm_platform.ui.pages.optimize import _check_monotonicity
+
+        # Create mock results with monotonic responses
+        class MockResult:
+            def __init__(self, budget, response):
+                self.total_budget = budget
+                self.expected_response = response
+
+        results = [
+            MockResult(100000, 50000),
+            MockResult(150000, 70000),
+            MockResult(200000, 85000),
+        ]
+
+        # Should not raise or log warning (we can't easily test logging here,
+        # but we verify the function runs without error)
+        _check_monotonicity(results, "Test")
+
+    def test_detects_monotonicity_violation(self, caplog):
+        """Should detect when higher budget gives less response."""
+        from mmm_platform.ui.pages.optimize import _check_monotonicity
+        import logging
+
+        class MockResult:
+            def __init__(self, budget, response):
+                self.total_budget = budget
+                self.expected_response = response
+
+        # Response DROPS from $70k to $65k when budget increases
+        results = [
+            MockResult(100000, 50000),
+            MockResult(150000, 70000),
+            MockResult(200000, 65000),  # Violation: less than $70k
+        ]
+
+        # Capture warning logs
+        with caplog.at_level(logging.WARNING, logger="mmm_platform.ui.pages.optimize"):
+            _check_monotonicity(results, "TestConstraint")
+
+        # Verify warning was logged
+        assert any("MONOTONICITY VIOLATION" in msg for msg in caplog.messages)
+        assert any("TestConstraint" in msg for msg in caplog.messages)
+
+    def test_handles_empty_results(self):
+        """Should handle empty or single-element results gracefully."""
+        from mmm_platform.ui.pages.optimize import _check_monotonicity
+
+        # Empty list - should not raise
+        _check_monotonicity([], "Empty")
+
+        # Single element - should not raise
+        class MockResult:
+            def __init__(self, budget, response):
+                self.total_budget = budget
+                self.expected_response = response
+
+        _check_monotonicity([MockResult(100000, 50000)], "Single")

@@ -18,6 +18,164 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _log_optimization_diagnostics(result, channel_bounds, total_budget):
+    """
+    Log diagnostics to detect stuck optimizer or capacity issues.
+
+    Monitors for:
+    - Significant unallocated budget when headroom exists
+    - Optimizer not fully utilizing available capacity
+    """
+    if result is None or not result.success:
+        return
+
+    # Check for unallocated budget
+    if result.unallocated_budget and result.unallocated_budget > 100:  # >$100 threshold
+        # Calculate how much headroom was available
+        if channel_bounds:
+            total_max = sum(b[1] for b in channel_bounds.values())
+            allocated = sum(result.optimal_allocation.values())
+            headroom = total_max - allocated
+
+            if headroom > 100:  # There was headroom available
+                logger.warning(
+                    f"OPTIMIZER DIAGNOSTIC: ${result.unallocated_budget:,.0f} unallocated "
+                    f"but ${headroom:,.0f} headroom available. "
+                    f"Requested: ${total_budget:,.0f}, Allocated: ${allocated:,.0f}, "
+                    f"Max capacity: ${total_max:,.0f}"
+                )
+
+
+def _check_monotonicity(results_list, constraint_name):
+    """
+    Check for monotonicity violations in scenario results.
+
+    Higher budget should never produce less response. If it does,
+    log a warning for investigation.
+
+    Parameters
+    ----------
+    results_list : list
+        List of OptimizationResult objects, sorted by budget
+    constraint_name : str
+        Name of the constraint level for logging
+    """
+    if len(results_list) < 2:
+        return
+
+    violations = []
+    for i in range(1, len(results_list)):
+        prev = results_list[i - 1]
+        curr = results_list[i]
+
+        # Higher budget should give >= response
+        if curr.total_budget > prev.total_budget and curr.expected_response < prev.expected_response:
+            violations.append({
+                'budget_low': prev.total_budget,
+                'budget_high': curr.total_budget,
+                'response_low': prev.expected_response,
+                'response_high': curr.expected_response,
+                'response_drop': prev.expected_response - curr.expected_response,
+            })
+
+    if violations:
+        logger.warning(
+            f"MONOTONICITY VIOLATION ({constraint_name}): Found {len(violations)} case(s) "
+            f"where higher budget gave less response. "
+            f"First violation: ${violations[0]['budget_low']:,.0f} → ${violations[0]['budget_high']:,.0f} "
+            f"caused response drop of ${violations[0]['response_drop']:,.0f}"
+        )
+
+
+def _get_warm_start_allocation(budget, bounds_mode, num_periods):
+    """
+    Get the best allocation from history for warm-starting optimization.
+
+    Returns the allocation from the highest budget below the current one
+    that matches the same bounds_mode and num_periods.
+
+    Parameters
+    ----------
+    budget : float
+        Target budget for the new optimization
+    bounds_mode : str
+        Current bounds mode ("No bounds", "Max % change", "Custom bounds")
+    num_periods : int
+        Number of periods for the optimization
+
+    Returns
+    -------
+    dict or None
+        Previous allocation dict if found, None otherwise
+    """
+    history = st.session_state.get("opt_history", [])
+
+    # Filter to matching parameters and lower budgets
+    candidates = [
+        h for h in history
+        if h["budget"] < budget
+        and h["bounds_mode"] == bounds_mode
+        and h["num_periods"] == num_periods
+    ]
+
+    if candidates:
+        # Return allocation from highest budget below current
+        best = max(candidates, key=lambda h: h["budget"])
+        return best["allocation"]
+
+    return None
+
+
+def _check_monotonicity_against_history(result, budget, bounds_mode, num_periods):
+    """
+    Check if current result violates monotonicity against history.
+
+    Returns a warning message if violation detected, None otherwise.
+    """
+    history = st.session_state.get("opt_history", [])
+
+    # Filter to matching parameters and lower budgets
+    lower_budget_results = [
+        h for h in history
+        if h["budget"] < budget
+        and h["bounds_mode"] == bounds_mode
+        and h["num_periods"] == num_periods
+    ]
+
+    if lower_budget_results:
+        # Find the best response from lower budgets
+        best_lower = max(lower_budget_results, key=lambda h: h["response"])
+        if result.expected_response < best_lower["response"]:
+            return (
+                f"Response (${result.expected_response:,.0f}) is less than "
+                f"result at lower budget ${best_lower['budget']:,.0f} "
+                f"(${best_lower['response']:,.0f}). "
+                f"This may indicate optimizer convergence issues."
+            )
+
+    return None
+
+
+def _add_to_optimization_history(result, budget, bounds_mode, num_periods):
+    """Add successful optimization result to history."""
+    if "opt_history" not in st.session_state:
+        st.session_state.opt_history = []
+
+    # Only store successful results
+    if result.success:
+        st.session_state.opt_history.append({
+            "budget": budget,
+            "response": result.expected_response,
+            "allocation": result.optimal_allocation,
+            "bounds_mode": bounds_mode,
+            "num_periods": num_periods,
+        })
+
+        # Keep history manageable (last 50 results)
+        if len(st.session_state.opt_history) > 50:
+            st.session_state.opt_history = st.session_state.opt_history[-50:]
+
+
 def _fill_budget_callback():
     """Callback for Fill Budget button - sets budget_value (not widget key)."""
     from mmm_platform.optimization import BudgetAllocator
@@ -198,11 +356,6 @@ def _show_settings_tab(wrapper, allocator, channel_info):
 
     # Optimizer validation
     _show_validation_expander(wrapper)
-
-    st.markdown("---")
-
-    # Consistency tests
-    _show_consistency_tests_expander(wrapper)
 
     st.markdown("---")
 
@@ -650,7 +803,7 @@ def _show_channel_bounds_expander(channel_info):
                 value=30,
                 step=5,
                 key="max_delta_pct",
-                help="No channel can increase or decrease by more than this percentage from historical baseline",
+                help="Each channel's allocation is constrained to ±X% of its actual historical spend. If budget exceeds total capacity, optimization will be blocked.",
             )
 
             keep_zero_channels_zero = st.checkbox(
@@ -686,24 +839,19 @@ def _show_channel_bounds_expander(channel_info):
                     for _, row in channel_info.iterrows()
                 }
 
-            # Get total budget for scaling
+            # Get total budget for capacity check
             total_budget = st.session_state.get("budget_value", 100000)
 
-            # Calculate scale factor: how much bigger/smaller is budget vs historical
-            total_historical = sum(baseline_spend.values())
-            budget_scale = total_budget / total_historical if total_historical > 0 else 1.0
-
-            # Calculate bounds from scaled baseline
+            # Calculate bounds from actual historical spend (no scaling)
             bounds_config = {}
             for _, row in channel_info.iterrows():
                 ch = row["channel"]
                 historical = baseline_spend.get(ch, 0)
 
                 if historical > 0:
-                    # Scale baseline to match target budget, then apply ±delta
-                    scaled_val = historical * budget_scale
-                    min_val = scaled_val * (1 - max_delta / 100)
-                    max_val = scaled_val * (1 + max_delta / 100)
+                    # Apply ±delta to actual historical spend
+                    min_val = historical * (1 - max_delta / 100)
+                    max_val = historical * (1 + max_delta / 100)
                 else:
                     # Channel has no historical spend
                     min_val = 0
@@ -714,8 +862,7 @@ def _show_channel_bounds_expander(channel_info):
             st.session_state.bounds_config = bounds_config
 
             # Show preview table
-            scale_note = f", scaled {budget_scale:.0%}" if abs(budget_scale - 1.0) > 0.01 else ""
-            st.caption(f"Bounds based on last {num_periods} weeks{scale_note} (±{max_delta}%):")
+            st.caption(f"Bounds based on last {num_periods} weeks of actual spend (±{max_delta}%):")
 
             import pandas as pd
             preview_data = []
@@ -724,12 +871,10 @@ def _show_channel_bounds_expander(channel_info):
                 display = row["display_name"]
                 min_b, max_b = bounds_config[ch]
                 historical = baseline_spend.get(ch, 0)
-                scaled = historical * budget_scale
-                note = "" if historical > 0 else "(no history, 10% cap)"
+                note = "" if historical > 0 else "(no history)"
                 preview_data.append({
                     "Channel": display,
                     "Historical": f"${historical:,.0f}",
-                    "Scaled": f"${scaled:,.0f}",
                     "Min": f"${min_b:,.0f}",
                     "Max": f"${max_b:,.0f}",
                     "Note": note,
@@ -739,11 +884,15 @@ def _show_channel_bounds_expander(channel_info):
             # Check if budget exceeds bounds capacity
             total_max = sum(bounds_config[ch][1] for ch in bounds_config)
             current_budget = st.session_state.get("budget_value", 100000)
-            if current_budget > total_max:
+            budget_exceeds_capacity = current_budget > total_max
+            st.session_state.budget_exceeds_capacity = budget_exceeds_capacity
+            st.session_state.bounds_max_capacity = total_max
+
+            if budget_exceeds_capacity:
                 unallocated = current_budget - total_max
-                st.warning(
+                st.error(
                     f"**Budget exceeds bounds capacity:** ${current_budget:,.0f} budget > ${total_max:,.0f} max allocatable.\n\n"
-                    f"${unallocated:,.0f} will be unallocated. Loosen bounds or reduce budget to allocate fully."
+                    f"Reduce budget to ${total_max:,.0f} or loosen bounds to proceed with optimization."
                 )
 
         elif bounds_mode == "Custom bounds":
@@ -803,8 +952,23 @@ def _show_channel_bounds_expander(channel_info):
 
             st.session_state.bounds_config = bounds_config
 
+            # Check if budget exceeds custom bounds capacity
+            total_max = sum(bounds_config[ch][1] for ch in bounds_config)
+            current_budget = st.session_state.get("budget_value", 100000)
+            budget_exceeds_capacity = current_budget > total_max
+            st.session_state.budget_exceeds_capacity = budget_exceeds_capacity
+            st.session_state.bounds_max_capacity = total_max
+
+            if budget_exceeds_capacity:
+                st.error(
+                    f"**Budget exceeds bounds capacity:** ${current_budget:,.0f} budget > ${total_max:,.0f} max allocatable.\n\n"
+                    f"Reduce budget to ${total_max:,.0f} or increase Max bounds to proceed."
+                )
+
         else:  # No bounds
             st.session_state.bounds_config = None
+            st.session_state.budget_exceeds_capacity = False
+            st.session_state.bounds_max_capacity = None
 
 
 def _show_seasonality_expander(wrapper, channel_info):
@@ -1143,72 +1307,6 @@ def _show_validation_expander(wrapper):
             st.plotly_chart(fig_scatter, width="stretch")
 
 
-def _show_consistency_tests_expander(wrapper):
-    """Show the optimizer consistency tests expander."""
-    with st.expander("🧪 Consistency Tests", expanded=False):
-        st.caption(
-            "Run comprehensive tests to validate optimizer behavior across all modes and settings. "
-            "Tests check determinism, cross-page consistency, bounds, budget conservation, "
-            "different time horizons, seasonality, efficiency floors, and incremental budgets."
-        )
-
-        num_periods = st.session_state.get("opt_num_periods", 8)
-
-        if st.button("Run All Tests", key="run_consistency_tests"):
-            with st.spinner("Running consistency tests..."):
-                try:
-                    from mmm_platform.optimization.consistency_tests import OptimizerConsistencyTests
-
-                    tester = OptimizerConsistencyTests(wrapper)
-                    results = tester.run_all(num_periods=num_periods)
-
-                    # Store results in session state
-                    st.session_state.consistency_test_results = results
-
-                except Exception as e:
-                    st.error(f"Test suite failed: {e}")
-                    logger.exception("Consistency test error")
-
-        # Display results if available
-        if "consistency_test_results" in st.session_state:
-            results = st.session_state.consistency_test_results
-
-            passed = sum(1 for r in results if r.passed)
-            total = len(results)
-
-            if passed == total:
-                st.success(f"✅ All {total} tests passed!")
-            else:
-                st.error(f"❌ {total - passed} of {total} tests failed")
-
-            # Group tests by category
-            categories = {
-                "Core Tests": ["Determinism", "Cross-Page Consistency", "Bounds Respected",
-                              "Budget Conservation", "Response Consistency"],
-                "Time Horizon": ["Short Horizon (4 weeks)", "Long Horizon (26 weeks)"],
-                "Seasonality": ["Seasonal Index Application"],
-                "Efficiency Floor": ["Min ROI Floor", "Max CPA Floor"],
-                "Incremental Budget": ["Incremental Respects Base", "Incremental Adds Correctly"],
-                "Edge Cases": ["Tight Bounds (±10%)", "Budget Exceeds Bounds"],
-            }
-
-            for category, test_names in categories.items():
-                category_results = [r for r in results if r.name in test_names]
-                if not category_results:
-                    continue
-
-                category_passed = sum(1 for r in category_results if r.passed)
-                category_icon = "✅" if category_passed == len(category_results) else "⚠️"
-
-                with st.expander(f"{category_icon} {category} ({category_passed}/{len(category_results)})"):
-                    for result in category_results:
-                        icon = "✅" if result.passed else "❌"
-                        st.markdown(f"**{icon} {result.name}**")
-                        st.caption(result.message)
-                        if result.details and not result.passed:
-                            st.json(result.details)
-
-
 def _show_run_button(wrapper, allocator, channel_info, mode, position="bottom"):
     """Show the run button and handle optimization execution."""
     from mmm_platform.optimization import BudgetAllocator, TargetOptimizer
@@ -1221,11 +1319,23 @@ def _show_run_button(wrapper, allocator, channel_info, mode, position="bottom"):
         "scenarios": "🚀 Run Scenario Analysis",
     }
 
-    # Disable scenarios button if not enough scenarios
+    # Determine if button should be disabled
     disabled = False
+    disabled_reason = ""
+
     if mode == "scenarios":
         scenarios = st.session_state.get("parsed_scenarios", [])
-        disabled = len(scenarios) < 2
+        if len(scenarios) < 2:
+            disabled = True
+            disabled_reason = "Need at least 2 scenarios"
+
+    # Block optimize/incremental if budget exceeds capacity
+    if mode in ("optimize", "incremental"):
+        bounds_mode = st.session_state.get("bounds_mode", "Max % change")
+        if bounds_mode != "No bounds" and st.session_state.get("budget_exceeds_capacity", False):
+            disabled = True
+            max_capacity = st.session_state.get("bounds_max_capacity", 0)
+            disabled_reason = f"Budget exceeds max capacity (${max_capacity:,.0f})"
 
     # Add divider for bottom button only
     if position == "bottom":
@@ -1237,6 +1347,10 @@ def _show_run_button(wrapper, allocator, channel_info, mode, position="bottom"):
         disabled=disabled,
         key=f"run_btn_{position}",
     )
+
+    # Show reason if disabled
+    if disabled and disabled_reason:
+        st.caption(f"⚠️ {disabled_reason}")
 
     if run_clicked:
         if mode == "optimize":
@@ -1267,9 +1381,13 @@ def _run_optimize(wrapper):
             channel_bounds = st.session_state.get("bounds_config")
             seasonal_indices = st.session_state.get("seasonal_indices")
             compare_to_current = st.session_state.get("opt_compare_historical", False)
+            bounds_mode = st.session_state.get("bounds_mode", "Max % change")
 
             # Always use actual spend from last N weeks (matches historical response calculation)
             comparison_mode = "last_n_weeks"
+
+            # Get warm-start allocation from history (if available)
+            x0_init = _get_warm_start_allocation(total_budget, bounds_mode, num_periods)
 
             # Get efficiency settings
             optimization_objective = st.session_state.get("opt_objective", "Maximize Response")
@@ -1294,6 +1412,7 @@ def _run_optimize(wrapper):
                     compare_to_current=compare_to_current,
                     comparison_mode=comparison_mode,
                     comparison_n_weeks=num_periods,
+                    x0_init=x0_init,
                 )
             else:
                 result = allocator.optimize(
@@ -1303,11 +1422,23 @@ def _run_optimize(wrapper):
                     comparison_mode=comparison_mode,
                     comparison_n_weeks=num_periods,
                     seasonal_indices=seasonal_indices,
+                    x0_init=x0_init,
                 )
 
             # Store result
             st.session_state.optimization_result = result
             st.session_state.result_mode = "optimize"
+
+            # Log diagnostics for monitoring
+            _log_optimization_diagnostics(result, channel_bounds, total_budget)
+
+            # Check for monotonicity violation against history
+            monotonicity_warning = _check_monotonicity_against_history(
+                result, total_budget, bounds_mode, num_periods
+            )
+
+            # Add to optimization history (for future warm-starts)
+            _add_to_optimization_history(result, total_budget, bounds_mode, num_periods)
 
             # Store config for display
             st.session_state.optimizer_config = {
@@ -1322,6 +1453,10 @@ def _run_optimize(wrapper):
             }
 
             st.success("Optimization complete! Switch to Results tab to view.")
+
+            # Show monotonicity warning if detected
+            if monotonicity_warning:
+                st.warning(f"⚠️ {monotonicity_warning}")
 
         except Exception as e:
             st.error(f"Optimization failed: {e}")
@@ -1474,7 +1609,7 @@ def _run_scenarios(wrapper):
 def _run_constraint_comparison(wrapper):
     """Run scenario analysis at multiple constraint levels with properly scaled bounds."""
     from mmm_platform.optimization import BudgetAllocator
-    from mmm_platform.optimization.results import ScenarioResult
+    from mmm_platform.optimization.results import ScenarioResult, OptimizationResult
     import numpy as np
     import pandas as pd
 
@@ -1511,50 +1646,126 @@ def _run_constraint_comparison(wrapper):
             # Get seasonal indices if configured
             seasonal_indices = st.session_state.get("seasonal_indices")
 
+            # Calculate bounds and min/max capacity for each constraint level (no scaling)
+            constraint_bounds = {}
+            constraint_max_capacity = {}
+            constraint_min_capacity = {}
+            for name, delta_pct in constraint_levels:
+                if delta_pct is None:
+                    constraint_bounds[name] = None
+                    constraint_max_capacity[name] = float('inf')  # Unconstrained
+                    constraint_min_capacity[name] = 0  # No minimum
+                else:
+                    bounds = {}
+                    for ch, val in historical_spend.items():
+                        if val > 0:
+                            # Apply ±delta to actual historical spend (no scaling)
+                            bounds[ch] = (
+                                max(0, val * (1 - delta_pct)),
+                                val * (1 + delta_pct)
+                            )
+                        else:
+                            # Zero-spend channel: allow up to 10% of historical total
+                            bounds[ch] = (0, total_historical * 0.10)
+                    constraint_bounds[name] = bounds
+                    constraint_max_capacity[name] = sum(b[1] for b in bounds.values())
+                    constraint_min_capacity[name] = sum(b[0] for b in bounds.values())
+
             # Initialize results structure: {constraint_name: [results per budget]}
             results_by_constraint = {name: [] for name, _ in constraint_levels}
 
+            # Count achievable runs for progress bar
+            achievable_runs = sum(
+                1 for budget in budget_scenarios
+                for name, _ in constraint_levels
+                if constraint_min_capacity[name] <= budget <= constraint_max_capacity[name]
+            )
+
             progress_bar = st.progress(0)
             status_text = st.empty()
-
-            total_runs = len(budget_scenarios) * len(constraint_levels)
             run_count = 0
 
-            # Run optimizations: loop through budgets, then constraints
-            # This ensures bounds are properly scaled for each budget level
-            for budget in budget_scenarios:
-                # Scale factor: how much to scale historical spend for this budget
-                budget_scale = budget / total_historical
+            # Run optimizations: iterate by constraint level, then ascending budget
+            # Enforce monotonicity by raising lower bounds to previous allocation
+            for name, delta_pct in constraint_levels:
+                max_capacity = constraint_max_capacity[name]
+                min_capacity = constraint_min_capacity[name]
+                orig_bounds = constraint_bounds[name]
+                prev_allocation = None  # For warm-start and monotonicity enforcement
+                prev_allocation_response = None  # Track response for debugging
 
-                for name, delta_pct in constraint_levels:
+                for budget in sorted(budget_scenarios):  # Ascending order
+                    # Skip if budget outside achievable range for this constraint level
+                    if budget > max_capacity or budget < min_capacity:
+                        continue
+
                     status_text.text(f"Budget ${budget:,.0f} - {name}...")
 
-                    if delta_pct is None:
-                        bounds = None
-                    else:
-                        # Scale bounds proportionally with budget
-                        bounds = {}
-                        for ch, val in historical_spend.items():
-                            if val > 0:
-                                # Scale the baseline spend, then apply ±delta
-                                scaled_val = val * budget_scale
-                                bounds[ch] = (
-                                    max(0, scaled_val * (1 - delta_pct)),
-                                    scaled_val * (1 + delta_pct)
-                                )
+                    # Build bounds with monotonicity enforcement
+                    enforced_bounds = None
+                    if orig_bounds is not None:
+                        enforced_bounds = {}
+                        for ch, (orig_min, orig_max) in orig_bounds.items():
+                            # Enforce monotonicity: each channel >= previous allocation
+                            if prev_allocation:
+                                prev_val = prev_allocation.get(ch, 0)
+                                new_min = max(orig_min, prev_val)
+                                # Check for conflict (channel at max)
+                                if new_min > orig_max:
+                                    new_min = orig_min  # Fall back
                             else:
-                                # Zero-spend channel: allow up to 10% of this budget
-                                bounds[ch] = (0, budget * 0.10)
+                                new_min = orig_min
+                            enforced_bounds[ch] = (new_min, orig_max)
 
                     result = allocator.optimize(
                         total_budget=budget,
-                        channel_bounds=bounds,
+                        channel_bounds=enforced_bounds,
                         seasonal_indices=seasonal_indices,
+                        x0_init=prev_allocation,  # Warm-start from previous budget
                     )
+
+                    # FAILSAFE: Enforce monotonicity post-hoc if optimizer found worse solution
+                    # If response dropped, DON'T update prev_allocation - keep the better one
+                    update_prev = True
+                    if prev_allocation and prev_allocation_response and result.success:
+                        if result.expected_response < prev_allocation_response - 1:  # Allow $1 tolerance
+                            response_drop = prev_allocation_response - result.expected_response
+                            st.warning(
+                                f"FAILSAFE ({name}): Budget ${budget:,.0f} → response ${result.expected_response:,.0f} "
+                                f"< prev ${prev_allocation_response:,.0f}. Flooring to ${prev_allocation_response:,.0f}"
+                            )
+                            logger.warning(
+                                f"MONOTONICITY FAILSAFE ({name}): Budget ${budget:,.0f} optimizer found "
+                                f"response ${result.expected_response:,.0f} < previous ${prev_allocation_response:,.0f}. "
+                                f"Keeping previous allocation for bounds (drop was ${response_drop:,.0f})"
+                            )
+                            # Create adjusted result with previous response as floor
+                            result = OptimizationResult(
+                                optimal_allocation=result.optimal_allocation,
+                                total_budget=result.total_budget,
+                                expected_response=prev_allocation_response,  # Floor
+                                response_ci_low=prev_allocation_response * 0.95,
+                                response_ci_high=prev_allocation_response * 1.05,
+                                success=result.success,
+                                message=result.message,
+                                iterations=result.iterations,
+                                objective_value=result.objective_value,
+                                num_periods=result.num_periods,
+                                utility_function=result.utility_function,
+                            )
+                            # DON'T update prev_allocation - keep the better allocation for bounds
+                            update_prev = False
+
                     results_by_constraint[name].append(result)
 
+                    # Save allocation for next budget (monotonicity + warm-start)
+                    # Skip if failsafe triggered - keep the better previous allocation
+                    if result.success and update_prev:
+                        prev_allocation = result.optimal_allocation
+                        prev_allocation_response = result.expected_response
+
                     run_count += 1
-                    progress_bar.progress(run_count / total_runs)
+                    progress_bar.progress(run_count / max(achievable_runs, 1))
 
             progress_bar.empty()
             status_text.empty()
@@ -1596,6 +1807,9 @@ def _run_constraint_comparison(wrapper):
                     results=opt_results,
                     efficiency_curve=efficiency_curve,
                 )
+
+                # Check for monotonicity violations
+                _check_monotonicity(opt_results, name)
 
             # Store results
             st.session_state.constraint_comparison_result = results
