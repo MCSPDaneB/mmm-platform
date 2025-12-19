@@ -1412,7 +1412,7 @@ def _generate_summary_report(result, engine) -> str:
         f"Forecast Response: ${result.total_response:,.0f}",
         f"  95% CI Low:      ${result.total_ci_low:,.0f}",
         f"  95% CI High:     ${result.total_ci_high:,.0f}",
-        f"Blended ROI:       {result.blended_roi:.2f}x",
+        f"Blended ROI:       ${result.blended_roi:,.2f}",
         "",
     ]
 
@@ -1471,7 +1471,7 @@ def _show_history_tab(wrapper, kpi_labels):
         # Format response based on KPI type
         if kpi_labels.is_revenue_type:
             response_str = f"${f.total_response:,.0f}"
-            efficiency_str = f"{f.blended_roi:.2f}x"
+            efficiency_str = f"${f.blended_roi:,.2f}"
         else:
             response_str = f"{f.total_response:,.0f}"
             cost_per = f.total_spend / f.total_response if f.total_response > 0 else float('inf')
@@ -1550,7 +1550,7 @@ def _show_history_tab(wrapper, kpi_labels):
                     st.metric(f"Total {kpi_labels.target_label}", f"{metadata.total_response:,.0f}")
             with c3:
                 if kpi_labels.is_revenue_type:
-                    st.metric(f"Blended {kpi_labels.efficiency_label}", f"{metadata.blended_roi:.2f}x")
+                    st.metric(f"Blended {kpi_labels.efficiency_label}", f"${metadata.blended_roi:,.2f}")
                 else:
                     cost_per = metadata.total_spend / metadata.total_response if metadata.total_response > 0 else float('inf')
                     st.metric(f"Blended {kpi_labels.efficiency_label}", f"${cost_per:.2f}")
