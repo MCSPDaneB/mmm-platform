@@ -1177,15 +1177,15 @@ def _show_weekly_chart(result, wrapper, kpi_labels):
         all_spend = list(historical_df["spend"]) + list(forecast_df["spend"])
         n_hist = len(historical_df)
 
-        # Build hover text with ROI or Cost Per
+        # Build hover text with ROI or Cost Per (Budget already shown by bar trace)
         if kpi_labels.is_revenue_type:
             hover_text = [
-                f"Response: ${r:,.0f}<br>Budget: ${s:,.0f}<br>ROI: ${r/s:,.2f}" if s > 0 else f"Response: ${r:,.0f}"
+                f"Response: ${r:,.0f}<br>ROI: ${r/s:,.2f}" if s > 0 else f"Response: ${r:,.0f}"
                 for r, s in zip(all_responses, all_spend)
             ]
         else:
             hover_text = [
-                f"Response: {r:,.0f}<br>Budget: ${s:,.0f}<br>Cost Per: ${s/r:,.2f}" if r > 0 else f"Response: {r:,.0f}"
+                f"Response: {r:,.0f}<br>Cost Per: ${s/r:,.2f}" if r > 0 else f"Response: {r:,.0f}"
                 for r, s in zip(all_responses, all_spend)
             ]
 
@@ -1208,15 +1208,15 @@ def _show_weekly_chart(result, wrapper, kpi_labels):
         forecast_spend = list(forecast_df["spend"])
         forecast_responses = list(forecast_df["response"])
 
-        # Build hover text with ROI or Cost Per
+        # Build hover text with ROI or Cost Per (Budget already shown by bar trace)
         if kpi_labels.is_revenue_type:
             hover_text = [
-                f"Response: ${r:,.0f}<br>Budget: ${s:,.0f}<br>ROI: ${r/s:,.2f}" if s > 0 else f"Response: ${r:,.0f}"
+                f"Response: ${r:,.0f}<br>ROI: ${r/s:,.2f}" if s > 0 else f"Response: ${r:,.0f}"
                 for r, s in zip(forecast_responses, forecast_spend)
             ]
         else:
             hover_text = [
-                f"Response: {r:,.0f}<br>Budget: ${s:,.0f}<br>Cost Per: ${s/r:,.2f}" if r > 0 else f"Response: {r:,.0f}"
+                f"Response: {r:,.0f}<br>Cost Per: ${s/r:,.2f}" if r > 0 else f"Response: {r:,.0f}"
                 for r, s in zip(forecast_responses, forecast_spend)
             ]
 
