@@ -1151,50 +1151,84 @@ def _show_weekly_chart(result, wrapper, kpi_labels):
         fig.add_trace(go.Bar(
             x=historical_df["date"],
             y=historical_df["spend"],
-            name="Historical Spend",
+            name="Budget (Historical)",
             opacity=0.2,
             marker_color="gray",
-            yaxis="y2"
+            yaxis="y2",
+            hovertemplate="Budget: $%{y:,.0f}<extra></extra>"
         ))
 
     # Add forecast spend on secondary axis
     fig.add_trace(go.Bar(
         x=forecast_df["date"],
         y=forecast_df["spend"],
-        name="Forecast Spend",
+        name="Budget (Forecast)",
         opacity=0.3,
         marker_color="rgb(0, 100, 200)",
-        yaxis="y2"
+        yaxis="y2",
+        hovertemplate="Budget: $%{y:,.0f}<extra></extra>"
     ))
 
     # Plot combined response line (historical + forecast connected)
     if len(historical_df) > 0:
-        # Combine dates and responses for one continuous line
+        # Combine dates, responses, and spend for one continuous line
         all_dates = list(historical_df["date"]) + list(forecast_df["date"])
         all_responses = list(historical_df["response"]) + list(forecast_df["response"])
+        all_spend = list(historical_df["spend"]) + list(forecast_df["spend"])
         n_hist = len(historical_df)
+
+        # Build hover text with ROI or Cost Per
+        if kpi_labels.is_revenue_type:
+            hover_text = [
+                f"Response: ${r:,.0f}<br>Budget: ${s:,.0f}<br>ROI: ${r/s:,.2f}" if s > 0 else f"Response: ${r:,.0f}"
+                for r, s in zip(all_responses, all_spend)
+            ]
+        else:
+            hover_text = [
+                f"Response: {r:,.0f}<br>Budget: ${s:,.0f}<br>Cost Per: ${s/r:,.2f}" if r > 0 else f"Response: {r:,.0f}"
+                for r, s in zip(all_responses, all_spend)
+            ]
 
         # Plot as one continuous line with different marker colors
         fig.add_trace(go.Scatter(
             x=all_dates,
             y=all_responses,
             mode="lines+markers",
-            name="Media Response",
+            name="Response",
             line=dict(color="rgb(100, 100, 100)", width=2),
             marker=dict(
                 size=6,
                 color=["rgb(100, 100, 100)"] * n_hist + ["rgb(0, 100, 200)"] * len(forecast_df)
-            )
+            ),
+            hovertemplate="%{text}<extra></extra>",
+            text=hover_text
         ))
     else:
         # No historical data - just plot forecast
+        forecast_spend = list(forecast_df["spend"])
+        forecast_responses = list(forecast_df["response"])
+
+        # Build hover text with ROI or Cost Per
+        if kpi_labels.is_revenue_type:
+            hover_text = [
+                f"Response: ${r:,.0f}<br>Budget: ${s:,.0f}<br>ROI: ${r/s:,.2f}" if s > 0 else f"Response: ${r:,.0f}"
+                for r, s in zip(forecast_responses, forecast_spend)
+            ]
+        else:
+            hover_text = [
+                f"Response: {r:,.0f}<br>Budget: ${s:,.0f}<br>Cost Per: ${s/r:,.2f}" if r > 0 else f"Response: {r:,.0f}"
+                for r, s in zip(forecast_responses, forecast_spend)
+            ]
+
         fig.add_trace(go.Scatter(
             x=forecast_df["date"],
             y=forecast_df["response"],
             mode="lines+markers",
-            name="Forecast Response",
+            name="Response",
             line=dict(color="rgb(0, 100, 200)", width=2),
-            marker=dict(size=6)
+            marker=dict(size=6),
+            hovertemplate="%{text}<extra></extra>",
+            text=hover_text
         ))
 
     # Add vertical line to separate historical from forecast
@@ -1218,17 +1252,23 @@ def _show_weekly_chart(result, wrapper, kpi_labels):
         )
 
     # Build y-axis label using KPI
-    y_axis_label = f"Incremental Media Driven {kpi_labels.target_label}"
+    y_axis_label = f"Media {kpi_labels.target_label}"
 
     fig.update_layout(
         title="Weekly Response: Historical vs Forecast",
         xaxis_title="Week",
-        yaxis_title=y_axis_label,
+        yaxis=dict(
+            title=y_axis_label,
+            tickprefix="$" if kpi_labels.is_revenue_type else "",
+            tickformat=",."
+        ),
         yaxis2=dict(
-            title="Spend ($)",
+            title="Budget ($)",
             overlaying="y",
             side="right",
-            showgrid=False
+            showgrid=False,
+            tickprefix="$",
+            tickformat=",."
         ),
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
         hovermode="x unified"
