@@ -1299,6 +1299,11 @@ def _show_weekly_chart(result, wrapper, kpi_labels):
             if col in display_df.columns:
                 display_df[col] = display_df[col].apply(lambda x: f"{x:,.0f}")
 
+        # Reorder columns: date, spend, response, ROI/Cost Per, period
+        efficiency_col = "ROI" if kpi_labels.is_revenue_type else f"Cost Per {kpi_labels.target_label}"
+        col_order = ["date", "spend", "response", efficiency_col, "period"]
+        display_df = display_df[[c for c in col_order if c in display_df.columns]]
+
         st.dataframe(display_df, width="stretch")
 
 
