@@ -1630,7 +1630,7 @@ def _show_history_tab(wrapper, kpi_labels):
             if load_clicked:
                 st.session_state["forecast_result"] = result
                 st.session_state["forecast_input_spend"] = input_spend
-                st.success("Forecast loaded! Switch to the Results tab to view it.")
+                st.rerun()  # Force rerun so Results tab picks up the new state
 
             # Show summary
             st.markdown(f"**Period:** {metadata.forecast_period}")
