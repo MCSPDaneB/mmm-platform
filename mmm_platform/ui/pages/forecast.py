@@ -1057,7 +1057,7 @@ def _show_results_tab(engine, wrapper):
         if kpi_labels.is_revenue_type:
             st.metric(
                 "ROI",
-                f"{result.blended_roi:.2f}x",
+                f"${result.blended_roi:,.2f}",
             )
             st.caption("Revenue per dollar spent")
         else:
@@ -1245,7 +1245,7 @@ def _show_weekly_chart(result, wrapper, kpi_labels):
         if kpi_labels.is_revenue_type:
             # ROI = response / spend
             display_df["ROI"] = display_df.apply(
-                lambda r: f"{r['response'] / r['spend']:.2f}x" if r['spend'] > 0 else "N/A", axis=1
+                lambda r: f"${r['response'] / r['spend']:,.2f}" if r['spend'] > 0 else "N/A", axis=1
             )
         else:
             # Cost Per = spend / response
