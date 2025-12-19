@@ -1315,12 +1315,29 @@ def _show_channel_chart(result, engine, wrapper, kpi_labels):
 
     # Get display names
     channel_names = engine.get_channel_display_names()
+    channel_cols = wrapper.transform_engine.get_effective_channel_columns()
     forecast_df["channel_name"] = forecast_df["channel"].map(channel_names)
+
+    # Get forecast spend per channel from session state
+    forecast_spend_lookup = {}
+    if "forecast_input_spend" in st.session_state:
+        input_spend = st.session_state.forecast_input_spend
+        for _, row in input_spend.iterrows():
+            date_val = pd.to_datetime(row.get("date", row.get("Date", None)))
+            if date_val is not None:
+                for ch in channel_cols:
+                    if ch in row:
+                        forecast_spend_lookup[(date_val, ch)] = row[ch]
+
+    # Add spend to forecast data
+    forecast_df["spend"] = forecast_df.apply(
+        lambda r: forecast_spend_lookup.get((r["date"], r["channel"]), 0), axis=1
+    )
 
     # Get historical data (last 6 weeks)
     try:
         contribs = wrapper.get_contributions()
-        channel_cols = wrapper.transform_engine.get_effective_channel_columns()
+        df_scaled = wrapper.df_scaled
 
         if len(contribs) > 0 and any(c in contribs.columns for c in channel_cols):
             available_channel_cols = [c for c in channel_cols if c in contribs.columns]
@@ -1328,16 +1345,21 @@ def _show_channel_chart(result, engine, wrapper, kpi_labels):
             # Take last 6 weeks
             n_weeks = min(6, len(contribs))
             hist_contribs = contribs.iloc[-n_weeks:]
+            hist_spend = df_scaled.iloc[-n_weeks:] if len(df_scaled) >= n_weeks else df_scaled
 
             # Melt to long format for plotting
             hist_records = []
-            for date_val in hist_contribs.index:
+            for i, date_val in enumerate(hist_contribs.index):
                 for channel in available_channel_cols:
                     if channel in hist_contribs.columns:
+                        spend_val = 0
+                        if channel in hist_spend.columns and i < len(hist_spend):
+                            spend_val = hist_spend.iloc[i][channel] if channel in hist_spend.columns else 0
                         hist_records.append({
                             "date": pd.to_datetime(date_val),
                             "channel": channel,
                             "contribution": hist_contribs.loc[date_val, channel],
+                            "spend": spend_val,
                             "period": "Historical",
                             "channel_name": channel_names.get(channel, channel)
                         })
@@ -1355,7 +1377,28 @@ def _show_channel_chart(result, engine, wrapper, kpi_labels):
         combined_df = forecast_df
 
     # Build y-axis label using KPI
-    y_axis_label = f"Incremental Media Driven {kpi_labels.target_label}"
+    y_axis_label = f"Media {kpi_labels.target_label}"
+
+    # Format contribution for hover based on KPI type (include ROI/Cost Per)
+    def format_hover(row):
+        ch_name = row["channel_name"]
+        contrib = row["contribution"]
+        spend = row.get("spend", 0)
+
+        if kpi_labels.is_revenue_type:
+            response_str = f"${contrib:,.0f}"
+            if spend > 0:
+                roi = contrib / spend
+                return f"{ch_name} | Response: {response_str} | ROI: ${roi:,.2f}"
+            return f"{ch_name} | Response: {response_str}"
+        else:
+            response_str = f"{contrib:,.0f}"
+            if contrib > 0 and spend > 0:
+                cost_per = spend / contrib
+                return f"{ch_name} | Response: {response_str} | Cost Per: ${cost_per:,.2f}"
+            return f"{ch_name} | Response: {response_str}"
+
+    combined_df["hover_text"] = combined_df.apply(format_hover, axis=1)
 
     # Stacked bar chart
     fig = px.bar(
@@ -1365,7 +1408,13 @@ def _show_channel_chart(result, engine, wrapper, kpi_labels):
         color="channel_name",
         title="Channel Contributions: Historical vs Forecast",
         labels={"contribution": y_axis_label, "date": "Week", "channel_name": "Channel"},
-        barmode="stack"
+        barmode="stack",
+        custom_data=["hover_text"]
+    )
+
+    # Update hover template to use custom text
+    fig.update_traces(
+        hovertemplate="%{customdata[0]}<extra></extra>"
     )
 
     # Add vertical line to separate historical from forecast
@@ -1388,9 +1437,14 @@ def _show_channel_chart(result, engine, wrapper, kpi_labels):
             font=dict(color="red", size=10)
         )
 
+    # Format y-axis with $ for revenue KPIs
     fig.update_layout(
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
-        hovermode="x unified"
+        hovermode="x unified",
+        yaxis=dict(
+            tickprefix="$" if kpi_labels.is_revenue_type else "",
+            tickformat=",."
+        )
     )
 
     st.plotly_chart(fig, width="stretch")
