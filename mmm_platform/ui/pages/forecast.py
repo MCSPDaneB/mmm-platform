@@ -1239,9 +1239,25 @@ def _show_weekly_chart(result, wrapper, kpi_labels):
     with st.expander("View Weekly Data"):
         display_df = combined_df.copy()
         display_df["date"] = display_df["date"].dt.strftime("%Y-%m-%d")
-        for col in ["response", "ci_low", "ci_high", "spend"]:
+
+        # Calculate efficiency metric based on KPI type
+        if kpi_labels.is_revenue_type:
+            # ROI = response / spend
+            display_df["ROI"] = display_df.apply(
+                lambda r: f"{r['response'] / r['spend']:.2f}x" if r['spend'] > 0 else "N/A", axis=1
+            )
+        else:
+            # Cost Per = spend / response
+            display_df[f"Cost Per {kpi_labels.target_label}"] = display_df.apply(
+                lambda r: f"${r['spend'] / r['response']:,.2f}" if r['response'] > 0 else "N/A", axis=1
+            )
+
+        # Remove CI columns, format remaining numeric columns
+        display_df = display_df.drop(columns=["ci_low", "ci_high"], errors="ignore")
+        for col in ["response", "spend"]:
             if col in display_df.columns:
                 display_df[col] = display_df[col].apply(lambda x: f"{x:,.0f}")
+
         st.dataframe(display_df, width="stretch")
 
 
