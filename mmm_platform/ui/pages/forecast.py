@@ -1035,38 +1035,39 @@ def _show_results_tab(engine, wrapper):
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric(
-            "Forecast Incremental Response",
-            f"{result.total_response:,.0f}",
-            help="95% CI shown below"
+            "Budget",
+            f"${result.total_spend:,.0f}",
         )
-        st.caption(f"95% CI: {result.total_ci_low:,.0f} - {result.total_ci_high:,.0f}")
+        st.caption(f"{result.num_weeks} weeks")
 
     with col2:
+        # Format response based on KPI type
+        if kpi_labels.is_revenue_type:
+            response_value = f"${result.total_response:,.0f}"
+        else:
+            response_value = f"{result.total_response:,.0f}"
         st.metric(
-            "Total Media Spend",
-            f"${result.total_spend:,.0f}",
-            help=f"{result.num_weeks} weeks"
+            f"Media {kpi_labels.target_label}",
+            response_value,
         )
-        st.caption(f"Over {result.num_weeks} weeks")
+        st.caption("Incremental media-driven response")
 
     with col3:
         # Use KPI-appropriate efficiency label
         if kpi_labels.is_revenue_type:
             st.metric(
-                "Blended Incremental ROI",
+                "ROI",
                 f"{result.blended_roi:.2f}x",
-                help="Response / Spend"
             )
             st.caption("Revenue per dollar spent")
         else:
             # For count KPIs, show Cost Per X
-            cost_per = 1 / result.blended_roi if result.blended_roi > 0 else float('inf')
+            cost_per = result.total_spend / result.total_response if result.total_response > 0 else float('inf')
             st.metric(
-                f"Blended {kpi_labels.efficiency_label}",
-                f"${cost_per:.2f}",
-                help="Spend / Response"
+                f"Cost Per {kpi_labels.target_label}",
+                f"${cost_per:,.2f}",
             )
-            st.caption(f"Cost per {kpi_labels.target_label.lower()}")
+            st.caption("Spend per acquisition")
 
     # Seasonality annotation
     if result.seasonal_applied:
